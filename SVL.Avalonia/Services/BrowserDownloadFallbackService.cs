@@ -13,6 +13,9 @@ public sealed class BrowserDownloadFallbackService
     private readonly IExternalProcessService _externalProcessService;
     private readonly object _waitersLock = new();
     private readonly Dictionary<(long ModId, long FileId), NxmWaitEntry> _waiters = new();
+    // 旧版整合包有时只保存 Nexus Mod ID，没有保存具体 File ID。
+    // 这类等待必须按 Mod ID 匹配浏览器回传的任意文件，否则无法完成首次导入。
+    private readonly Dictionary<long, NxmWaitEntry> _modWaiters = new();
     private readonly Dictionary<(string Slug, int Revision), NxmWaitEntry> _collectionWaiters = new(CollectionKeyComparer.Instance);
 
     public BrowserDownloadFallbackService(
@@ -94,8 +97,86 @@ public sealed class BrowserDownloadFallbackService
         {
             lock (_waitersLock)
             {
-                _waiters.Remove((modId, fileId));
+                // 同一资源被重复入队时，旧等待者会先被取消；它结束时不能把
+                // 后面刚注册的新等待者一并移除，否则新的 NXM 回调将无人接收。
+                if (_waiters.TryGetValue((modId, fileId), out var current) &&
+                    ReferenceEquals(current, entry))
+                {
+                    _waiters.Remove((modId, fileId));
+                }
             }
+            entry.Cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 打开指定 Nexus Mod 页面，并等待该 Mod 的任意文件 NXM 回调。
+    /// 用于旧整合包只保存 modId、没有 fileId 的来源记录。
+    /// </summary>
+    public async Task<string?> WaitForNxmModCallbackAsync(
+        long modId,
+        string browserUrl,
+        Action<string>? onWaiting = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (modId <= 0)
+        {
+            return null;
+        }
+
+        var entry = new NxmWaitEntry
+        {
+            Source = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
+            Cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+        };
+        entry.Cts.Token.Register(() => entry.Source.TrySetCanceled());
+
+        lock (_waitersLock)
+        {
+            if (_modWaiters.TryGetValue(modId, out var existing))
+            {
+                existing.Source.TrySetCanceled();
+                existing.Cts.Dispose();
+                _modWaiters.Remove(modId);
+            }
+
+            _modWaiters[modId] = entry;
+        }
+
+        if (!string.IsNullOrWhiteSpace(browserUrl))
+        {
+            _externalProcessService.TryOpenPath(browserUrl);
+        }
+
+        onWaiting?.Invoke("请在浏览器中点击 Manual Download，启动器将自动接管文件回调...");
+
+        try
+        {
+            var completed = await Task.WhenAny(
+                entry.Source.Task,
+                Task.Delay(TimeSpan.FromMinutes(30), entry.Cts.Token));
+
+            if (completed == entry.Source.Task)
+            {
+                return await entry.Source.Task;
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            lock (_waitersLock)
+            {
+                if (_modWaiters.TryGetValue(modId, out var current) && ReferenceEquals(current, entry))
+                {
+                    _modWaiters.Remove(modId);
+                }
+            }
+
             entry.Cts.Dispose();
         }
     }
@@ -172,7 +253,12 @@ public sealed class BrowserDownloadFallbackService
         {
             lock (_waitersLock)
             {
-                _collectionWaiters.Remove(key);
+                // 与 ModFile 等待相同：旧 Collection 等待者不能清理新等待者。
+                if (_collectionWaiters.TryGetValue(key, out var current) &&
+                    ReferenceEquals(current, entry))
+                {
+                    _collectionWaiters.Remove(key);
+                }
             }
             entry.Cts.Dispose();
         }
@@ -228,6 +314,13 @@ public sealed class BrowserDownloadFallbackService
             {
                 return entry.Source.TrySetResult(nxmLink);
             }
+
+            // 未指定 fileId 的等待匹配该 Mod 的任意文件回调。精确等待优先，
+            // 避免同一个回调被错误交给模糊等待。
+            if (_modWaiters.TryGetValue(info.ModId, out var modEntry))
+            {
+                return modEntry.Source.TrySetResult(nxmLink);
+            }
         }
 
         return false;
@@ -245,6 +338,14 @@ public sealed class BrowserDownloadFallbackService
             }
 
             _waiters.Clear();
+
+            foreach (var entry in _modWaiters.Values)
+            {
+                entry.Source.TrySetCanceled();
+                entry.Cts.Dispose();
+            }
+
+            _modWaiters.Clear();
 
             foreach (var entry in _collectionWaiters.Values)
             {

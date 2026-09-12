@@ -21,6 +21,50 @@ public static class InstanceRuntimePathResolver
         return IsValidGamePath(legacyRuntimePath) ? legacyRuntimePath : versionRoot;
     }
 
+    /// <summary>
+    /// 将 Base、versions/&lt;实例&gt; 或旧布局的 versions/&lt;实例&gt;/game 统一解析为所属 Base。
+    /// 任务状态和旧版配置中可能保存的是实例运行目录，而安装整合包时必须把
+    /// 新版本追加到 Base/versions 下，不能在实例目录下再创建一层 versions。
+    /// </summary>
+    public static string ResolveBasePath(string? candidatePath)
+    {
+        if (string.IsNullOrWhiteSpace(candidatePath))
+        {
+            return string.Empty;
+        }
+
+        var normalized = candidatePath.Trim().Trim('"');
+        try
+        {
+            normalized = Path.GetFullPath(normalized)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            normalized = normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
+        try
+        {
+            var current = new DirectoryInfo(normalized);
+            while (current != null)
+            {
+                if (string.Equals(current.Name, "versions", StringComparison.OrdinalIgnoreCase))
+                {
+                    return current.Parent?.FullName ?? normalized;
+                }
+
+                current = current.Parent;
+            }
+        }
+        catch
+        {
+            // 路径格式异常时保留规范化后的原路径，交由上层做存在性检查。
+        }
+
+        return normalized;
+    }
+
     public static string SanitizeFileNameComponent(string? value, string fallback = "unknown")
     {
         var candidate = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();

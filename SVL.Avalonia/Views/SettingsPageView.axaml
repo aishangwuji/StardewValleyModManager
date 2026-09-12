@@ -76,8 +76,12 @@
               <Button Grid.Column="1" Content="打开 JSON"
                       Command="{Binding OpenSettingsJsonCommand}"
                       MinWidth="90" Height="30" Padding="14,0" Margin="8,0,0,0" />
-              <TextBlock Grid.Column="3" Text="{Binding StatusMessage}"
-                         VerticalAlignment="Center" Opacity="0.75" FontSize="12" />
+              <TextBlock Grid.Column="2" Text="{Binding StatusMessage}"
+                         VerticalAlignment="Center" Opacity="0.75" FontSize="12"
+                         Margin="12,0,12,0" TextWrapping="Wrap" />
+              <Button Grid.Column="3" Content="恢复默认设置"
+                      Command="{Binding ResetSettingsCommand}"
+                      MinWidth="112" Height="30" Padding="12,0" />
             </Grid>
           </Border>
 
@@ -89,7 +93,21 @@
               </StackPanel>
               <TextBlock Text="以下字段会影响窗口标题、应用名称和启动标识。" Opacity="0.72" TextWrapping="Wrap" />
               <TextBlock Text="游戏窗口标题" />
-              <TextBox Text="{Binding GameWindowTitle}" />
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox Text="{Binding GameWindowTitle}" />
+                <Button Grid.Column="1"
+                        Content="?"
+                        Command="{Binding ShowWindowTitleHelpCommand}"
+                        Width="32"
+                        Height="32"
+                        Padding="0"
+                        Margin="8,0,0,0"
+                        FontSize="16"
+                        FontWeight="Bold"
+                        HorizontalContentAlignment="Center"
+                        VerticalContentAlignment="Center"
+                        ToolTip.Tip="查看窗口标题占位符说明" />
+              </Grid>
               <TextBlock Text="启动器标题" />
               <TextBox Text="{Binding LauncherTitle}" />
               <TextBlock Text="启动器简称" />
@@ -121,7 +139,7 @@
               <CheckBox Content="启用任务浮动按钮" IsChecked="{Binding EnableDownloadFloatingTaskButton}" />
               <TextBlock Text="Collection 冲突策略" />
               <ComboBox ItemsSource="{Binding CollectionConflictStrategies}" SelectedItem="{Binding SelectedCollectionConflictStrategy}" />
-              <TextBlock Text="Collection 下载并发上限" />
+              <TextBlock Text="下载任务并发上限（含 Collection/整合包）" />
               <ComboBox ItemsSource="{Binding CollectionDownloadParallelismOptions}" SelectedItem="{Binding SelectedCollectionDownloadParallelism}" />
               <TextBlock Text="下载线程数" />
               <ComboBox ItemsSource="{Binding DownloadThreadOptions}" SelectedItem="{Binding SelectedDownloadThreads}" />
@@ -234,7 +252,22 @@
                 </StackPanel>
               </Grid>
               <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <TextBlock Text="搜索/汉化缓存保留时长（分钟）" VerticalAlignment="Center" />
+                <ComboBox ItemsSource="{Binding CacheRetentionOptionsMinutes}"
+                          SelectedItem="{Binding CacheRetentionMinutes}"
+                          MinWidth="100" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <TextBlock Text="下载归档缓存保留时长（分钟）" VerticalAlignment="Center" />
+                <ComboBox ItemsSource="{Binding CacheRetentionOptionsMinutes}"
+                          SelectedItem="{Binding DownloadCacheRetentionMinutes}"
+                          MinWidth="100" />
+                <TextBlock Text="（至少 1 小时）" VerticalAlignment="Center" Opacity="0.7" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                 <Button Content="刷新统计" Command="{Binding RefreshCacheStatisticsCommand}" />
+                <Button Content="清理过期" Command="{Binding ClearExpiredCacheCommand}" IsEnabled="{Binding !IsCleaningCache}" />
+                <Button Content="打开缓存目录" Command="{Binding OpenCacheFolderCommand}" />
                 <Button Content="全部清理" Command="{Binding ClearAllCacheCommand}" Classes="accent" />
               </StackPanel>
             </StackPanel>

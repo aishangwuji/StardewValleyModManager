@@ -5,6 +5,14 @@ namespace SVL.Avalonia.Models;
 
 public partial class DownloadCatalogItem : ObservableObject
 {
+    /// <summary>目录项的真实来源身份，详情加载优先使用它而不是重新解析显示文本。</summary>
+    public CatalogResourceIdentity Identity { get; init; } = new(
+        0,
+        string.Empty,
+        CatalogSource.Unknown,
+        false,
+        string.Empty);
+
     [ObservableProperty]
     private string _displayText = string.Empty;
 

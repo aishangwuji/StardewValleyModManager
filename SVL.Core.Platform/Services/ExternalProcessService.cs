@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 namespace SVL.Core.Platform.Services;
 
-public sealed class ExternalProcessService : IExternalProcessService
+public sealed class ExternalProcessService : IExternalProcessService, IProcessStartService
 {
     public bool TryOpenUrl(string url)
     {
@@ -58,6 +58,31 @@ public sealed class ExternalProcessService : IExternalProcessService
         catch
         {
             return false;
+        }
+    }
+
+    public Process? TryStartProcess(string fileName, string arguments, string? workingDirectory = null)
+    {
+        try
+        {
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    UseShellExecute = true,
+                    WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+                        ? Environment.CurrentDirectory
+                        : workingDirectory
+                }
+            };
+
+            return process.Start() ? process : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

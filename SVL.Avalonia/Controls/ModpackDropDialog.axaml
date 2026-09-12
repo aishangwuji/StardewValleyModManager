@@ -53,10 +53,19 @@
         <!-- 安装目标路径选择（来自版本选择页路径列表） -->
         <StackPanel Spacing="4" Margin="0,6,0,0" IsVisible="{Binding HasPathEntries, ElementName=Root}">
           <TextBlock Text="安装到路径" FontSize="12" Opacity="0.7" />
-          <ComboBox ItemsSource="{Binding PathEntryDisplayNames, ElementName=Root}"
+          <ComboBox x:Name="PathSelector"
+                    ItemsSource="{Binding PathEntryDisplayNames, ElementName=Root}"
                     SelectedIndex="{Binding SelectedPathIndex, ElementName=Root, Mode=TwoWay}"
-                    MinWidth="300" HorizontalAlignment="Stretch"
-                    ToolTip.Tip="从版本选择页路径列表中选择安装目标" />
+                    MinWidth="460" HorizontalAlignment="Stretch"
+                    ToolTip.Tip="从版本选择页路径列表中选择安装目标">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <TextBlock Text="{Binding SelectedItem, ElementName=PathSelector}"
+                     TextWrapping="Wrap" FontSize="11" Opacity="0.68" />
         </StackPanel>
 
         <!-- 版本名输入 -->

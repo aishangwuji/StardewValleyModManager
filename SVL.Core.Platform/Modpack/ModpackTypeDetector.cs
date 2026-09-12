@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
+using SVL.Core.Platform.IO;
 
 namespace SVL.Core.Platform.Modpack;
 
@@ -33,12 +35,18 @@ public sealed class ModpackDetectionResult
 
 /// <summary>
 /// 整合包类型检测器。从 SVL.Core.Modpack.ModpackTypeDetector 下沉，
-/// 用 System.IO.Compression.ZipArchive（.NET 内置）替代 SharpZipLib，保持 Core.Platform 零外部依赖。
-/// 注意：不支持 .7z（旧架构用 SevenZipService，新架构暂不引入该依赖）。
+/// zip 使用 System.IO.Compression，Nexus Collection 的 7z 使用平台层内置解压。
+/// Nexus Collection 使用 .7z，平台层通过 SharpCompress 内置解压，不要求用户安装 7-Zip。
 /// </summary>
 public static class ModpackTypeDetector
 {
-    /// <summary>检测文件是否是支持的整合包文件（.zip / .cfmodpack）。</summary>
+    private static readonly JsonDocumentOptions CompatibleJsonOptions = new()
+    {
+        AllowTrailingCommas = true,
+        CommentHandling = JsonCommentHandling.Skip
+    };
+
+    /// <summary>检测文件是否是支持的整合包文件（.zip / .cfmodpack / .7z）。</summary>
     public static bool IsSupportedFile(string filePath)
     {
         if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
@@ -47,7 +55,9 @@ public static class ModpackTypeDetector
         }
 
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
-        return ext == ".zip" || ext == ".cfmodpack";
+        return ext is ".zip" or ".cfmodpack" or ".7z" ||
+               ArchiveExtractor.IsSevenZip(filePath) ||
+               ArchiveExtractor.IsZip(filePath);
     }
 
     /// <summary>检测整合包类型并解析元数据。</summary>
@@ -66,25 +76,29 @@ public static class ModpackTypeDetector
             }
 
             var ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext != ".zip" && ext != ".cfmodpack")
+            var isSevenZip = ArchiveExtractor.IsSevenZip(filePath);
+            var isZip = ArchiveExtractor.IsZip(filePath);
+            if (ext is not (".zip" or ".cfmodpack" or ".7z") && !isSevenZip && !isZip)
             {
                 result.Type = ModpackType.Unknown;
-                result.ErrorMessage = $"不支持的文件格式: {ext}（新架构暂不支持 .7z）";
+                result.ErrorMessage = $"不支持的文件格式: {ext}";
                 return result;
             }
 
-            var tempDir = ExtractZipToTemp(filePath);
+            var tempDir = ExtractArchiveToTemp(filePath);
             if (string.IsNullOrEmpty(tempDir))
             {
                 result.Type = ModpackType.Unknown;
-                result.ErrorMessage = "无法解压 ZIP 文件";
+                result.ErrorMessage = isSevenZip || ext == ".7z" ? "无法解压 7z 文件" : "无法解压 ZIP 文件";
                 return result;
             }
 
             result.TempExtractPath = tempDir;
 
             // Nexus Collection（collection.json）
-            var collectionJsonPath = FindFileInDirectory(tempDir, "collection.json");
+            // 外层打包工具可能也带一个同名但不属于 Collection 的 JSON。
+            // 不能只取第一个文件，否则内层有效 collection.json 会被遮蔽。
+            var collectionJsonPath = FindValidCollectionManifest(tempDir);
             if (!string.IsNullOrEmpty(collectionJsonPath))
             {
                 result.Type = ModpackType.NexusCollection;
@@ -94,20 +108,23 @@ public static class ModpackTypeDetector
             }
 
             // SVL 整合包（modpack.json 或嵌套 modpack.zip）— 优先于 Curseforge
-            var modpackJsonPath = FindFileInDirectory(tempDir, "modpack.json");
-            var nestedModpackZip = FindFileInDirectory(tempDir, "modpack.zip");
-            if (!string.IsNullOrEmpty(modpackJsonPath) || !string.IsNullOrEmpty(nestedModpackZip))
+            var modpackJsonPath = FindValidSvlManifest(tempDir);
+            var nestedModpackArchive = FindFileInDirectory(tempDir, "modpack.zip") ??
+                                       FindFileInDirectory(tempDir, "modpack.7z");
+            if (!string.IsNullOrEmpty(modpackJsonPath) || !string.IsNullOrEmpty(nestedModpackArchive))
             {
                 result.Type = ModpackType.SVL;
                 result.ModpackIconPath ??= FindModpackIconInDirectory(tempDir);
 
-                // 嵌套结构（modpack.zip）：先解压内层获取 modpack.json
-                if (string.IsNullOrEmpty(modpackJsonPath) && !string.IsNullOrEmpty(nestedModpackZip))
+                // 嵌套结构（modpack.zip/modpack.7z）：解压到外层临时目录内部，
+                // 使检测得到的 Icon 路径与 TempExtractPath 具有相同生命周期；
+                // 用户确认导入后清理外层目录即可一并清理内层内容。
+                if (string.IsNullOrEmpty(modpackJsonPath) && !string.IsNullOrEmpty(nestedModpackArchive))
                 {
-                    var innerTempDir = ExtractZipToTemp(nestedModpackZip);
-                    if (!string.IsNullOrEmpty(innerTempDir))
+                    var innerTempDir = Path.Combine(tempDir, "_svl-inner");
+                    if (ExtractArchiveToDirectory(nestedModpackArchive, innerTempDir))
                     {
-                        modpackJsonPath = FindFileInDirectory(innerTempDir, "modpack.json");
+                        modpackJsonPath = FindValidSvlManifest(innerTempDir);
                         result.ModpackIconPath ??= FindModpackIconInDirectory(innerTempDir);
                     }
                 }
@@ -125,7 +142,9 @@ public static class ModpackTypeDetector
             }
 
             // Curseforge（manifest.json）
-            var manifestJsonPath = FindFileInDirectory(tempDir, "manifest.json");
+            // manifest.json 既可能是 CurseForge 整合包清单，也可能是普通 Mod
+            // 或发行包元数据。只取符合 CurseForge 结构的候选项。
+            var manifestJsonPath = FindValidCurseforgeManifest(tempDir);
             if (!string.IsNullOrEmpty(manifestJsonPath) && LooksLikeCurseforgeManifest(manifestJsonPath))
             {
                 result.Type = ModpackType.Curseforge;
@@ -165,34 +184,38 @@ public static class ModpackTypeDetector
     {
         try
         {
-            var jsonContent = File.ReadAllText(collectionJsonPath);
-            using var doc = JsonDocument.Parse(jsonContent);
+            using var reader = new StreamReader(
+                collectionJsonPath,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            var jsonContent = reader.ReadToEnd();
+            using var doc = JsonDocument.Parse(jsonContent, CompatibleJsonOptions);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("info", out var info))
+            if (TryGetPropertyIgnoreCase(root, "info", out var info))
             {
-                if (info.TryGetProperty("name", out var name))
+                if (TryGetPropertyIgnoreCase(info, "name", out var name))
                 {
-                    result.ModpackName = name.GetString();
+                    result.ModpackName = GetJsonString(name);
                 }
 
-                if (info.TryGetProperty("author", out var author))
+                if (TryGetPropertyIgnoreCase(info, "author", out var author))
                 {
-                    result.ModpackAuthor = author.GetString();
+                    result.ModpackAuthor = GetJsonString(author);
                 }
 
-                if (info.TryGetProperty("description", out var desc))
+                if (TryGetPropertyIgnoreCase(info, "description", out var desc))
                 {
-                    result.ModpackDescription = desc.GetString();
+                    result.ModpackDescription = GetJsonString(desc);
                 }
 
-                if (info.TryGetProperty("gameVersions", out var versions) && versions.GetArrayLength() > 0)
+                if (TryGetPropertyIgnoreCase(info, "gameVersions", out var versions))
                 {
-                    result.ModpackVersion = versions[0].GetString();
+                    result.ModpackVersion = GetFirstJsonString(versions);
                 }
             }
 
-            if (root.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Array)
+            if (TryGetPropertyIgnoreCase(root, "mods", out var mods) && mods.ValueKind == JsonValueKind.Array)
             {
                 result.ModCount = mods.GetArrayLength();
             }
@@ -207,31 +230,37 @@ public static class ModpackTypeDetector
     {
         try
         {
-            var jsonContent = File.ReadAllText(modpackJsonPath);
-            using var doc = JsonDocument.Parse(jsonContent);
+            // 旧 WPF 导出包可能使用 UTF-16；StreamReader 自动识别 BOM，避免
+            // 类型检测阶段先失败，后续安装器根本拿不到 manifest 信息。
+            using var reader = new StreamReader(
+                modpackJsonPath,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            var jsonContent = reader.ReadToEnd();
+            using var doc = JsonDocument.Parse(jsonContent, CompatibleJsonOptions);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("name", out var name))
+            if (TryGetPropertyIgnoreCase(root, "name", out var name))
             {
-                result.ModpackName = name.GetString();
+                result.ModpackName = GetJsonString(name);
             }
 
-            if (root.TryGetProperty("version", out var ver))
+            if (TryGetPropertyIgnoreCase(root, "version", out var ver))
             {
-                result.ModpackVersion = ver.GetString();
+                result.ModpackVersion = GetJsonString(ver);
             }
 
-            if (root.TryGetProperty("author", out var author))
+            if (TryGetPropertyIgnoreCase(root, "author", out var author))
             {
-                result.ModpackAuthor = author.GetString();
+                result.ModpackAuthor = GetJsonString(author);
             }
 
-            if (root.TryGetProperty("description", out var desc))
+            if (TryGetPropertyIgnoreCase(root, "description", out var desc))
             {
-                result.ModpackDescription = desc.GetString();
+                result.ModpackDescription = GetJsonString(desc);
             }
 
-            if (root.TryGetProperty("mods", out var modsList) && modsList.ValueKind == JsonValueKind.Array)
+            if (TryGetPropertyIgnoreCase(root, "mods", out var modsList) && modsList.ValueKind == JsonValueKind.Array)
             {
                 result.ModCount = modsList.GetArrayLength();
             }
@@ -250,13 +279,28 @@ public static class ModpackTypeDetector
         return tempDir;
     }
 
-    /// <summary>用 ZipArchive 解压 ZIP 到临时目录（替代旧架构的 SharpZipLib）。</summary>
-    private static string? ExtractZipToTemp(string zipPath)
+    /// <summary>解压 ZIP/CFModpack/7z 到临时目录。</summary>
+    private static string? ExtractArchiveToTemp(string archivePath)
+    {
+        var tempDir = CreateTempDirectory();
+        return ExtractArchiveToDirectory(archivePath, tempDir) ? tempDir : null;
+    }
+
+    /// <summary>将 ZIP/CFModpack/7z 解压到指定临时目录，并在失败时清理该目录。</summary>
+    private static bool ExtractArchiveToDirectory(string archivePath, string tempDir)
     {
         try
         {
-            var tempDir = CreateTempDirectory();
-            using var archive = ZipFile.OpenRead(zipPath);
+            Directory.CreateDirectory(tempDir);
+            if (ArchiveExtractor.IsSevenZip(archivePath))
+            {
+                ArchiveExtractor.ExtractSevenZipToDirectory(archivePath, tempDir);
+                return true;
+            }
+
+            using var archive = ZipFile.OpenRead(archivePath);
+            var destinationRoot = Path.GetFullPath(tempDir)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
             foreach (var entry in archive.Entries)
             {
                 if (string.IsNullOrEmpty(entry.Name))
@@ -266,6 +310,12 @@ public static class ModpackTypeDetector
                 }
 
                 var destinationPath = Path.Combine(tempDir, entry.FullName.Replace('/', Path.DirectorySeparatorChar));
+                destinationPath = Path.GetFullPath(destinationPath);
+                if (!destinationPath.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException($"ZIP 归档包含越界路径: {entry.FullName}");
+                }
+
                 var destinationDir = Path.GetDirectoryName(destinationPath);
                 if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
                 {
@@ -277,12 +327,13 @@ public static class ModpackTypeDetector
                 stream.CopyTo(fileStream);
             }
 
-            return tempDir;
+            return true;
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[ModpackTypeDetector] 解压 ZIP 失败: {zipPath} - {ex}");
-            return null;
+            Debug.WriteLine($"[ModpackTypeDetector] 解压归档失败: {archivePath} - {ex}");
+            CleanupTempDirectory(tempDir);
+            return false;
         }
     }
 
@@ -299,14 +350,14 @@ public static class ModpackTypeDetector
             var subDirs = Directory.GetDirectories(directory);
             if (subDirs.Length == 1)
             {
-                var subFile = Path.Combine(subDirs[0], fileName);
-                if (File.Exists(subFile))
+                var subFile = FindFileByNameIgnoreCase(subDirs[0], fileName, SearchOption.TopDirectoryOnly);
+                if (!string.IsNullOrWhiteSpace(subFile))
                 {
                     return subFile;
                 }
             }
 
-            return Directory.GetFiles(directory, fileName, SearchOption.AllDirectories).FirstOrDefault();
+            return FindFileByNameIgnoreCase(directory, fileName, SearchOption.AllDirectories);
         }
         catch
         {
@@ -314,22 +365,209 @@ public static class ModpackTypeDetector
         }
     }
 
-    private static bool LooksLikeCurseforgeManifest(string manifestJsonPath)
+    private static string? FindFileByNameIgnoreCase(
+        string directory,
+        string fileName,
+        SearchOption searchOption)
+    {
+        return Directory.EnumerateFiles(directory, "*", searchOption)
+            .FirstOrDefault(path => string.Equals(
+                Path.GetFileName(path),
+                fileName,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? FindValidCollectionManifest(string directory)
+    {
+        return FindMatchingFile(directory, "collection.json", LooksLikeCollectionManifest);
+    }
+
+    private static string? FindValidSvlManifest(string directory)
+    {
+        return FindMatchingFile(directory, "modpack.json", LooksLikeSvlManifest);
+    }
+
+    private static string? FindValidCurseforgeManifest(string directory)
+    {
+        return FindMatchingFile(directory, "manifest.json", LooksLikeCurseforgeManifest);
+    }
+
+    private static string? FindMatchingFile(
+        string directory,
+        string fileName,
+        Func<string, bool> predicate)
     {
         try
         {
-            using var stream = File.OpenRead(manifestJsonPath);
-            using var document = JsonDocument.Parse(stream);
+            var candidates = new List<string>();
+            var direct = Path.Combine(directory, fileName);
+            if (File.Exists(direct))
+            {
+                candidates.Add(direct);
+            }
+
+            candidates.AddRange(
+                Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+                    .Where(path => !string.Equals(path, direct, StringComparison.OrdinalIgnoreCase))
+                    .Where(path => string.Equals(
+                        Path.GetFileName(path), fileName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(path => path.Count(character =>
+                        character == Path.DirectorySeparatorChar ||
+                        character == Path.AltDirectorySeparatorChar)));
+
+            return candidates.FirstOrDefault(predicate);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool LooksLikeCollectionManifest(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(
+                path,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            using var document = JsonDocument.Parse(reader.ReadToEnd(), CompatibleJsonOptions);
             var root = document.RootElement;
-            return root.TryGetProperty("manifestVersion", out var manifestVersion)
-                   && manifestVersion.ValueKind == JsonValueKind.Number
-                   && root.TryGetProperty("files", out var files)
-                   && files.ValueKind == JsonValueKind.Array;
+            return root.ValueKind == JsonValueKind.Object &&
+                   TryGetPropertyIgnoreCase(root, "mods", out var mods) &&
+                   mods.ValueKind == JsonValueKind.Array;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static bool LooksLikeSvlManifest(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(
+                path,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            using var document = JsonDocument.Parse(reader.ReadToEnd(), CompatibleJsonOptions);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            // SVL 导出包至少应包含名称、Mod 列表或 SMAPI 版本字段。
+            // 这样可排除 { formatVersion, files } 一类外层打包元数据。
+            return TryGetPropertyIgnoreCase(root, "name", out var name) &&
+                       name.ValueKind == JsonValueKind.String &&
+                       !string.IsNullOrWhiteSpace(name.GetString()) ||
+                   TryGetPropertyIgnoreCase(root, "title", out var title) &&
+                       title.ValueKind == JsonValueKind.String &&
+                       !string.IsNullOrWhiteSpace(title.GetString()) ||
+                   TryGetPropertyIgnoreCase(root, "mods", out var mods) &&
+                       mods.ValueKind == JsonValueKind.Array ||
+                   TryGetPropertyIgnoreCase(root, "smapi_version", out _) ||
+                   TryGetPropertyIgnoreCase(root, "smapiVersion", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool LooksLikeCurseforgeManifest(string manifestJsonPath)
+    {
+        try
+        {
+            // CurseForge 导出包通常是 UTF-8，但 Windows 工具也可能写成 UTF-16。
+            // 这里是类型检测的第一关，不能让编码问题在进入安装器前把整合包判成未知。
+            using var reader = new StreamReader(
+                manifestJsonPath,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
+            using var document = JsonDocument.Parse(reader.ReadToEnd(), CompatibleJsonOptions);
+            var root = document.RootElement;
+            return TryGetPropertyIgnoreCase(root, "manifestVersion", out var manifestVersion)
+                   && TryGetInt32(manifestVersion, out _)
+                   && TryGetPropertyIgnoreCase(root, "files", out var files)
+                   && (files.ValueKind == JsonValueKind.Array || files.ValueKind == JsonValueKind.Null);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? GetFirstJsonString(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                var text = GetJsonString(item);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+
+            return null;
+        }
+
+        return GetJsonString(value);
+    }
+
+    private static bool TryGetPropertyIgnoreCase(
+        JsonElement element,
+        string propertyName,
+        out JsonElement property)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var candidate in element.EnumerateObject())
+            {
+                if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    property = candidate.Value;
+                    return true;
+                }
+            }
+        }
+
+        property = default;
+        return false;
+    }
+
+    private static string? GetJsonString(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static bool TryGetInt32(JsonElement value, out int number)
+    {
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out number))
+        {
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.String &&
+            int.TryParse(value.GetString(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out number))
+        {
+            return true;
+        }
+
+        number = 0;
+        return false;
     }
 
     /// <summary>清理临时解压目录。</summary>
@@ -375,7 +613,7 @@ public static class ModpackTypeDetector
                     return root;
                 }
 
-                var any = Directory.GetFiles(directory, name, SearchOption.AllDirectories).FirstOrDefault();
+                var any = FindFileByNameIgnoreCase(directory, name, SearchOption.AllDirectories);
                 if (!string.IsNullOrEmpty(any))
                 {
                     return any;
@@ -419,11 +657,31 @@ public static class ModpackTypeDetector
                 Path.Combine(dir, $"{baseName}.icon.webp")
             };
 
-            return candidates.FirstOrDefault(File.Exists);
+            var exact = candidates.FirstOrDefault(File.Exists);
+            if (!string.IsNullOrWhiteSpace(exact))
+            {
+                return exact;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                var directory = Path.GetDirectoryName(candidate);
+                var fileName = Path.GetFileName(candidate);
+                var match = string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileName)
+                    ? null
+                    : FindFileByNameIgnoreCase(directory, fileName, SearchOption.TopDirectoryOnly);
+                if (!string.IsNullOrWhiteSpace(match))
+                {
+                    return match;
+                }
+            }
+
+            return null;
         }
         catch
         {
             return null;
         }
     }
+
 }

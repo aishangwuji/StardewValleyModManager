@@ -167,6 +167,65 @@ public sealed class DialogService
         return await host.ShowDialog<string?>(owner);
     }
 
+    /// <summary>
+    /// 在主页没有选中版本时，为在线 Mod 安装提供 SMAPI 目标选择。
+    /// 弹窗同时支持确定安装、另存为和取消，避免用户必须先离开 Mod 页面设置实例。
+    /// </summary>
+    public async Task<ModInstallTargetDialogResult> ShowModInstallTargetDialogAsync(
+        IReadOnlyList<(string DisplayName, string TargetPath)> targets,
+        string title = "没有选择游戏版本，请选择")
+    {
+        var owner = GetMainWindow();
+        if (owner == null)
+        {
+            return new ModInstallTargetDialogResult(ModInstallTargetDialogAction.Cancel);
+        }
+
+        var targetList = (targets ?? [])
+            .Where(target => !string.IsNullOrWhiteSpace(target.TargetPath))
+            .Select(target => (
+                DisplayName: string.IsNullOrWhiteSpace(target.DisplayName)
+                    ? "SMAPI 版本"
+                    : target.DisplayName.Trim(),
+                TargetPath: target.TargetPath.Trim()))
+            .ToList();
+
+        var displayNames = targetList
+            .Select(target => $"{target.DisplayName}\n{target.TargetPath}")
+            .ToList();
+        var dialog = new ModInstallTargetDialog
+        {
+            Title = title,
+            Message = "主页当前没有选中的游戏版本，请选择一个 SMAPI 版本后继续安装。",
+            TargetDisplayNames = displayNames,
+            SelectedIndex = targetList.Count > 0 ? 0 : -1,
+            HasTargets = targetList.Count > 0,
+            HasNoTargets = targetList.Count == 0
+        };
+
+        var host = CreateHostedDialogWindow(title, dialog);
+        dialog.ConfirmCommand = new DelegateCommand(_ =>
+        {
+            var index = dialog.SelectedIndex;
+            var selectedPath = index >= 0 && index < targetList.Count
+                ? targetList[index].TargetPath
+                : null;
+            if (!string.IsNullOrWhiteSpace(selectedPath))
+            {
+                host.Close(new ModInstallTargetDialogResult(
+                    ModInstallTargetDialogAction.Confirm,
+                    selectedPath));
+            }
+        });
+        dialog.SaveAsCommand = new DelegateCommand(_ =>
+            host.Close(new ModInstallTargetDialogResult(ModInstallTargetDialogAction.SaveAs)));
+        dialog.CancelCommand = new DelegateCommand(_ =>
+            host.Close(new ModInstallTargetDialogResult(ModInstallTargetDialogAction.Cancel)));
+
+        return await host.ShowDialog<ModInstallTargetDialogResult>(owner)
+            ?? new ModInstallTargetDialogResult(ModInstallTargetDialogAction.Cancel);
+    }
+
     public async Task<string?> ShowGamePathSelectionDialogAsync(
         string currentPath = "",
         string title = "选择游戏路径",
@@ -357,8 +416,12 @@ public sealed class DialogService
                     continue;
                 }
 
-                displayNames.Add(string.IsNullOrWhiteSpace(name) ? gamePath : name);
-                gamePaths.Add(gamePath);
+                var fullGamePath = Path.GetFullPath(gamePath);
+                // 路径名只用于识别，安装目标必须同时显示完整地址，避免多个同名 Base 路径无法区分。
+                displayNames.Add(string.IsNullOrWhiteSpace(name)
+                    ? fullGamePath
+                    : $"{name}\n{fullGamePath}");
+                gamePaths.Add(fullGamePath);
             }
         }
 
@@ -537,7 +600,7 @@ public sealed class DialogService
         return await host.ShowDialog<ModpackDropDialogResult?>(owner);
     }
 
-    /// <summary>通过文件选择器选取一个 Modpack 整合包文件（.zip/.cfmodpack），返回本地路径。</summary>
+    /// <summary>通过文件选择器选取一个 Modpack 整合包文件（.zip/.cfmodpack/.7z），返回本地路径。</summary>
     public async Task<string?> PickModpackFileAsync()
     {
         var owner = GetMainWindow();
@@ -548,7 +611,7 @@ public sealed class DialogService
 
         return await PickFilePathAsync(owner, "选择 Modpack 整合包文件",
         [
-            new FilePickerFileType("整合包文件") { Patterns = ["*.zip;*.cfmodpack"] },
+            new FilePickerFileType("整合包文件") { Patterns = ["*.zip", "*.cfmodpack", "*.7z"] },
             new FilePickerFileType("所有文件") { Patterns = ["*.*"] }
         ]);
     }

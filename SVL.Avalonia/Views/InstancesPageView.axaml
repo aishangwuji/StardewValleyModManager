@@ -77,7 +77,7 @@
                   Margin="8,0,0,0"
               Command="{Binding DataContext.OpenVersionSettingsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                   CommandParameter="{Binding}">
-            <Path Data="{StaticResource Icon.Settings}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+            <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Settings.png" Width="18" Height="18" Stretch="Uniform" />
           </Button>
 
           <Button Grid.Column="2"
@@ -166,6 +166,32 @@
     <Style Selector="ListBox.pathList ListBoxItem:selected /template/ Border#PathEntryBorder">
       <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
       <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    </Style>
+
+    <!-- ContextMenu 的实际面板由 FluentTheme 创建为 MenuFlyoutPresenter。
+         仅设置 ContextMenu 本身不会覆盖 Presenter 的默认浅色资源。 -->
+    <Style Selector="MenuFlyoutPresenter">
+      <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="MenuItem">
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <Style Selector="MenuItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="MenuItem:disabled">
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+
+    <Style Selector="MenuFlyoutPresenter Separator">
+      <Setter Property="Background" Value="{DynamicResource BorderBrush}" />
     </Style>
 
     <Style Selector="Button.instanceCard">
@@ -278,23 +304,30 @@
             <DataTemplate x:DataType="vm:PathEntryItem">
               <Grid RowDefinitions="Auto,Auto,Auto"
                     HorizontalAlignment="Stretch"
-                  Background="Transparent"
-                  PointerPressed="PathEntry_PointerPressed">
+                    Background="Transparent"
+                    PointerPressed="PathEntry_PointerPressed">
                 <Grid.ContextMenu>
-                  <ContextMenu>
+                  <ContextMenu Background="{DynamicResource CardBrush}"
+                               BorderBrush="{DynamicResource BorderBrush}"
+                               BorderThickness="1"
+                               Opening="PathContextMenu_Opening">
                     <MenuItem Header="重命名"
-                              Command="{Binding DataContext.RenamePathCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                              CommandParameter="{Binding}" />
+                              Foreground="{DynamicResource TextPrimaryBrush}"
+                              Tag="{Binding .}"
+                              Click="OnPathRenameClicked" />
                     <MenuItem Header="打开文件夹"
-                              Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                              CommandParameter="{Binding}" />
+                              Foreground="{DynamicResource TextPrimaryBrush}"
+                              Tag="{Binding .}"
+                              Click="OnPathOpenFolderClicked" />
                     <MenuItem Header="刷新信息"
-                              Command="{Binding DataContext.RefreshPathCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                              CommandParameter="{Binding}" />
+                              Foreground="{DynamicResource TextPrimaryBrush}"
+                              Tag="{Binding .}"
+                              Click="OnPathRefreshClicked" />
                     <Separator />
                     <MenuItem Header="删除"
-                              Command="{Binding DataContext.DeletePathCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                              CommandParameter="{Binding}" />
+                              Foreground="{DynamicResource TextPrimaryBrush}"
+                              Tag="{Binding .}"
+                              Click="OnPathDeleteClicked" />
                   </ContextMenu>
                 </Grid.ContextMenu>
 

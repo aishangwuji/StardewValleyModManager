@@ -13,16 +13,20 @@ public sealed class AppUserSettingsStore
 
     private readonly string _settingsPath;
 
-    public AppUserSettingsStore()
+    public AppUserSettingsStore(string? storageDirectory = null)
     {
-        var basePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SVL",
-            "Avalonia");
+        var basePath = string.IsNullOrWhiteSpace(storageDirectory)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SVL",
+                "Avalonia")
+            : Path.GetFullPath(storageDirectory);
 
         Directory.CreateDirectory(basePath);
         _settingsPath = Path.Combine(basePath, "settings.json");
     }
+
+    public bool Exists => File.Exists(_settingsPath);
 
     public AppUserSettings Load()
     {
@@ -45,7 +49,7 @@ public sealed class AppUserSettingsStore
     public void Save(AppUserSettings settings)
     {
         var json = JsonSerializer.Serialize(settings, JsonOptions);
-        File.WriteAllText(_settingsPath, json);
+        AtomicFileWriter.WriteUtf8(_settingsPath, json);
     }
 
     public string GetSettingsPath() => _settingsPath;

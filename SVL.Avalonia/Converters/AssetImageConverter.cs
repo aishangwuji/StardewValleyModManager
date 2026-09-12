@@ -77,13 +77,14 @@ public sealed class AssetImageConverter : IValueConverter
             normalizedPath = "https:" + normalizedPath;
         }
 
-        // 当 ConverterParameter=animate 时，仅对 GIF 文件返回 AnimatedImageSourceUri，
-        // 让 ImageBehavior.AnimatedSource 接管动画播放。非 GIF 返回 null，不影响 Source 显示。
+        // 当 ConverterParameter=animate 时，仅对 GIF 和实际包含 acTL 块的 APNG 返回
+        // AnimatedImageSourceUri。普通 PNG 继续由 Source 的内存 Bitmap 渲染，避免
+        // 动画控件长期占用实例目录中的静态图标文件。
         var allowAnimated = parameter is string paramStr &&
                             paramStr.Equals("animate", StringComparison.OrdinalIgnoreCase);
         if (allowAnimated)
         {
-            if (!IsGifPath(normalizedPath))
+            if (!IsAnimatedImagePath(normalizedPath))
             {
                 return null;
             }
@@ -92,11 +93,22 @@ public sealed class AssetImageConverter : IValueConverter
             {
                 if (File.Exists(normalizedPath))
                 {
-                    return new AnimatedImageSourceUri(new Uri(normalizedPath));
+                    // AnimatedImageSourceUri keeps a URI-backed decoder alive. Point it at an
+                    // application cache copy instead of the instance file so a custom APNG/GIF
+                    // can never prevent its game version directory from being deleted.
+                    var cachedAnimatedUri = CreateAnimatedCacheUri(normalizedPath);
+                    return cachedAnimatedUri is null ? null : new AnimatedImageSourceUri(cachedAnimatedUri);
                 }
 
                 if (Uri.TryCreate(path, UriKind.Absolute, out var animatedUri))
                 {
+                    if (animatedUri.IsFile)
+                    {
+                        var localPath = Uri.UnescapeDataString(animatedUri.LocalPath);
+                        var cachedAnimatedUri = CreateAnimatedCacheUri(localPath);
+                        return cachedAnimatedUri is null ? null : new AnimatedImageSourceUri(cachedAnimatedUri);
+                    }
+
                     return new AnimatedImageSourceUri(animatedUri);
                 }
             }
@@ -116,7 +128,7 @@ public sealed class AssetImageConverter : IValueConverter
                 // 否则 ChangeIcon/TryWriteDefaultSmapiIcon 覆写 .svl-instance-icon.png 后
                 // 仍命中旧 Bitmap，导致图标不刷新（?v=ticks 被 StripQueryAndFragment 去掉）
                 var cacheKey = BuildLocalFileCacheKey(normalizedPath);
-                return LoadCached(cacheKey, () => new Bitmap(normalizedPath));
+                return LoadCached(cacheKey, () => LoadLocalBitmap(normalizedPath));
             }
 
             if (Uri.TryCreate(path, UriKind.Absolute, out var uri))
@@ -126,7 +138,7 @@ public sealed class AssetImageConverter : IValueConverter
                     var localPath = Uri.UnescapeDataString(uri.LocalPath);
                     if (File.Exists(localPath))
                     {
-                        return LoadCached(BuildLocalFileCacheKey(localPath), () => new Bitmap(localPath));
+                        return LoadCached(BuildLocalFileCacheKey(localPath), () => LoadLocalBitmap(localPath));
                     }
 
                     return null;
@@ -142,7 +154,7 @@ public sealed class AssetImageConverter : IValueConverter
                     var cachePath = GetIconCachePath(path);
                     if (!string.IsNullOrEmpty(cachePath) && File.Exists(cachePath))
                     {
-                        return LoadCached(BuildLocalFileCacheKey(cachePath), () => new Bitmap(cachePath));
+                        return LoadCached(BuildLocalFileCacheKey(cachePath), () => LoadLocalBitmap(cachePath));
                     }
 
                     return null;
@@ -162,7 +174,7 @@ public sealed class AssetImageConverter : IValueConverter
                     var localPath = Uri.UnescapeDataString(normalizedUri.LocalPath);
                     if (File.Exists(localPath))
                     {
-                        return LoadCached(BuildLocalFileCacheKey(localPath), () => new Bitmap(localPath));
+                        return LoadCached(BuildLocalFileCacheKey(localPath), () => LoadLocalBitmap(localPath));
                     }
 
                     return null;
@@ -175,7 +187,7 @@ public sealed class AssetImageConverter : IValueConverter
                     var cachePath = GetIconCachePath(path);
                     if (!string.IsNullOrEmpty(cachePath) && File.Exists(cachePath))
                     {
-                        return LoadCached(cachePath, () => new Bitmap(cachePath));
+                        return LoadCached(BuildLocalFileCacheKey(cachePath), () => LoadLocalBitmap(cachePath));
                     }
 
                     return null;
@@ -251,15 +263,169 @@ public sealed class AssetImageConverter : IValueConverter
         }
     }
 
-    /// <summary>检查路径是否为 GIF 文件（通过扩展名判断）。</summary>
-    private static bool IsGifPath(string path)
+    /// <summary>
+    /// 移除指定实例目录下的本地图像缓存索引。Bitmap 本身由当前 Image 控件继续持有，
+    /// 因此不在这里 Dispose，避免控件在重绘期间访问已释放的对象。
+    /// </summary>
+    public static void RemoveCachedLocalFilesUnderDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        string normalizedDirectory;
+        try
+        {
+            normalizedDirectory = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var cacheKey in BitmapCache.Keys)
+        {
+            var separatorIndex = cacheKey.LastIndexOf('|');
+            var localPath = separatorIndex >= 0 ? cacheKey[..separatorIndex] : cacheKey;
+            try
+            {
+                var normalizedPath = Path.GetFullPath(localPath);
+                if (normalizedPath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase))
+                {
+                    BitmapCache.TryRemove(cacheKey, out _);
+                }
+            }
+            catch
+            {
+                // URI resource keys and malformed cache keys are not local files.
+            }
+        }
+    }
+
+    /// <summary>从共享读取流中解码本地文件，避免 Avalonia Bitmap 长时间持有源文件句柄。</summary>
+    private static Bitmap LoadLocalBitmap(string localPath)
+    {
+        using var source = new FileStream(
+            localPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var memory = new MemoryStream();
+        source.CopyTo(memory);
+        memory.Position = 0;
+        return new Bitmap(memory);
+    }
+
+    /// <summary>检查路径是否实际包含动画帧；普通 PNG 必须走内存 Bitmap，不能交给动画控件。</summary>
+    private static bool IsAnimatedImagePath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
             return false;
         }
 
-        return path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
+        if (path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
+               File.Exists(path) &&
+               IsAnimatedPng(path);
+    }
+
+    private static bool IsAnimatedPng(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new BinaryReader(stream, Encoding.ASCII, leaveOpen: true);
+
+            var signature = reader.ReadBytes(8);
+            if (signature.Length != 8 ||
+                signature[0] != 137 || signature[1] != 80 || signature[2] != 78 || signature[3] != 71)
+            {
+                return false;
+            }
+
+            while (stream.Position + 8 <= stream.Length)
+            {
+                var lengthBytes = reader.ReadBytes(4);
+                var typeBytes = reader.ReadBytes(4);
+                if (lengthBytes.Length != 4 || typeBytes.Length != 4)
+                {
+                    return false;
+                }
+
+                var length = ((long)lengthBytes[0] << 24) |
+                             ((long)lengthBytes[1] << 16) |
+                             ((long)lengthBytes[2] << 8) |
+                             lengthBytes[3];
+                var type = Encoding.ASCII.GetString(typeBytes);
+                if (string.Equals(type, "acTL", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                // Skip payload and CRC. A malformed chunk is treated as a non-animated PNG.
+                if (length < 0 || stream.Position + length + 4 > stream.Length)
+                {
+                    return false;
+                }
+
+                stream.Seek(length + 4, SeekOrigin.Current);
+            }
+        }
+        catch
+        {
+            // A normal static bitmap is still rendered by the regular Source binding.
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Copies a local animated asset to the shared cache before handing it to the animation
+    /// component. This keeps the decoder away from per-instance files that users may delete.
+    /// </summary>
+    private static Uri? CreateAnimatedCacheUri(string localPath)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(localPath);
+            var lastWrite = File.GetLastWriteTimeUtc(fullPath).Ticks;
+            var length = new FileInfo(fullPath).Length;
+            var identity = $"{fullPath}|{lastWrite}|{length}";
+            using var sha256 = SHA256.Create();
+            var hash = System.Convert.ToHexString(sha256.ComputeHash(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
+            var extension = Path.GetExtension(fullPath);
+            var cacheDirectory = Path.Combine(IconCacheDirectory, "animated");
+            var cachePath = Path.Combine(cacheDirectory, hash + (string.IsNullOrWhiteSpace(extension) ? ".img" : extension));
+
+            if (!File.Exists(cachePath))
+            {
+                Directory.CreateDirectory(cacheDirectory);
+                using var source = new FileStream(
+                    fullPath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var destination = new FileStream(cachePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                source.CopyTo(destination);
+            }
+
+            return new Uri(cachePath);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

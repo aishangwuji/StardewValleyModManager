@@ -6,8 +6,11 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Win32;
+using SVL.Avalonia.Converters;
 using SVL.Avalonia.Models;
+using SVL.Avalonia.Services;
 using SVL.Core.Platform.Abstractions;
+using SVL.Core.Platform.IO;
 using System;
 using System.ComponentModel;
 using System.Collections.ObjectModel;
@@ -18,6 +21,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -108,6 +112,10 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
     public bool SelectedTaskCanCancel => SelectedTask?.CanCancel ?? false;
     public bool SelectedTaskCanRetry => SelectedTask?.CanRetry ?? false;
     public bool SelectedTaskHasInstalledDirectory => SelectedTask?.HasInstalledDirectory ?? false;
+    public string SelectedTaskTargetGamePath => SelectedTask?.TargetGamePath ?? string.Empty;
+    public bool SelectedTaskHasTargetGamePath => !string.IsNullOrWhiteSpace(SelectedTaskTargetGamePath);
+    public string SelectedTaskInstalledPath => SelectedTask?.InstalledPath ?? string.Empty;
+    public bool SelectedTaskHasInstalledPath => !string.IsNullOrWhiteSpace(SelectedTaskInstalledPath);
     public bool SelectedTaskHasReportPath => SelectedTask?.HasReportPath ?? false;
     public bool SelectedTaskHasRetryReportPath => SelectedTask?.HasRetryReportPath ?? false;
 
@@ -287,7 +295,11 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
         IsCancelledState = task.IsCancelled;
 
         FailureSummary = IsFailedState ? (string.IsNullOrWhiteSpace(task.FailedDetails) ? task.Status : task.FailedDetails) : "暂无失败信息";
-        ProgressPercent = task.IsFinished && task.Progress >= 100 ? 100 : Math.Clamp(task.Progress, 0, 100);
+        // 只有 Completed 才能占满进度条；失败/取消任务即使恢复了旧的 100
+        // 也不能误导用户认为所有安装步骤都已完成。
+        ProgressPercent = task.IsCompleted && task.Progress >= 100
+            ? 100
+            : Math.Clamp(task.IsFinished ? Math.Min(task.Progress, 99) : task.Progress, 0, 100);
 
         OnPropertyChanged(nameof(IsRunningState));
         RefreshSuggestedActions();
@@ -325,12 +337,27 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
 
         if (IsFailedState)
         {
+            if (HasMissingSourceFailure())
+            {
+                AdviceTitle = "需要补充 Mod 来源";
+                SuggestedActions.Add("失败条目没有可用的平台 ID、FileID 或直链，SVL 无法自动下载这些 Mod。");
+                SuggestedActions.Add(SelectedTask?.CanRetry == true
+                    ? "补充来源或确认登录后，再点击右栏“重试”；已有成功安装的 Mod 会复用。"
+                    : "请返回下载页或 Mod 详情页补充来源后重新导入整合包。");
+                if (SelectedTaskHasRetryReportPath)
+                {
+                    SuggestedActions.Add("打开该任务的重试报告，查看仍缺少来源的具体条目。");
+                }
+
+                return;
+            }
+
             AdviceTitle = "失败后的建议";
             SuggestedActions.Add("点击右栏“重试”重新尝试，或“移除”清理后重新发起。");
             SuggestedActions.Add("若仍失败，检查代理地址与网络连通性。");
-            if (HasLatestRetryReport)
+            if (SelectedTaskHasRetryReportPath)
             {
-                SuggestedActions.Add("打开最新重试报告，对比本次与上次失败差异。");
+                SuggestedActions.Add("打开该任务的重试报告，对比本次与上次失败差异。");
             }
             return;
         }
@@ -356,6 +383,22 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
         AdviceTitle = "进行中的建议";
         SuggestedActions.Add("保持窗口开启，SVL 会持续更新下载与安装状态。");
         SuggestedActions.Add("如果长时间无进展，可检查代理设置、磁盘空间和权限。");
+    }
+
+    private bool HasMissingSourceFailure()
+    {
+        if (!IsFailedState)
+        {
+            return false;
+        }
+
+        var text = FailureSummary ?? string.Empty;
+        return text.Contains("缺少来源", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("缺少可用下载来源", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("缺少真实下载地址", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("来源字段缺失", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("未识别的 Mod 下载来源", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("无法解析", StringComparison.OrdinalIgnoreCase);
     }
 
     [RelayCommand]
@@ -539,6 +582,10 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
         OnPropertyChanged(nameof(SelectedTaskCanCancel));
         OnPropertyChanged(nameof(SelectedTaskCanRetry));
         OnPropertyChanged(nameof(SelectedTaskHasInstalledDirectory));
+        OnPropertyChanged(nameof(SelectedTaskTargetGamePath));
+        OnPropertyChanged(nameof(SelectedTaskHasTargetGamePath));
+        OnPropertyChanged(nameof(SelectedTaskInstalledPath));
+        OnPropertyChanged(nameof(SelectedTaskHasInstalledPath));
         OnPropertyChanged(nameof(SelectedTaskHasReportPath));
         OnPropertyChanged(nameof(SelectedTaskHasRetryReportPath));
     }
@@ -547,22 +594,60 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
 
     private void OnSelectedTaskItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (sender is not DownloadTaskItem task || !ReferenceEquals(task, SelectedTask))
+        {
+            return;
+        }
+
+        // 任务状态可能由后台下载/安装线程修改；右栏会刷新建议集合和进度属性，
+        // 这些绑定对象必须在 Avalonia UI 线程上更新。
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnSelectedTaskItemPropertyChanged(sender, e));
+            return;
+        }
+
         switch (e.PropertyName)
         {
             case nameof(DownloadTaskItem.CanRetry):
                 OnPropertyChanged(nameof(SelectedTaskCanRetry));
                 OnPropertyChanged(nameof(CanRetryFailedItems));
+                RefreshSuggestedActions();
                 break;
             case nameof(DownloadTaskItem.CanCancel):
                 OnPropertyChanged(nameof(SelectedTaskCanCancel));
                 break;
             case nameof(DownloadTaskItem.TaskState):
             case nameof(DownloadTaskItem.Status):
+            case nameof(DownloadTaskItem.FailedDetails):
+                RefreshStatusPresentation(task);
                 OnPropertyChanged(nameof(CurrentTaskStatus));
                 OnPropertyChanged(nameof(SelectedTaskCanRetry));
                 OnPropertyChanged(nameof(SelectedTaskCanCancel));
                 break;
+            case nameof(DownloadTaskItem.InstalledDirectory):
+                OnPropertyChanged(nameof(SelectedTaskHasInstalledDirectory));
+                break;
+            case nameof(DownloadTaskItem.TargetGamePath):
+                OnPropertyChanged(nameof(SelectedTaskTargetGamePath));
+                OnPropertyChanged(nameof(SelectedTaskHasTargetGamePath));
+                break;
+            case nameof(DownloadTaskItem.InstalledPath):
+                OnPropertyChanged(nameof(SelectedTaskInstalledPath));
+                OnPropertyChanged(nameof(SelectedTaskHasInstalledPath));
+                break;
+            case nameof(DownloadTaskItem.ReportPath):
+                OnPropertyChanged(nameof(SelectedTaskHasReportPath));
+                break;
+            case nameof(DownloadTaskItem.RetryReportPath):
+                OnPropertyChanged(nameof(SelectedTaskHasRetryReportPath));
+                RefreshSuggestedActions();
+                break;
             case nameof(DownloadTaskItem.Progress):
+                ProgressPercent = task.IsCompleted && task.Progress >= 100
+                    ? 100
+                    : Math.Clamp(task.IsFinished ? Math.Min(task.Progress, 99) : task.Progress, 0, 100);
+                goto case nameof(DownloadTaskItem.SpeedText);
             case nameof(DownloadTaskItem.SpeedText):
             case nameof(DownloadTaskItem.DownloadedSizeText):
             case nameof(DownloadTaskItem.TotalSizeText):
@@ -590,6 +675,8 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
     private readonly Services.RemoteCatalogService _catalogService;
     private bool _isInitialized;
     private int _currentPage = 1;
+    // 搜索请求可能在用户连续点击搜索/翻页时交错返回；只允许最后一次请求更新页面。
+    private int _loadGeneration;
 
     public override string Title => "Mod 搜索";
     public override string Description => "对应 WPF ModSearchView，承载 Nexus/Curseforge 搜索与筛选。";
@@ -600,17 +687,37 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
 
     public ObservableCollection<Models.ModSearchResultItem> Results { get; } = [];
 
-    public string Query { get; set; } = string.Empty;
+    [ObservableProperty]
+    private string _query = string.Empty;
 
-    public string SelectedSource { get; set; } = "全部";
+    [ObservableProperty]
+    private string _selectedSource = "全部";
+
+    /// <summary>与 WPF ModSearchView 对齐的游戏版本筛选项。</summary>
+    public ObservableCollection<string> GameVersions { get; } = ["全部"];
+
+    /// <summary>
+    /// RemoteCatalogService 会把不同来源的分类归一化为这些显示值，
+    /// 因此这里不直接暴露来源的原始英文分类。
+    /// </summary>
+    public ObservableCollection<string> ModTypes { get; } =
+        ["全部", "功能扩展", "界面美化", "游戏内容", "工具类", "音效材质", "作弊类"];
+
+    [ObservableProperty]
+    private string _selectedGameVersion = "全部";
+
+    [ObservableProperty]
+    private string _selectedModType = "全部";
 
     [ObservableProperty]
     private string _status = "加载热门模组中...";
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(NextPageCommand))]
     private bool _hasNextPage;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PreviousPageCommand))]
     private bool _hasPreviousPage;
 
     [ObservableProperty]
@@ -619,6 +726,19 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
     public ModSearchPageViewModel(Services.RemoteCatalogService catalogService)
     {
         _catalogService = catalogService;
+        try
+        {
+            var defaultSource = _catalogService.GetDefaultSource();
+            if (Sources.Contains(defaultSource, StringComparer.OrdinalIgnoreCase))
+            {
+                SelectedSource = Sources.First(source =>
+                    string.Equals(source, defaultSource, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        catch
+        {
+            // 配置读取失败时保留“全部”来源，不阻断搜索页打开。
+        }
     }
 
     /// <summary>
@@ -632,7 +752,42 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
         }
 
         _isInitialized = true;
+        // 热门列表与版本枚举互不依赖；并行请求可以避免版本接口拖慢首屏。
+        var versionsTask = LoadGameVersionsAsync();
         await LoadPopularModsAsync();
+        await versionsTask;
+    }
+
+    private async Task LoadGameVersionsAsync()
+    {
+        try
+        {
+            var versions = await _catalogService.GetModGameVersionsAsync();
+            GameVersions.Clear();
+            GameVersions.Add("全部");
+            foreach (var version in versions
+                         .Where(item => !string.IsNullOrWhiteSpace(item))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                GameVersions.Add(version);
+            }
+
+            if (!GameVersions.Contains(SelectedGameVersion))
+            {
+                SelectedGameVersion = "全部";
+            }
+        }
+        catch
+        {
+            // RemoteCatalogService 已有默认版本回退；这里再保留一层 UI 防御，
+            // 确保版本接口异常时筛选下拉框仍可用。
+            if (GameVersions.Count == 1)
+            {
+                GameVersions.Add("1.6");
+                GameVersions.Add("1.5");
+                GameVersions.Add("1.4");
+            }
+        }
     }
 
     [RelayCommand]
@@ -680,29 +835,46 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
 
     private async Task LoadSearchResultsAsync()
     {
+        var loadGeneration = Interlocked.Increment(ref _loadGeneration);
         Results.Clear();
         Status = "正在搜索...";
         OnPropertyChanged(nameof(Status));
 
         try
         {
-            var remote = await _catalogService.SearchModsAdvancedAsync(
+            var remote = await _catalogService.SearchModsAdvancedPagedAsync(
                 keyword: Query,
                 source: SelectedSource,
-                page: _currentPage);
-            foreach (var item in remote)
+                gameVersion: SelectedGameVersion,
+                modType: SelectedModType,
+                page: _currentPage,
+                pageSize: 10);
+            if (loadGeneration != _loadGeneration)
+            {
+                return;
+            }
+
+            foreach (var item in remote.Items)
             {
                 Results.Add(item);
             }
+
+            HasNextPage = remote.HasMore;
         }
         catch (Exception ex)
         {
+            if (loadGeneration != _loadGeneration)
+            {
+                return;
+            }
+
             Status = $"搜索失败: {ex.Message}";
+            HasNextPage = false;
+            HasPreviousPage = _currentPage > 1;
             OnPropertyChanged(nameof(Status));
             return;
         }
 
-        HasNextPage = Results.Count >= 10;
         HasPreviousPage = _currentPage > 1;
         PageInfoText = $"第 {_currentPage} 页";
         Status = $"已找到 {Results.Count} 条结果（第 {_currentPage} 页）";
@@ -711,23 +883,32 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
 
     private async Task LoadPopularModsAsync()
     {
+        var loadGeneration = Interlocked.Increment(ref _loadGeneration);
         Results.Clear();
         Status = "正在加载热门 Mod...";
         OnPropertyChanged(nameof(Status));
 
         try
         {
-            var remote = await _catalogService.SearchModsAdvancedAsync(
+            var remote = await _catalogService.SearchModsAdvancedPagedAsync(
                 keyword: string.Empty,
                 source: SelectedSource,
+                gameVersion: SelectedGameVersion,
+                modType: SelectedModType,
                 hotOnly: true,
-                page: _currentPage);
-            foreach (var item in remote)
+                page: _currentPage,
+                pageSize: 10);
+            if (loadGeneration != _loadGeneration)
+            {
+                return;
+            }
+
+            foreach (var item in remote.Items)
             {
                 Results.Add(item);
             }
 
-            HasNextPage = Results.Count >= 10;
+            HasNextPage = remote.HasMore;
             HasPreviousPage = _currentPage > 1;
             PageInfoText = $"第 {_currentPage} 页";
             Status = Results.Count > 0
@@ -736,10 +917,28 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
         }
         catch (Exception ex)
         {
+            if (loadGeneration != _loadGeneration)
+            {
+                return;
+            }
+
             Status = $"加载热门 Mod 失败: {ex.Message}";
+            HasNextPage = false;
+            HasPreviousPage = _currentPage > 1;
         }
 
         OnPropertyChanged(nameof(Status));
+    }
+
+    [RelayCommand]
+    private async Task ResetSearchAsync()
+    {
+        Query = string.Empty;
+        SelectedSource = "全部";
+        SelectedGameVersion = "全部";
+        SelectedModType = "全部";
+        _currentPage = 1;
+        await LoadPopularModsAsync();
     }
 
     [RelayCommand]
@@ -757,6 +956,10 @@ public sealed partial class ModSearchPageViewModel : FeaturePageViewModelBase
 public sealed partial class ModpackSearchPageViewModel : FeaturePageViewModelBase
 {
     private readonly Services.RemoteCatalogService _catalogService;
+    private int _currentPage = 1;
+    private bool _isInitialized;
+    // 防止较早的搜索响应覆盖用户最后一次关键词/翻页结果。
+    private int _loadGeneration;
 
     public override string Title => "Modpack 搜索";
     public override string Description => "对应 WPF ModpackSearchView，承载整合包搜索与导入流程。";
@@ -767,48 +970,135 @@ public sealed partial class ModpackSearchPageViewModel : FeaturePageViewModelBas
 
     public ObservableCollection<Models.ModSearchResultItem> Results { get; } = [];
 
-    public string Query { get; set; } = string.Empty;
+    [ObservableProperty]
+    private string _query = string.Empty;
 
-    public string SelectedSource { get; set; } = "全部";
+    [ObservableProperty]
+    private string _selectedSource = "全部";
 
     public string Status { get; private set; } = "请输入关键词开始搜索";
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(NextPageCommand))]
+    private bool _hasNextPage;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(PreviousPageCommand))]
+    private bool _hasPreviousPage;
+
+    [ObservableProperty]
+    private string _pageInfoText = "第 1 页";
 
     public ModpackSearchPageViewModel(Services.RemoteCatalogService catalogService)
     {
         _catalogService = catalogService;
+        try
+        {
+            var defaultSource = _catalogService.GetDefaultSource();
+            if (Sources.Contains(defaultSource, StringComparer.OrdinalIgnoreCase))
+            {
+                SelectedSource = Sources.First(source =>
+                    string.Equals(source, defaultSource, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        catch
+        {
+            // 配置读取失败时保留“全部”来源，不阻断搜索页打开。
+        }
+    }
+
+    /// <summary>页面首次打开时加载热门整合包，和 WPF 入口保持一致。</summary>
+    public async Task InitializeAsync()
+    {
+        if (_isInitialized)
+        {
+            return;
+        }
+
+        _isInitialized = true;
+        _currentPage = 1;
+        await LoadSearchResultsAsync();
     }
 
     [RelayCommand]
     private async Task Search()
     {
-        Results.Clear();
+        _currentPage = 1;
+        await LoadSearchResultsAsync();
+    }
 
-        if (string.IsNullOrWhiteSpace(Query))
+    [RelayCommand(CanExecute = nameof(HasNextPage))]
+    private async Task NextPageAsync()
+    {
+        if (!HasNextPage)
         {
-            Status = "请输入 Modpack 关键词";
-            OnPropertyChanged(nameof(Status));
             return;
         }
 
-        Status = "正在请求远程数据源...";
+        _currentPage++;
+        await LoadSearchResultsAsync();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasPreviousPage))]
+    private async Task PreviousPageAsync()
+    {
+        if (!HasPreviousPage || _currentPage <= 1)
+        {
+            return;
+        }
+
+        _currentPage--;
+        await LoadSearchResultsAsync();
+    }
+
+    private async Task LoadSearchResultsAsync()
+    {
+        var loadGeneration = Interlocked.Increment(ref _loadGeneration);
+        Results.Clear();
+
+        Status = string.IsNullOrWhiteSpace(Query)
+            ? "正在加载热门整合包..."
+            : "正在请求远程数据源...";
         OnPropertyChanged(nameof(Status));
 
         try
         {
-            var remote = await _catalogService.SearchModpacksAsync(Query, SelectedSource);
-            foreach (var item in remote)
+            var remote = await _catalogService.SearchModpacksPagedAsync(
+                Query,
+                SelectedSource,
+                _currentPage,
+                pageSize: 10);
+            if (loadGeneration != _loadGeneration)
+            {
+                return;
+            }
+
+            foreach (var item in remote.Items)
             {
                 Results.Add(item);
             }
+
+            HasNextPage = remote.HasMore;
+            HasPreviousPage = _currentPage > 1;
+            PageInfoText = $"第 {_currentPage} 页";
         }
         catch (Exception ex)
         {
+            if (loadGeneration != _loadGeneration)
+            {
+                return;
+            }
+
             Status = $"远程搜索失败: {ex.Message}";
+            HasNextPage = false;
+            HasPreviousPage = _currentPage > 1;
             OnPropertyChanged(nameof(Status));
             return;
         }
 
-        Status = $"已找到 {Results.Count} 条结果";
+        Status = string.IsNullOrWhiteSpace(Query)
+            ? $"已加载 {Results.Count} 个热门整合包（第 {_currentPage} 页）"
+            : $"已找到 {Results.Count} 条结果（第 {_currentPage} 页）";
         OnPropertyChanged(nameof(Status));
     }
 
@@ -834,6 +1124,8 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
     private string _currentCompatTag = string.Empty;
     private string _currentCollectionSlug = string.Empty;
     private int _currentCollectionRevision = -1;
+    // 详情请求没有必要阻塞导航；用户快速切换资源时，旧请求返回后不得覆盖新资源。
+    private int _detailsLoadGeneration;
     private readonly List<VersionGroupItem> _allVersionGroups = [];
     private const string LocalizationContributionUrl = "https://svl.qzz.io/contribute";
 
@@ -985,7 +1277,7 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
 
     public bool CanOpenSelectedDownloadOptionInBrowser => TryResolveDownloadOptionUrl(SelectedDownloadOption).Length > 0;
 
-    public bool CanQueueDownload => !string.IsNullOrWhiteSpace(SelectedDownloadOption);
+    public bool CanQueueDownload => IsActionableDownloadOption(SelectedDownloadOption);
 
     public bool CanInstallSelectedDownloadOption => CanQueueDownload;
 
@@ -1209,6 +1501,7 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
 
     public async Task LoadDetailsAsync(Models.CatalogResourceIdentity identity, Models.ModSearchResultItem? context = null)
     {
+        var loadGeneration = Interlocked.Increment(ref _detailsLoadGeneration);
         IsLoadingDetails = true;
         DetailsStatus = "正在加载详情...";
         OnPropertyChanged(nameof(DetailsStatus));
@@ -1217,6 +1510,10 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         try
         {
         var details = await _catalogService.GetResourceDetailsAsync(identity);
+        if (loadGeneration != _detailsLoadGeneration)
+        {
+            return;
+        }
 
         // 优先用详情数据，其次用列表项上下文（列表项携带的 Stat/TimeTag/IconUrl 等显示字段）
         ResourceName = string.IsNullOrWhiteSpace(details.Name)
@@ -1324,6 +1621,9 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         var isNexusCollectionRevisionsFailed = IsCollectionDetails &&
                                                ResourceSource.Contains("nexus", StringComparison.OrdinalIgnoreCase) &&
                                                VersionOptions.Count == 0;
+        var hasNoActionableDownloadOptions = DownloadOptions.Count == 0 ||
+                                              DownloadOptions.All(option => !IsActionableDownloadOption(option));
+        var hasKnownSource = identity.Source != Models.CatalogSource.Unknown;
 
         if (isCurseforgeBlocked)
         {
@@ -1337,6 +1637,18 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         {
             DetailsStatus = "Collection 版本列表获取失败，可改用 NXM Collection 链接导入下载";
         }
+        else if (!hasKnownSource)
+        {
+            DetailsStatus = "未识别资源来源，请从 NexusMods 或 Curseforge 搜索结果重新打开";
+        }
+        else if (hasNoActionableDownloadOptions)
+        {
+            DetailsStatus = ResourceSource.Contains("nexus", StringComparison.OrdinalIgnoreCase)
+                ? "未获取到可安装文件，可打开来源页使用 NXM 导入"
+                : ResourceSource.Contains("curse", StringComparison.OrdinalIgnoreCase)
+                    ? "暂无可用 Curseforge 文件，请稍后重试或打开来源页"
+                    : "暂无可用下载文件，请检查来源信息";
+        }
         else
         {
             DetailsStatus = "详情已加载";
@@ -1349,13 +1661,21 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         }
         catch (Exception ex)
         {
+            if (loadGeneration != _detailsLoadGeneration)
+            {
+                return;
+            }
+
             DetailsStatus = $"详情加载失败: {ex.Message}";
             OnPropertyChanged(nameof(DetailsStatus));
             Debug.WriteLine($"[ModDetails] LoadDetails failed: {ex}");
         }
         finally
         {
-            IsLoadingDetails = false;
+            if (loadGeneration == _detailsLoadGeneration)
+            {
+                IsLoadingDetails = false;
+            }
         }
     }
 
@@ -1534,41 +1854,84 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
     }
 
     [RelayCommand]
-    private void InstallVersionItem(string? option)
+    private async Task InstallVersionItem(string? option)
     {
-        if (string.IsNullOrWhiteSpace(option))
+        if (!IsActionableDownloadOption(option))
         {
+            DetailsStatus = "当前条目没有可用下载地址，请检查登录状态或改用来源页导入";
+            OnPropertyChanged(nameof(DetailsStatus));
             return;
         }
 
-        SelectedDownloadOption = option;
-        InstallSelectedDownloadOption();
+        SelectedDownloadOption = option!;
+        await InstallSelectedDownloadOption();
     }
 
     [RelayCommand]
     private void SaveVersionItemAs(string? option)
     {
-        if (string.IsNullOrWhiteSpace(option))
+        if (!IsActionableDownloadOption(option))
         {
+            DetailsStatus = "当前条目没有可用下载地址，无法另存为";
+            OnPropertyChanged(nameof(DetailsStatus));
             return;
         }
 
-        SelectedDownloadOption = option;
+        SelectedDownloadOption = option!;
         SaveSelectedDownloadOptionAs();
     }
 
     [RelayCommand]
-    private void QueueDownload()
+    private async Task QueueDownload()
     {
-        InstallSelectedDownloadOption();
+        await InstallSelectedDownloadOption();
     }
 
     [RelayCommand]
-    private void InstallSelectedDownloadOption()
+    private async Task InstallSelectedDownloadOption()
     {
-        if (string.IsNullOrWhiteSpace(SelectedDownloadOption))
+        if (!IsActionableDownloadOption(SelectedDownloadOption))
         {
+            DetailsStatus = "当前条目没有可用下载地址，请检查登录状态或改用来源页导入";
+            OnPropertyChanged(nameof(DetailsStatus));
             return;
+        }
+
+        var installedVersion = CheckModInstalled();
+        if (!string.IsNullOrWhiteSpace(installedVersion))
+        {
+            var selectedVersion = ParseDownloadOptionItem(
+                    SelectedDownloadOption,
+                    _currentCompatTag,
+                    IsCollectionDetails)
+                ?.VersionText;
+            selectedVersion = string.IsNullOrWhiteSpace(selectedVersion)
+                ? ExtractVersionFromText(SelectedDownloadOption)
+                : selectedVersion;
+            selectedVersion = string.IsNullOrWhiteSpace(selectedVersion)
+                ? "当前选定版本"
+                : selectedVersion;
+
+            var comparison = CompareVersions(selectedVersion, installedVersion);
+            var operation = comparison > 0
+                ? "升级"
+                : comparison < 0
+                    ? "回退"
+                    : "重新安装";
+            var confirmed = await _dialogService.ShowModUpdateConfirmDialogAsync(
+                [
+                    $"{DisplayResourceName}",
+                    $"当前版本：{installedVersion}",
+                    $"目标版本：{selectedVersion}"
+                ],
+                $"确认{operation} Mod",
+                $"当前实例已经安装“{DisplayResourceName}”。确认{operation}到目标版本后再进入下载队列吗？");
+            if (!confirmed)
+            {
+                DetailsStatus = $"已取消{operation} Mod";
+                OnPropertyChanged(nameof(DetailsStatus));
+                return;
+            }
         }
 
         var request = BuildExternalDownloadRequest(ExternalDownloadAction.Install);
@@ -1580,8 +1943,10 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
     [RelayCommand]
     private void SaveSelectedDownloadOptionAs()
     {
-        if (string.IsNullOrWhiteSpace(SelectedDownloadOption))
+        if (!IsActionableDownloadOption(SelectedDownloadOption))
         {
+            DetailsStatus = "当前条目没有可用下载地址，无法另存为";
+            OnPropertyChanged(nameof(DetailsStatus));
             return;
         }
 
@@ -1912,6 +2277,7 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         var isModpackContext = !string.IsNullOrEmpty(_currentSourceToken) &&
                                _currentSourceToken.Contains("Pack", StringComparison.OrdinalIgnoreCase);
         var parsedItems = DownloadOptions
+            .Where(IsActionableDownloadOption)
             .Select(option => ParseDownloadOptionItem(option, _currentCompatTag, isModpackContext))
             .Where(item => item != null)
             .Cast<VersionDownloadItem>()
@@ -1947,6 +2313,62 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
     }
 
     /// <summary>
+    /// 判断详情项是否真的可以进入下载队列。
+    /// 服务端在无权限、无文件或 API 降级时会返回说明文本，不能把这类文本
+    /// 伪装成文件项；Nexus/Curseforge 的“File ID 无直链”则是合法项，后续
+    /// 由对应解析器通过 ProjectID/FileID 获取真实下载地址。
+    /// </summary>
+    private bool IsActionableDownloadOption(string? option)
+    {
+        if (string.IsNullOrWhiteSpace(option))
+        {
+            return false;
+        }
+
+        var cleanOption = SplitOptionMetadata(option).Option.Trim();
+        if (IsInformationalDownloadOption(cleanOption))
+        {
+            return false;
+        }
+
+        if (TryResolveDownloadOptionUrl(cleanOption).Length > 0)
+        {
+            return true;
+        }
+
+        // Collection revision 项没有单文件 URL，但带有 slug 时可交给 Collection
+        // API/NXM 流程处理；“通过 NXM Collection 链接导入下载”本身只是说明项。
+        if (IsCollectionDetails)
+        {
+            return !string.IsNullOrWhiteSpace(_currentCollectionSlug) &&
+                   Regex.IsMatch(cleanOption, @"(?i)\brevision(?:\s+\d+)?\b");
+        }
+
+        var sourceToken = _currentSourceToken ?? string.Empty;
+        var hasTrackedSource = sourceToken.Contains("nexus", StringComparison.OrdinalIgnoreCase) ||
+                               sourceToken.Contains("curse", StringComparison.OrdinalIgnoreCase) ||
+                               ResourceSource.Contains("nexus", StringComparison.OrdinalIgnoreCase) ||
+                               ResourceSource.Contains("curse", StringComparison.OrdinalIgnoreCase);
+        return hasTrackedSource &&
+               long.TryParse(_currentResourceId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var projectId) &&
+               projectId > 0 &&
+               TryExtractFileIdFromOption(cleanOption, out var fileId) &&
+               fileId > 0;
+    }
+
+    private static bool IsInformationalDownloadOption(string option)
+    {
+        return option.Contains("暂无可下载", StringComparison.OrdinalIgnoreCase) ||
+               option.Contains("没有可用文件", StringComparison.OrdinalIgnoreCase) ||
+               option.Contains("未获取到可用文件", StringComparison.OrdinalIgnoreCase) ||
+               option.Contains("请前往设置页重新登录", StringComparison.OrdinalIgnoreCase) ||
+               option.Contains("登录已过期", StringComparison.OrdinalIgnoreCase) ||
+               option.Contains("无法获取", StringComparison.OrdinalIgnoreCase) ||
+               option.Contains("可先通过 NXM", StringComparison.OrdinalIgnoreCase) ||
+               option.StartsWith("通过 NXM Collection", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// 扫描当前实例 Mods 目录，检测 Mod 是否已安装。
     /// 参考旧架构 ModDetailsViewModel.CheckModExists：
     /// 1. 通过文件夹名匹配
@@ -1970,7 +2392,7 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         try
         {
             // 1. 文件夹名匹配（ZIP 通常解压到同名文件夹）
-            foreach (var dir in Directory.GetDirectories(modsPath))
+            foreach (var dir in EnumerateCandidateModDirectories(modsPath))
             {
                 var dirName = Path.GetFileName(dir);
                 if (dirName.Contains(modName, StringComparison.OrdinalIgnoreCase) ||
@@ -1985,17 +2407,19 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
             }
 
             // 2. 遍历所有 manifest.json 的 Name 字段匹配
-            foreach (var modDir in Directory.GetDirectories(modsPath))
+            foreach (var modDir in EnumerateCandidateModDirectories(modsPath))
             {
-                var manifestPath = Path.Combine(modDir, "manifest.json");
-                if (!File.Exists(manifestPath)) continue;
+                var manifestPath = FindManifestPath(modDir);
+                if (string.IsNullOrWhiteSpace(manifestPath)) continue;
 
                 try
                 {
-                    var json = File.ReadAllText(manifestPath);
-                    using var doc = System.Text.Json.JsonDocument.Parse(json);
-                    if (doc.RootElement.TryGetProperty("Name", out var nameProp) &&
-                        nameProp.GetString()?.Equals(modName, StringComparison.OrdinalIgnoreCase) == true)
+                    using var doc = TryReadManifestDocument(manifestPath);
+                    if (doc != null &&
+                        string.Equals(
+                            GetJsonStringFlexibleByCandidates(doc.RootElement, "Name", "name"),
+                            modName,
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         return TryReadManifestVersion(modDir);
                     }
@@ -2016,17 +2440,34 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
 
     private static string? TryReadManifestVersion(string modDir)
     {
-        var manifestPath = Path.Combine(modDir, "manifest.json");
-        if (!File.Exists(manifestPath)) return null;
+        var manifestPath = FindManifestPath(modDir);
+        if (string.IsNullOrWhiteSpace(manifestPath)) return null;
 
         try
         {
-            var json = File.ReadAllText(manifestPath);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("Version", out var versionProp))
+            using var doc = TryReadManifestDocument(manifestPath);
+            if (doc != null)
             {
-                return versionProp.GetString();
+                // 不同年代的 Mod/打包工具使用过多种字段名；同时不能在
+                // Version 存在但为空时提前返回，否则文件名中的版本号回退永远不会生效。
+                var manifestVersion = GetManifestVersion(doc.RootElement);
+                if (string.IsNullOrWhiteSpace(manifestVersion))
+                {
+                    manifestVersion = ExtractVersionFromText(Path.GetFileName(manifestPath));
+                }
+
+                if (string.IsNullOrWhiteSpace(manifestVersion))
+                {
+                    manifestVersion = ExtractVersionFromText(Path.GetFileName(modDir));
+                }
+
+                if (!string.IsNullOrWhiteSpace(manifestVersion))
+                {
+                    return manifestVersion;
+                }
             }
+
+            return ExtractVersionFromText(Path.GetFileName(modDir));
         }
         catch
         {
@@ -2034,6 +2475,378 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         }
 
         return null;
+    }
+
+    private static IEnumerable<string> EnumerateCandidateModDirectories(string modsPath)
+    {
+        if (string.IsNullOrWhiteSpace(modsPath) || !Directory.Exists(modsPath))
+        {
+            return [];
+        }
+
+        var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string[] topLevelDirectories;
+        try
+        {
+            topLevelDirectories = Directory.GetDirectories(modsPath);
+        }
+        catch
+        {
+            return results;
+        }
+
+        foreach (var directory in topLevelDirectories)
+        {
+            List<string> manifestDirectories;
+            try
+            {
+                manifestDirectories = EnumerateManifestFilesSafe(directory)
+                    .Where(path => string.Equals(Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase))
+                    // 整合包/发行包有时会在外层放一个可解析但不是 SMAPI
+                    // Mod 的 manifest.json。先筛掉这类清单，再处理父子目录，
+                    // 否则外层清单会遮住真正的内层 Mod 清单。
+                    .Where(IsLikelyModManifest)
+                    .Select(path => Path.GetDirectoryName(path))
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(path => Path.GetFullPath(path!))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            catch
+            {
+                // 某个 Mod 目录损坏、被占用或权限不足时，继续扫描其它 Mod。
+                continue;
+            }
+
+            foreach (var manifestDirectory in manifestDirectories.Where(candidate => !manifestDirectories.Any(parent =>
+                !string.Equals(parent, candidate, StringComparison.OrdinalIgnoreCase) &&
+                IsPathUnderDirectory(candidate, parent))))
+            {
+                results.Add(manifestDirectory);
+            }
+        }
+
+        return results;
+    }
+
+    private static string? FindManifestPath(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        try
+        {
+            var candidates = new[] { Path.Combine(directory, "manifest.json") }
+                .Concat(Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+                .Where(path => string.Equals(
+                    Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            return candidates.FirstOrDefault(IsLikelyModManifest);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 逐目录扫描 manifest，隔离单个损坏、无权限或重解析点目录的异常。
+    /// Directory.EnumerateFiles(..., AllDirectories) 只要遇到一个不可访问目录
+    /// 就会终止整个枚举，实际 Mods 目录中常见的残留链接/权限目录会因此让
+    /// 其它正常 Mod 全部从管理页消失。
+    /// </summary>
+    private static IEnumerable<string> EnumerateManifestFilesSafe(string rootDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(rootDirectory) || !Directory.Exists(rootDirectory))
+        {
+            return [];
+        }
+
+        var pending = new Stack<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            pending.Push(Path.GetFullPath(rootDirectory));
+        }
+        catch
+        {
+            return [];
+        }
+
+        var results = new List<string>();
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!visited.Add(current))
+            {
+                continue;
+            }
+
+            List<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(current, "*", SearchOption.TopDirectoryOnly)
+                    .Where(path => string.Equals(
+                        Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+            catch
+            {
+                files = [];
+            }
+
+            results.AddRange(files);
+
+            List<string> directories;
+            try
+            {
+                directories = Directory.EnumerateDirectories(current, "*", SearchOption.TopDirectoryOnly).ToList();
+            }
+            catch
+            {
+                directories = [];
+            }
+
+            foreach (var directory in directories)
+            {
+                try
+                {
+                    if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+
+                pending.Push(directory);
+            }
+        }
+
+        return results;
+    }
+
+    private static bool IsLikelyModManifest(string manifestPath)
+    {
+        try
+        {
+            using var document = TryReadManifestDocument(manifestPath);
+            if (document == null || document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var root = document.RootElement;
+            if (string.IsNullOrWhiteSpace(GetJsonStringFlexibleByCandidates(root, "Name", "name")))
+            {
+                return false;
+            }
+
+            // CurseForge/整合包外层清单也可能带 Name、Version，但 files、
+            // manifestType、minecraft 等字段表明它不是 SMAPI Mod manifest。
+            // 一旦出现包结构字段，必须具备 SMAPI Mod 身份字段；否则外层
+            // 清单会遮住内层真实 Mod，最终在管理页显示“无法从 manifest.json
+            // 读取信息”。没有这些包结构标记的 Name-only 旧 Mod 仍允许通过，
+            // 以兼容历史 Mod。
+            var hasPackageShape = TryGetJsonPropertyIgnoreCase(root, "files", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "manifestType", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "minecraft", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "formatVersion", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "modpackVersion", out _);
+            var hasStrongModIdentity =
+                !string.IsNullOrWhiteSpace(GetJsonStringFlexibleByCandidates(
+                    root, "UniqueID", "UniqueId", "unique_id")) ||
+                TryGetJsonPropertyIgnoreCase(root, "EntryDll", out _) ||
+                TryGetJsonPropertyIgnoreCase(root, "ContentPackFor", out _) ||
+                TryGetJsonPropertyIgnoreCase(root, "UpdateKeys", out _);
+
+            // 发行包外层有时只有 Name/Version，没有 CurseForge 的 files 等标记，
+            // 但真正的 SMAPI Mod manifest 位于其子目录。Name-only 外层不能遮蔽
+            // 内层清单；保留无子清单的旧 Mod 兼容性。
+            if (!hasPackageShape && !hasStrongModIdentity && HasNestedManifest(manifestPath))
+            {
+                return false;
+            }
+
+            if (!hasPackageShape)
+            {
+                return true;
+            }
+
+            return hasStrongModIdentity;
+        }
+        catch
+        {
+            // 单个损坏清单只应被跳过，不影响其它 Mod 的扫描。
+            return false;
+        }
+    }
+
+    private static bool HasNestedManifest(string manifestPath)
+    {
+        var directory = Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return false;
+        }
+
+        try
+        {
+            return EnumerateManifestFilesSafe(directory)
+                .Any(path =>
+                    !string.Equals(path, manifestPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathUnderDirectory(string path, string directory)
+    {
+        var normalizedDirectory = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedPath = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return normalizedPath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static JsonDocument? TryReadManifestDocument(string manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        // 导出包中既有 UTF-8 BOM，也有少量旧 Mod 使用 UTF-16 BOM；显式启用 BOM 检测，
+        // 否则 UTF-16 清单会被按 UTF-8 读成乱码，页面最终显示“未知版本”。
+        var json = Services.ManifestTextReader.ReadAllText(manifestPath);
+        return JsonDocument.Parse(json, new JsonDocumentOptions
+        {
+            AllowTrailingCommas = true,
+            CommentHandling = JsonCommentHandling.Skip
+        });
+    }
+
+    private static bool TryGetJsonPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement propertyElement)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    propertyElement = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        propertyElement = default;
+        return false;
+    }
+
+    private static string GetJsonStringFlexibleByCandidates(JsonElement element, params string[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (!TryGetJsonPropertyIgnoreCase(element, candidate, out var propertyElement))
+            {
+                continue;
+            }
+
+            var value = propertyElement.ValueKind switch
+            {
+                JsonValueKind.String => propertyElement.GetString() ?? string.Empty,
+                JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => propertyElement.ToString(),
+                _ => string.Empty
+            };
+
+            // 某些 Mod 同时存在空的旧字段和有值的新字段；空字段不能截断
+            // 后续候选名的查找，否则管理页会错误显示“未知版本”。
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string GetManifestVersion(JsonElement root)
+    {
+        var version = GetJsonStringFlexibleByCandidates(
+            root,
+            "Version",
+            "version",
+            "modVersion",
+            "mod_version",
+            "VersionString",
+            "releaseVersion",
+            "release_version",
+            "packageVersion",
+            "package_version");
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            return version;
+        }
+
+        // 少数第三方发行包会把真正的 Mod 清单包在 metadata/mod/info
+        // 节点中。只沿这些明确的元数据节点查找，避免扫描 content.json
+        // 风格的任意对象后把资源配置里的数字误当成版本号。
+        foreach (var wrapperName in new[] { "metadata", "mod", "info", "manifest" })
+        {
+            if (TryGetJsonPropertyIgnoreCase(root, wrapperName, out var wrapper) &&
+                wrapper.ValueKind == JsonValueKind.Object)
+            {
+                version = GetJsonStringFlexibleByCandidates(
+                    wrapper,
+                    "Version",
+                    "version",
+                    "modVersion",
+                    "mod_version",
+                    "VersionString",
+                    "releaseVersion",
+                    "release_version",
+                    "packageVersion",
+                    "package_version");
+                if (!string.IsNullOrWhiteSpace(version))
+                {
+                    return version;
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractVersionFromText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var match = Regex.Match(text, @"\d+(?:\.\d+){1,3}");
+        return match.Success ? match.Value : string.Empty;
+    }
+
+    private static string TryExtractFileIdFromNexusUrl(string? url)
+    {
+        return DownloadOptionIdentityParser.TryExtractFileId(url, out var fileId)
+            ? fileId.ToString(CultureInfo.InvariantCulture)
+            : string.Empty;
+    }
+
+    private static bool TryExtractFileIdFromOption(string? option, out long fileId)
+    {
+        return DownloadOptionIdentityParser.TryExtractFileId(option, out fileId);
     }
 
     /// <summary>
@@ -2129,12 +2942,9 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
             title = text.Replace(url, string.Empty, StringComparison.OrdinalIgnoreCase).Trim(' ', '-', '|');
         }
 
-        // 去掉 Nexus/Curseforge 选项前缀 "File {fileId}: "，标题只保留显示名/标签部分。
-        var filePrefixMatch = Regex.Match(title, "^File\\s+\\d+\\s*:\\s*", RegexOptions.CultureInvariant);
-        if (filePrefixMatch.Success)
-        {
-            title = title[filePrefixMatch.Length..].Trim();
-        }
+        // 去掉 Nexus/Curseforge 选项前缀（兼容 File 7448774: 与
+        // File 7448774_ 两种历史文件名形态），标题只保留显示名/标签部分。
+        title = DownloadOptionIdentityParser.StripGeneratedFilePrefix(title);
 
         var gameVersion = !string.IsNullOrWhiteSpace(meta.GameVersion)
             ? meta.GameVersion
@@ -2171,7 +2981,10 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
 
     private static (string Option, OptionMetadata Meta) SplitOptionMetadata(string option)
     {
-        const string separator = " ~~ ";
+        // 详情项的元数据由 RemoteCatalogService 追加为 "~~ key=value"。
+        // 旧缓存/第三方来源可能没有两侧空格，因此不能只匹配固定的
+        // " ~~ "，否则 URL 会把元数据一起传给浏览器或下载解析器。
+        const string separator = "~~";
         var index = option.IndexOf(separator, StringComparison.Ordinal);
         if (index < 0)
         {
@@ -2179,7 +2992,7 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         }
 
         var optionPart = option[..index];
-        var metaPart = option[(index + separator.Length)..];
+        var metaPart = option[(index + separator.Length)..].Trim();
         return (optionPart, OptionMetadata.Parse(metaPart));
     }
 
@@ -2526,7 +3339,9 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
             return string.Empty;
         }
 
-        var trimmed = option.Trim();
+        // 浏览器打开、详情按钮可用性和安装队列必须使用同一份无元数据文本。
+        // 否则带有 "~~ channel=..." 的 URL 会在不同入口产生不一致结果。
+        var trimmed = SplitOptionMetadata(option).Option.Trim();
         var markerIndex = trimmed.IndexOf("http://", StringComparison.OrdinalIgnoreCase);
         if (markerIndex < 0)
         {
@@ -2626,7 +3441,38 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
     /// <summary>从当前上下文中解析 Collection revision 号。</summary>
     private int ResolveCollectionRevisionFromContext()
     {
-        return _currentCollectionRevision;
+        if (_currentCollectionRevision > 0)
+        {
+            return _currentCollectionRevision;
+        }
+
+        var option = SelectedDownloadOption ?? string.Empty;
+        var metadataIndex = option.IndexOf("revision=", StringComparison.OrdinalIgnoreCase);
+        if (metadataIndex >= 0)
+        {
+            var valueStart = metadataIndex + "revision=".Length;
+            var valueEnd = option.IndexOf(';', valueStart);
+            if (valueEnd < 0)
+            {
+                valueEnd = option.IndexOf("~~", valueStart, StringComparison.Ordinal);
+            }
+
+            var value = valueEnd > valueStart
+                ? option[valueStart..valueEnd]
+                : option[valueStart..];
+            if (int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var metadataRevision) &&
+                metadataRevision > 0)
+            {
+                return metadataRevision;
+            }
+        }
+
+        var revisionMatch = Regex.Match(option, @"(?i)\bRevision\s+(\d+)\b");
+        return revisionMatch.Success &&
+               int.TryParse(revisionMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var revision) &&
+               revision > 0
+            ? revision
+            : -1;
     }
 
     private static bool IsSmapiResourceCore(
@@ -3188,6 +4034,7 @@ public sealed class ModDependencyDisplayItem
     public bool IsInstalledButDisabled { get; set; }
     public string InstalledModId { get; set; } = string.Empty;
     public string InstalledModName { get; set; } = string.Empty;
+    public string InstalledVersion { get; set; } = string.Empty;
     public string Note { get; set; } = string.Empty;
 
     public string DisplayText => string.IsNullOrWhiteSpace(MinimumVersion)
@@ -3373,7 +4220,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
-        WriteIndented = true
+        WriteIndented = true,
+        Converters = { new FlexibleStringJsonConverter() }
     };
 
     private readonly Services.AppUserSettingsStore _settingsStore;
@@ -3391,6 +4239,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     [ObservableProperty]
     private bool _isCheckingLocalization;
+
+    [ObservableProperty]
+    private bool _isCheckingModConflicts;
+
+    [ObservableProperty]
+    private bool _isModConflictCheckCompleted;
 
     [ObservableProperty]
     private string _currentUpdateProcessingModName = string.Empty;
@@ -3422,8 +4276,20 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         OnPropertyChanged(nameof(HasRunningModTask));
     }
 
+    partial void OnIsCheckingModConflictsChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanDetectModConflicts));
+    }
+
+    partial void OnIsModConflictCheckCompletedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowModConflictResult));
+        OnPropertyChanged(nameof(ModConflictSummary));
+    }
+
     private ModTagConfig _modTagConfig = new();
     private string _currentModsPathForTagConfig = string.Empty;
+    private int _modConflictScanVersion;
     private string _titleText = "版本设置";
     private string _descriptionText = "实例级配置。";
 
@@ -3615,6 +4481,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     [ObservableProperty]
     private string _modpackName = "我的整合包";
 
+    // 仅跟踪由当前实例自动填充的名称；用户手动修改后，切换实例不会覆盖自定义名称。
+    private string _lastAutoModpackName = "我的整合包";
+    private bool _isUpdatingDefaultModpackName;
+
     [ObservableProperty]
     private string _modpackVersion = "1.0.0";
 
@@ -3646,7 +4516,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private string _exportStatusMessage = "就绪";
 
     [ObservableProperty]
-    private string _exportCurrentModsButtonText = "导出当前 Mods";
+    private string _exportCurrentModsButtonText = "导出当前整合包";
 
     [ObservableProperty]
     private string _openExportFolderButtonText = "打开导出目录";
@@ -3757,6 +4627,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     public ObservableCollection<ModManageItem> Mods { get; } = [];
 
+    public ObservableCollection<Services.ModConflictResult> ModConflicts { get; } = [];
+
     public ObservableCollection<ModManageItem> BackupMods { get; } = [];
 
     public ObservableCollection<ExportModSelectionItem> ExportModItems { get; } = [];
@@ -3796,6 +4668,20 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     public bool HasMods => IsBackupTab ? BackupMods.Count > 0 : Mods.Count > 0;
 
     public bool HasFilteredMods => FilteredMods.Count > 0;
+
+    public bool HasModConflicts => ModConflicts.Count > 0;
+
+    public bool ShowModConflictResult => IsModsTab && IsModConflictCheckCompleted;
+
+    public bool CanDetectModConflicts => IsModsTab &&
+                                         Mods.Count > 0 &&
+                                         !IsCheckingModConflicts;
+
+    public string ModConflictSummary => !IsModConflictCheckCompleted
+        ? "尚未检测当前实例的 Mod 冲突"
+        : HasModConflicts
+            ? $"发现 {ModConflicts.Count} 项冲突，请按条目处理后重新检测"
+            : "未发现启用 Mod 之间的明显冲突";
 
     public bool ShowEmptyModsHint => !HasFilteredMods;
 
@@ -3978,6 +4864,13 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             OnPropertyChanged(nameof(DisabledFilterText));
             OnPropertyChanged(nameof(UpdatableFilterText));
             UpdateSelectionState();
+            OnPropertyChanged(nameof(CanDetectModConflicts));
+        };
+
+        ModConflicts.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasModConflicts));
+            OnPropertyChanged(nameof(ModConflictSummary));
         };
 
         BackupMods.CollectionChanged += (_, _) =>
@@ -4021,10 +4914,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         EnableSafeLaunch = settings.EnableSafeLaunch;
         InstanceName = settings.InstanceName;
         InstanceDescription = settings.InstanceDescription;
-        if (string.IsNullOrWhiteSpace(ModpackName) || string.Equals(ModpackName, "我的整合包", StringComparison.Ordinal))
-        {
-            ModpackName = string.IsNullOrWhiteSpace(settings.InstanceName) ? "我的整合包" : settings.InstanceName;
-        }
+        RefreshDefaultModpackName(settings);
 
         if (string.IsNullOrWhiteSpace(ModpackAuthor))
         {
@@ -4113,7 +5003,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         InstanceSettingsTitleText = L("VersionSettings.Settings.Title", "实例设置");
         SaveInstanceSettingsButtonText = L("VersionSettings.Settings.Save", "保存实例设置");
         ExportSectionTitleText = L("VersionSettings.Export.Title", "导出");
-        ExportCurrentModsButtonText = L("VersionSettings.Export.CurrentMods", "导出当前 Mods");
+        ExportCurrentModsButtonText = L("VersionSettings.Export.CurrentMods", "导出当前整合包");
         OpenExportFolderButtonText = L("VersionSettings.Export.OpenFolder", "打开导出目录");
 
         OnPropertyChanged(nameof(ModsSummary));
@@ -4322,8 +5212,11 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     {
         CurrentPageIndex = 1;
         ClearSelection();
+        InvalidateModConflictResults();
         OnPropertyChanged(nameof(IsModsTab));
         OnPropertyChanged(nameof(IsBackupTab));
+        OnPropertyChanged(nameof(ShowModConflictResult));
+        OnPropertyChanged(nameof(CanDetectModConflicts));
         OnPropertyChanged(nameof(HasMods));
         OnPropertyChanged(nameof(ModsSummary));
         OnPropertyChanged(nameof(CurrentEmptyHintText));
@@ -4448,6 +5341,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     {
         if (string.Equals(e.PropertyName, nameof(ModManageItem.IsEnabled), StringComparison.Ordinal))
         {
+            InvalidateModConflictResults();
             OnPropertyChanged(nameof(ModsSummary));
             OnPropertyChanged(nameof(EnabledModsCount));
             OnPropertyChanged(nameof(DisabledModsCount));
@@ -4563,6 +5457,29 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     }
 
     [RelayCommand]
+    private void ToggleModGroup(ModManageItem? item)
+    {
+        if (item == null || !item.HasChildren)
+        {
+            return;
+        }
+
+        item.IsGroupExpanded = !item.IsGroupExpanded;
+    }
+
+    [RelayCommand]
+    private void ToggleModLocalization(ModManageItem? item)
+    {
+        if (item == null || !item.HasLocalization)
+        {
+            return;
+        }
+
+        item.SetLocalizationLanguage(!item.IsUsingLocalizedText);
+        RefreshModManageHint($"已切换 {item.DisplayName} 的显示语言");
+    }
+
+    [RelayCommand]
     private void SwitchToInstanceSettingsSection()
     {
         SwitchToSettings();
@@ -4629,6 +5546,101 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         {
             Status = "打开备份目录失败";
         }
+    }
+
+    [RelayCommand]
+    private async Task DetectModConflicts()
+    {
+        if (IsBackupTab)
+        {
+            Status = "备份标签页不支持冲突检测";
+            return;
+        }
+
+        if (IsCheckingModConflicts)
+        {
+            return;
+        }
+
+        if (Mods.Count == 0)
+        {
+            ClearModConflictResults();
+            IsModConflictCheckCompleted = true;
+            Status = "当前没有可检测的 Mod";
+            return;
+        }
+
+        var scanVersion = ++_modConflictScanVersion;
+        var snapshot = Mods
+            .Where(mod => !mod.IsBackupItem && !mod.IsChildMod && !mod.IsCompositeParent)
+            .ToList();
+
+        IsCheckingModConflicts = true;
+        IsModConflictCheckCompleted = false;
+        ModConflicts.Clear();
+        Status = "正在检测启用 Mod 的 ID、前置和文件冲突…";
+
+        try
+        {
+            var conflicts = await Task.Run(() => Services.ModConflictAnalyzer.Analyze(snapshot));
+            if (scanVersion != _modConflictScanVersion)
+            {
+                return;
+            }
+
+            foreach (var conflict in conflicts)
+            {
+                ModConflicts.Add(conflict);
+            }
+
+            IsModConflictCheckCompleted = true;
+            Status = conflicts.Count == 0
+                ? "冲突检测完成：未发现明显冲突"
+                : $"冲突检测完成：发现 {conflicts.Count} 项，请处理后重新检测";
+            RefreshModManageHint(Status);
+        }
+        catch (Exception ex)
+        {
+            if (scanVersion != _modConflictScanVersion)
+            {
+                return;
+            }
+
+            IsModConflictCheckCompleted = true;
+            Status = $"冲突检测失败：{ex.Message}";
+            RefreshModManageHint(Status);
+        }
+        finally
+        {
+            if (scanVersion == _modConflictScanVersion)
+            {
+                IsCheckingModConflicts = false;
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void ClearModConflicts()
+    {
+        ClearModConflictResults();
+        Status = "已清除冲突检测结果";
+    }
+
+    private void InvalidateModConflictResults()
+    {
+        _modConflictScanVersion++;
+        IsCheckingModConflicts = false;
+        ClearModConflictResults();
+    }
+
+    private void ClearModConflictResults()
+    {
+        ModConflicts.Clear();
+        IsModConflictCheckCompleted = false;
+        OnPropertyChanged(nameof(HasModConflicts));
+        OnPropertyChanged(nameof(ModConflictSummary));
+        OnPropertyChanged(nameof(ShowModConflictResult));
+        OnPropertyChanged(nameof(CanDetectModConflicts));
     }
 
     [RelayCommand]
@@ -4724,6 +5736,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                         mod.UpdateStatus = BuildUpdateStatusText(checkResult);
                         mod.LatestVersion = checkResult.LatestVersion;
                         mod.UpdateUrl = checkResult.UpdateUrl;
+                        mod.UpdateFileId = checkResult.UpdateFileId > 0
+                            ? checkResult.UpdateFileId.ToString(CultureInfo.InvariantCulture)
+                            : string.Empty;
                     });
                 }
                 catch
@@ -4776,8 +5791,30 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         var updatable = Mods
-            .Where(m => !m.IsBackupItem && m.HasUpdate && !string.IsNullOrWhiteSpace(m.UpdateUrl))
-            .Select(m => new ModBatchUpdateEntry(m.DisplayName, m.UpdateUrl, m.UpdateSource))
+            .Where(m => !m.IsBackupItem && m.HasUpdate)
+            .Select(m =>
+            {
+                var credential = TryReadSourceCredential(m.FullPath);
+                var normalizedSource = NormalizePlatform(m.UpdateSource);
+                var projectId = NormalizePositiveId(
+                    string.Equals(normalizedSource, "Curseforge", StringComparison.OrdinalIgnoreCase)
+                        ? FirstNonEmpty(m.CurseforgeProjectId, credential?.ProjectId)
+                        : FirstNonEmpty(m.NexusModsProjectId, credential?.ProjectId));
+                var fileId = NormalizePositiveId(FirstNonEmpty(
+                    m.UpdateFileId,
+                    credential?.FileId,
+                    TryExtractFileIdFromNexusUrl(m.UpdateUrl)));
+                return new ModBatchUpdateEntry(
+                    m.DisplayName,
+                    m.UpdateUrl,
+                    m.UpdateSource,
+                    projectId,
+                    fileId);
+            })
+            .Where(entry =>
+                !string.IsNullOrWhiteSpace(entry.UpdateUrl) ||
+                (TryParsePositiveLong(entry.ProjectId, out _) &&
+                 TryParsePositiveLong(entry.FileId, out _)))
             .ToList();
 
         if (updatable.Count == 0)
@@ -4888,6 +5925,82 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
     }
 
+    /// <summary>
+    /// 强制刷新当前选中 Mod 的社区汉化。对齐 WPF 的
+    /// RefreshSelectedLocalizationCommand，且不要求先刷新整个列表。
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshSelectedLocalizationAsync()
+    {
+        if (IsBackupTab)
+        {
+            Status = "备份标签页不支持刷新汉化";
+            return;
+        }
+
+        var selectedMods = GetEffectiveSelectedMods()
+            .Where(mod => !mod.IsBackupItem && HasAnySourceForLocalization(mod))
+            .ToList();
+        if (selectedMods.Count == 0)
+        {
+            Status = "请先选择至少一个带来源信息的 Mod";
+            RefreshModManageHint("选择带 NexusMods/Curseforge 来源的 Mod 后再刷新汉化");
+            return;
+        }
+
+        if (IsCheckingModUpdates || IsCheckingLocalization)
+        {
+            Status = "已有检测任务正在运行，请稍后重试";
+            return;
+        }
+
+        IsCheckingLocalization = true;
+        var appliedCount = 0;
+        try
+        {
+            var checkedCount = 0;
+            foreach (var mod in selectedMods)
+            {
+                CurrentLocalizationProcessingModName = mod.DisplayName;
+                LocalizationCheckProgressText =
+                    $"汉化刷新 - 当前处理：{mod.DisplayName} | {checkedCount}/{selectedMods.Count}";
+
+                try
+                {
+                    var sourceInfo = TryGetLocalizationSourceInfo(mod);
+                    var localization = await TryFetchLocalizationEntryAsync(
+                        sourceInfo,
+                        mod.UniqueId,
+                        forceRefresh: true);
+                    if (localization != null &&
+                        await ApplyLocalizationEntryToModAsync(mod, localization, sourceInfo))
+                    {
+                        appliedCount++;
+                    }
+                }
+                catch
+                {
+                    // 单个 Mod 失败不影响其余选中项；最终状态会明确显示成功数量。
+                }
+
+                checkedCount++;
+                LocalizationCheckProgressText =
+                    $"汉化刷新 - 已处理 {checkedCount}/{selectedMods.Count}";
+            }
+
+            Status = appliedCount > 0
+                ? $"汉化刷新完成：已更新 {appliedCount}/{selectedMods.Count} 个 Mod"
+                : "汉化刷新完成：未找到可更新的汉化信息";
+            RefreshModManageHint(Status);
+        }
+        finally
+        {
+            CurrentLocalizationProcessingModName = string.Empty;
+            LocalizationCheckProgressText = string.Empty;
+            IsCheckingLocalization = false;
+        }
+    }
+
     [RelayCommand]
     private async Task InstallModFromLocal()
     {
@@ -4901,7 +6014,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         var importZip = await _dialogService.ShowConfirmAsync(
             "从本地安装 Mod",
-            "点击“确定”选择压缩包（zip）；点击“取消”选择文件夹。") ;
+            "点击“确定”选择压缩包（zip/7z）；点击“取消”选择文件夹。") ;
 
         string? sourcePath;
         if (importZip)
@@ -4911,8 +6024,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 [
                     new global::Avalonia.Platform.Storage.FilePickerFileType("压缩包")
                     {
-                        Patterns = ["*.zip"],
-                        MimeTypes = ["application/zip"]
+                        Patterns = ["*.zip", "*.7z", "*.cfmodpack"],
+                        MimeTypes = ["application/zip", "application/x-7z-compressed"]
                     }
                 ]);
         }
@@ -5050,7 +6163,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     }
 
     [RelayCommand]
-    private void ToggleItemEnabled(ModManageItem? item)
+    private async Task ToggleItemEnabled(ModManageItem? item)
     {
         if (item == null || item.IsBackupItem)
         {
@@ -5064,7 +6177,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
         else
         {
-            EnableSelectedMod();
+            await EnableSelectedMod();
         }
     }
 
@@ -5401,7 +6514,21 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
                 tempRoot = Path.Combine(Path.GetTempPath(), $"SVL_ModImport_{Guid.NewGuid():N}");
                 Directory.CreateDirectory(tempRoot);
-                ZipFile.ExtractToDirectory(sourcePath, tempRoot, overwriteFiles: true);
+                // 文件选择器同时允许 zip/cfmodpack/7z；必须按实际文件签名选择
+                // 解压器，不能仅根据扩展名把 7z 交给 ZipFile。
+                if (ArchiveExtractor.IsSevenZip(sourcePath))
+                {
+                    ArchiveExtractor.ExtractSevenZipToDirectory(sourcePath, tempRoot);
+                }
+                else if (ArchiveExtractor.IsZip(sourcePath) ||
+                         string.Equals(Path.GetExtension(sourcePath), ".cfmodpack", StringComparison.OrdinalIgnoreCase))
+                {
+                    Services.ZipExtractor.ExtractToDirectory(sourcePath, tempRoot);
+                }
+                else
+                {
+                    throw new InvalidDataException("不支持的压缩包格式，仅支持 ZIP/CFModpack/7z");
+                }
                 root = tempRoot;
             }
             else if (!Directory.Exists(sourcePath))
@@ -5469,7 +6596,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return result;
         }
 
-        if (File.Exists(Path.Combine(rootPath, "manifest.json")))
+        if (!string.IsNullOrWhiteSpace(FindManifestPath(rootPath)))
         {
             result.Add(rootPath);
         }
@@ -5491,7 +6618,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return false;
         }
 
-        modsPath = Path.Combine(settings.PreferredInstancePath, "Mods");
+        var runtimePath = Services.InstanceRuntimePathResolver.Resolve(settings.PreferredInstancePath);
+        modsPath = Path.Combine(runtimePath, "Mods");
         return true;
     }
 
@@ -5527,6 +6655,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     [RelayCommand]
     private void ReloadMods()
     {
+        InvalidateModConflictResults();
+
         foreach (var existingItem in Mods)
         {
             DetachModItem(existingItem);
@@ -5566,7 +6696,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
-        var modsPath = Path.Combine(settings.PreferredInstancePath, "Mods");
+        var modsPath = Path.Combine(
+            Services.InstanceRuntimePathResolver.Resolve(settings.PreferredInstancePath),
+            "Mods");
         Directory.CreateDirectory(modsPath);
 
         var dependencyEntriesByPath = new Dictionary<string, List<(string UniqueId, string MinimumVersion, bool IsRequired, string Note)>>(StringComparer.OrdinalIgnoreCase);
@@ -5602,7 +6734,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             var isEnabled = !IsDisabledFolderName(folderName);
             var actualName = NormalizeFolderName(folderName);
 
-            var manifestPath = Path.Combine(modDirectory, "manifest.json");
+            var manifestPath = FindManifestPath(modDirectory);
             var displayName = actualName;
             var version = "未知版本";
             var author = string.Empty;
@@ -5625,7 +6757,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                         var manifestRoot = doc.RootElement;
                         displayName = FirstNonEmpty(GetJsonStringFlexibleByCandidates(manifestRoot, "Name"), displayName);
                         uniqueId = FirstNonEmpty(GetJsonStringFlexibleByCandidates(manifestRoot, "UniqueID", "UniqueId"), uniqueId);
-                        version = FirstNonEmpty(GetJsonStringFlexibleByCandidates(manifestRoot, "Version"), version);
+                        version = FirstNonEmpty(GetManifestVersion(manifestRoot), version);
                         author = FirstNonEmpty(GetJsonStringFlexibleByCandidates(manifestRoot, "Author"), author);
                         description = FirstNonEmpty(GetJsonStringFlexibleByCandidates(manifestRoot, "Description"), description);
 
@@ -5640,6 +6772,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             }
 
             var sourceCredential = TryReadSourceCredential(modDirectory);
+            var isCompositeParent = sourceCredential?.IsParentMod == true;
+            var parentReference = sourceCredential?.ParentMod;
+            // 保留 manifest 的原始文本，不能只把汉化结果写进 DisplayName/Description；
+            // 否则用户切换回英文时已经没有可恢复的源站内容。
+            var sourceDisplayName = displayName;
+            var sourceDescription = description;
             ApplySourceCredentialToModItem(
                 sourceCredential,
                 ref displayName,
@@ -5651,7 +6789,26 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 ref nexusModsProjectId,
                 ref localizationUpdatedAt);
 
+            // 部分发行包的 manifest 没有标准 Version 字段，或只在文件名中携带
+            // 版本号（例如“Content Patcher 2.9.0 2.9.0.zip”）。保留清单优先级，
+            // 再用来源凭证文件名和实际安装目录补齐，避免管理页/导出页长期显示未知版本。
+            if (IsUnknownVersion(version))
+            {
+                version = FirstNonEmpty(
+                    ExtractVersionFromText(sourceFileName),
+                    ExtractVersionFromText(actualName),
+                    version);
+            }
+
             dependencyEntriesByPath[modDirectory] = dependencyEntries;
+
+            // 旧版复合 Mod 可能只有 svl-source.json 而没有自己的 manifest.json。
+            // 仍然把它作为分组头加载，避免子 Mod 被当成互不相关的顶层项目。
+            if (isCompositeParent && string.IsNullOrWhiteSpace(manifestPath))
+            {
+                displayName = FirstNonEmpty(sourceCredential?.ModName, displayName);
+                description = FirstNonEmpty(sourceCredential?.ModName, description);
+            }
 
             var item = new ModManageItem
             {
@@ -5668,9 +6825,18 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 NexusModsProjectId = nexusModsProjectId,
                 UpdateSource = updateSource,
                 LocalizationUpdatedAt = localizationUpdatedAt,
+                SourceDisplayName = FirstNonEmpty(sourceDisplayName, actualName),
+                LocalizedDisplayName = sourceCredential?.Localization?.NameZhCn ?? string.Empty,
+                SourceDescription = sourceDescription,
+                LocalizedDescription = sourceCredential?.Localization?.DescriptionZhCn ?? string.Empty,
                 IsEnabled = isEnabled,
-                UpdateStatus = "未检查"
+                UpdateStatus = isCompositeParent ? "分组" : "未检查",
+                IsCompositeParent = isCompositeParent,
+                ParentModId = parentReference?.Id ?? string.Empty,
+                ParentModName = parentReference?.Name ?? string.Empty
             };
+
+            item.SetLocalizationLanguage(useLocalizedText: true);
 
             foreach (var tag in BuildFolderTagsForMod(modsPath, modDirectory, actualName))
             {
@@ -5681,6 +6847,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             Mods.Add(item);
         }
 
+        BuildModHierarchy(modsPath);
         BuildDisplayDependenciesForMods(dependencyEntriesByPath);
 
         LoadAndApplyTags(modsPath);
@@ -5699,7 +6866,6 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         if (Mods.Count == 0 && TryGetCurrentModsPath(out var modsPath) && Directory.Exists(modsPath))
         {
             ReloadMods();
-            return;
         }
 
         SyncExportModItemsFromCurrentMods();
@@ -5714,8 +6880,16 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         ExportModItems.Clear();
 
+        var currentModsPath = TryGetCurrentModsPath(out var resolvedModsPath)
+            ? resolvedModsPath
+            : string.Empty;
+
         var sourceMods = Mods
             .Where(mod => !mod.IsBackupItem)
+            // 复合 Mod 的父级可能只是 svl-source.json 生成的分组头，没有
+            // manifest.json；真正可导入的内容是其子 Mod，不能把分组头当成独立 Mod 导出。
+            .Where(mod => !mod.IsCompositeParent ||
+                          FindManifestPath(mod.FullPath) != null)
             .Where(mod => !IsSmapiBundledModForExport(mod.UniqueId, mod.DirectoryName))
             .OrderBy(mod => mod.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -5726,18 +6900,65 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             var sourcePlatform = string.Empty;
             var sourceProjectId = string.Empty;
             var sourceFileId = string.Empty;
+            var sourceDownloadUrl = string.Empty;
+            var sourceFileName = string.Empty;
 
             if (sourceCredential != null)
             {
                 sourcePlatform = NormalizePlatform(sourceCredential.Platform);
-                sourceProjectId = NormalizeProjectId(sourceCredential.ProjectId);
-                sourceFileId = FirstNonEmpty(sourceCredential.FileId);
+                sourceProjectId = NormalizePositiveId(
+                    FirstNonEmpty(sourceCredential.ProjectId, sourceCredential.ModId));
+                sourceFileId = NormalizePositiveId(sourceCredential.FileId);
+                sourceDownloadUrl = FirstNonEmpty(sourceCredential.DownloadUrl);
+                sourceFileName = FirstNonEmpty(sourceCredential.FileName);
             }
 
+            sourceFileName = FirstNonEmpty(sourceFileName, mod.SourceFileName);
+
             sourcePlatform = FirstNonEmpty(sourcePlatform, NormalizePlatform(mod.UpdateSource));
-            sourceProjectId = FirstNonEmpty(sourceProjectId,
-                NormalizeProjectId(mod.CurseforgeProjectId),
+
+            // 兼容旧版只保留 downloadUrl/nxmUrl 的来源凭证。身份推断必须发生在
+            // FileID 补全前，否则“未知平台 + NXM 链接”永远不会进入 Nexus 缓存
+            // 和 FileID 恢复分支，导出后再次导入就会退化成无来源 Mod。
+            InferExportSourceIdentity(
+                ref sourcePlatform,
+                ref sourceProjectId,
+                ref sourceFileId,
+                sourceDownloadUrl,
+                sourceCredential?.FileName,
+                mod.SourceFileName,
+                mod.DirectoryName);
+
+            // 不要固定优先 CurseForge ID：旧版来源文件可能缺 platform，但 manifest
+            // 同时留下了两个更新键。先按已知平台选择对应 ID，避免 Nexus 条目被
+            // 错导出成 CurseForge 项目。
+            sourceProjectId = FirstNonEmpty(
+                sourceProjectId,
+                IsCurseforgePlatform(sourcePlatform)
+                    ? NormalizeProjectId(mod.CurseforgeProjectId)
+                    : IsNexusPlatform(sourcePlatform)
+                        ? NormalizeProjectId(mod.NexusModsProjectId)
+                        : NormalizeProjectId(mod.CurseforgeProjectId),
+                IsCurseforgePlatform(sourcePlatform)
+                    ? NormalizeProjectId(mod.NexusModsProjectId)
+                    : NormalizeProjectId(mod.CurseforgeProjectId),
                 NormalizeProjectId(mod.NexusModsProjectId));
+
+            // FirstNonEmpty 只判断字符串是否为空，不能把旧版序列化的 0
+            // 当作有效平台 ID。清理后再提取 FileID，避免“项目 ID=0”让
+            // 导出页误判来源完整，并跳过后续补全。
+            sourceProjectId = NormalizePositiveId(sourceProjectId);
+
+            sourceFileId = FirstNonEmpty(
+                sourceFileId,
+                TryExtractSourceFileIdFromLocalMetadata(
+                    sourcePlatform,
+                    sourceProjectId,
+                    sourceCredential?.FileName,
+                    mod.SourceFileName,
+                    sourceDownloadUrl,
+                    mod.DirectoryName));
+            sourceFileId = NormalizePositiveId(sourceFileId);
 
             var exportItem = new ExportModSelectionItem
             {
@@ -5751,7 +6972,16 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 IsSelected = mod.IsEnabled,
                 SourcePlatform = string.IsNullOrWhiteSpace(sourcePlatform) ? "未知" : sourcePlatform,
                 SourceProjectId = sourceProjectId,
-                SourceFileId = sourceFileId
+                SourceFileId = sourceFileId,
+                SourceDownloadUrl = sourceDownloadUrl,
+                SourceFileName = sourceFileName,
+                IsCompositeParent = mod.IsCompositeParent,
+                ParentMod = BuildExportParentReference(currentModsPath, mod),
+                ChildMods = mod.ChildMods
+                    .Select(child => BuildExportChildReference(currentModsPath, child))
+                    .Where(child => child != null)
+                    .Select(child => child!)
+                    .ToList()
             };
 
             AttachExportModItem(exportItem);
@@ -5766,6 +6996,73 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         OnPropertyChanged(nameof(TotalExportModCount));
         OnPropertyChanged(nameof(CanStartExport));
         OnPropertyChanged(nameof(ExportProgressText));
+    }
+
+    private static ExportModParentReference? BuildExportParentReference(
+        string modsPath,
+        ModManageItem mod)
+    {
+        if (mod == null || string.IsNullOrWhiteSpace(mod.ParentModId))
+        {
+            return null;
+        }
+
+        var relativePath = GetPortableModRelativePath(modsPath, mod.ParentModId);
+        return string.IsNullOrWhiteSpace(relativePath)
+            ? null
+            : new ExportModParentReference
+            {
+                Id = relativePath,
+                Name = mod.ParentModName,
+                RelativePath = relativePath
+            };
+    }
+
+    private static ExportModChildReference? BuildExportChildReference(
+        string modsPath,
+        ModManageItem child)
+    {
+        if (child == null || string.IsNullOrWhiteSpace(child.FullPath))
+        {
+            return null;
+        }
+
+        var relativePath = GetPortableModRelativePath(modsPath, child.FullPath);
+        return string.IsNullOrWhiteSpace(relativePath)
+            ? null
+            : new ExportModChildReference
+            {
+                Id = relativePath,
+                Name = child.DisplayName,
+                RelativePath = relativePath,
+                UniqueId = child.UniqueId
+            };
+    }
+
+    private static string GetPortableModRelativePath(string modsPath, string path)
+    {
+        if (string.IsNullOrWhiteSpace(modsPath) || string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var root = Path.GetFullPath(modsPath);
+            var fullPath = Path.GetFullPath(path);
+            if (!IsPathUnderDirectoryOrEqual(fullPath, root))
+            {
+                return string.Empty;
+            }
+
+            return Path.GetRelativePath(root, fullPath)
+                .Replace(Path.DirectorySeparatorChar, '/')
+                .Replace(Path.AltDirectorySeparatorChar, '/');
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static bool IsSmapiBundledModForExport(string? uniqueId, string? folderName)
@@ -5802,6 +7099,170 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         OnPropertyChanged(nameof(SelectedExportModCount));
         OnPropertyChanged(nameof(CanStartExport));
         OnPropertyChanged(nameof(ExportProgressText));
+    }
+
+    /// <summary>
+    /// 从旧版本地来源元数据恢复平台和稳定 ID。历史版本有时只写入 NXM 链接、
+    /// Nexus 文件页 URL 或 CurseForge CDN URL，没有同步写 platform/projectId/fileId；
+    /// 这些信息仍足以安全恢复来源，避免导出包把可下载 Mod 标成“未知”。
+    /// </summary>
+    private static void InferExportSourceIdentity(
+        ref string platform,
+        ref string projectId,
+        ref string fileId,
+        params string?[] values)
+    {
+        if (string.IsNullOrWhiteSpace(platform) ||
+            string.Equals(platform, "未知", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(platform, "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            platform = string.Empty;
+        }
+
+        // 旧版导出会把未填的数字 ID 序列化成 0。它不能算作已存在的
+        // ProjectID/FileID，否则下面从 NXM、文件名或 CDN 推断时不会补值。
+        if (!TryParsePositiveLong(projectId, out _))
+        {
+            projectId = string.Empty;
+        }
+
+        if (!TryParsePositiveLong(fileId, out _))
+        {
+            fileId = string.Empty;
+        }
+
+        foreach (var value in values ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (new NxmLinkParser().TryParse(value, out var nxm, out _) &&
+                nxm.ResourceType == NxmResourceType.ModFile)
+            {
+                // svl-source.json/UpdateSource 中的显式平台优先于旧 URL 或文件名。
+                // 例如一个历史凭证已经是 CurseForge，但旁边残留了 Nexus 页面地址；
+                // 无条件覆盖会让导出包的项目 ID/FileID 跨平台串线。
+                if (string.IsNullOrWhiteSpace(platform) || IsNexusPlatform(platform))
+                {
+                    platform = "NexusMods";
+                    if (!TryParsePositiveLong(projectId, out _))
+                    {
+                        projectId = nxm.ModId.ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    if (!TryParsePositiveLong(fileId, out _))
+                    {
+                        fileId = nxm.FileId.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+
+                continue;
+            }
+
+            if (Services.NexusSourceParser.TryParsePageIds(value, out var nexusModId, out var nexusFileId))
+            {
+                if (string.IsNullOrWhiteSpace(platform) || IsNexusPlatform(platform))
+                {
+                    platform = "NexusMods";
+                    if (!TryParsePositiveLong(projectId, out _))
+                    {
+                        projectId = nexusModId.ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    if (!TryParsePositiveLong(fileId, out _))
+                    {
+                        fileId = nexusFileId.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+
+                continue;
+            }
+
+            if (Services.NexusSourceParser.TryParseModId(value, out var nexusOnlyModId))
+            {
+                if (string.IsNullOrWhiteSpace(platform) || IsNexusPlatform(platform))
+                {
+                    platform = "NexusMods";
+                    if (!TryParsePositiveLong(projectId, out _))
+                    {
+                        projectId = nexusOnlyModId.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+
+                continue;
+            }
+
+            var curseforgeTokenMatch = Regex.Match(
+                value,
+                @"(?:^|[^a-z0-9])(?:cf|curseforge)[-_ ](?<project>\d+)[-_ ](?<file>\d+)(?:[^0-9]|$)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (curseforgeTokenMatch.Success &&
+                long.TryParse(curseforgeTokenMatch.Groups["project"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var tokenProjectId) &&
+                long.TryParse(curseforgeTokenMatch.Groups["file"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var tokenFileId) &&
+                tokenProjectId > 0 &&
+                tokenFileId > 0)
+            {
+                if (string.IsNullOrWhiteSpace(platform) || IsCurseforgePlatform(platform))
+                {
+                    platform = "Curseforge";
+                    if (!TryParsePositiveLong(projectId, out _))
+                    {
+                        projectId = tokenProjectId.ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    if (!TryParsePositiveLong(fileId, out _))
+                    {
+                        fileId = tokenFileId.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+
+                continue;
+            }
+
+            if ((string.IsNullOrWhiteSpace(platform) || IsCurseforgePlatform(platform)) &&
+                Services.ModpackInstallService.TryParseCurseforgeIdsFromUrl(
+                    value,
+                    out var urlProjectId,
+                    out var urlFileId))
+            {
+                platform = "Curseforge";
+                if (!TryParsePositiveLong(projectId, out _) && urlProjectId > 0)
+                {
+                    projectId = urlProjectId.ToString(CultureInfo.InvariantCulture);
+                }
+
+                if (!TryParsePositiveLong(fileId, out _) && urlFileId > 0)
+                {
+                    fileId = urlFileId.ToString(CultureInfo.InvariantCulture);
+                }
+
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(platform) && IsLikelyCurseforgeSourceUrl(value))
+            {
+                platform = "Curseforge";
+            }
+        }
+    }
+
+    private static bool IsLikelyCurseforgeSourceUrl(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return false;
+        }
+
+        var host = uri.Host.TrimEnd('.');
+        return host.Equals("curseforge.com", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".curseforge.com", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("curse.tools", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".curse.tools", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("forgecdn.net", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".forgecdn.net", StringComparison.OrdinalIgnoreCase);
     }
 
     private void BuildDisplayDependenciesForMods(IReadOnlyDictionary<string, List<(string UniqueId, string MinimumVersion, bool IsRequired, string Note)>> dependencyEntriesByPath)
@@ -5843,7 +7304,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private static void ParseModDependencies(JsonElement manifestRoot, List<(string UniqueId, string MinimumVersion, bool IsRequired, string Note)> dependencies)
     {
-        if (manifestRoot.TryGetProperty("ContentPackFor", out var contentPackForElement) &&
+        if (TryGetJsonPropertyIgnoreCase(manifestRoot, "ContentPackFor", out var contentPackForElement) &&
             contentPackForElement.ValueKind == JsonValueKind.Object)
         {
             var contentPackForUniqueId = GetJsonStringByCandidates(contentPackForElement, "UniqueID", "UniqueId");
@@ -5854,7 +7315,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             }
         }
 
-        if (!manifestRoot.TryGetProperty("Dependencies", out var dependenciesElement) ||
+        if (!TryGetJsonPropertyIgnoreCase(manifestRoot, "Dependencies", out var dependenciesElement) ||
             dependenciesElement.ValueKind != JsonValueKind.Array)
         {
             return;
@@ -5894,7 +7355,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     {
         foreach (var candidate in candidates)
         {
-            if (element.TryGetProperty(candidate, out var propertyElement) && propertyElement.ValueKind == JsonValueKind.String)
+            if (TryGetJsonPropertyIgnoreCase(element, candidate, out var propertyElement) &&
+                propertyElement.ValueKind == JsonValueKind.String)
             {
                 return propertyElement.GetString() ?? string.Empty;
             }
@@ -5907,7 +7369,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     {
         foreach (var candidate in candidates)
         {
-            if (!element.TryGetProperty(candidate, out var propertyElement))
+            if (!TryGetJsonPropertyIgnoreCase(element, candidate, out var propertyElement))
             {
                 continue;
             }
@@ -5928,21 +7390,23 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return null;
         }
 
-        var bytes = File.ReadAllBytes(manifestPath);
+        // StreamReader 识别并移除 UTF-8/UTF-16 BOM。大量 CurseForge/SVL 整合包中的
+        // manifest.json 带 BOM，直接按 UTF-8 读取会导致 UTF-16 清单解析失败。
+        var json = Services.ManifestTextReader.ReadAllText(manifestPath);
         var options = new JsonDocumentOptions
         {
             AllowTrailingCommas = true,
             CommentHandling = JsonCommentHandling.Skip
         };
 
-        return JsonDocument.Parse(bytes, options);
+        return JsonDocument.Parse(json, options);
     }
 
     private static string GetJsonStringFlexibleByCandidates(JsonElement element, params string[] candidates)
     {
         foreach (var candidate in candidates)
         {
-            if (!element.TryGetProperty(candidate, out var propertyElement))
+            if (!TryGetJsonPropertyIgnoreCase(element, candidate, out var propertyElement))
             {
                 continue;
             }
@@ -5950,11 +7414,27 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             switch (propertyElement.ValueKind)
             {
                 case JsonValueKind.String:
-                    return propertyElement.GetString() ?? string.Empty;
+                {
+                    var value = propertyElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value.Trim();
+                    }
+
+                    break;
+                }
                 case JsonValueKind.Number:
                 case JsonValueKind.True:
                 case JsonValueKind.False:
-                    return propertyElement.ToString();
+                {
+                    var value = propertyElement.ToString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value.Trim();
+                    }
+
+                    break;
+                }
                 case JsonValueKind.Array:
                 {
                     var parts = propertyElement
@@ -5975,13 +7455,61 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         return string.Empty;
     }
 
+    private static string GetManifestVersion(JsonElement root)
+    {
+        var version = GetJsonStringFlexibleByCandidates(
+            root,
+            "Version",
+            "version",
+            "modVersion",
+            "mod_version",
+            "VersionString",
+            "releaseVersion",
+            "release_version",
+            "packageVersion",
+            "package_version");
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            return version;
+        }
+
+        // 少数第三方发行包会把真正的 Mod 清单包在 metadata/mod/info
+        // 节点中。只沿这些明确的元数据节点查找，避免扫描 content.json
+        // 风格的任意对象后把资源配置里的数字误当成版本号。
+        foreach (var wrapperName in new[] { "metadata", "mod", "info", "manifest" })
+        {
+            if (TryGetJsonPropertyIgnoreCase(root, wrapperName, out var wrapper) &&
+                wrapper.ValueKind == JsonValueKind.Object)
+            {
+                version = GetJsonStringFlexibleByCandidates(
+                    wrapper,
+                    "Version",
+                    "version",
+                    "modVersion",
+                    "mod_version",
+                    "VersionString",
+                    "releaseVersion",
+                    "release_version",
+                    "packageVersion",
+                    "package_version");
+                if (!string.IsNullOrWhiteSpace(version))
+                {
+                    return version;
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static void TryResolveSourceFromUpdateKeys(
         JsonElement manifestRoot,
         ref string curseforgeProjectId,
         ref string nexusModsProjectId,
         ref string updateSource)
     {
-        if (!manifestRoot.TryGetProperty("UpdateKeys", out var updateKeysElement) || updateKeysElement.ValueKind != JsonValueKind.Array)
+        if (!TryGetJsonPropertyIgnoreCase(manifestRoot, "UpdateKeys", out var updateKeysElement) ||
+            updateKeysElement.ValueKind != JsonValueKind.Array)
         {
             return;
         }
@@ -6048,6 +7576,11 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         return TryReadLegacyDotSource(modDir);
     }
 
+    private static string ReadTextFileWithBom(string path)
+    {
+        return Services.ManifestTextReader.ReadAllText(path);
+    }
+
     private static LocalSourceMetadata? TryReadSvlSourceMetadata(string modDir)
     {
         try
@@ -6058,7 +7591,59 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 return null;
             }
 
-            return JsonSerializer.Deserialize<LocalSourceMetadata>(File.ReadAllText(path), s_sourceJsonOptions);
+            var json = ReadTextFileWithBom(path);
+            var metadata = JsonSerializer.Deserialize<LocalSourceMetadata>(json, s_sourceJsonOptions);
+            if (metadata == null)
+            {
+                return null;
+            }
+
+            // WPF/Core 历史凭证并不总是使用 Avalonia 当前的 camelCase 字段：
+            // 常见的是 modId、project_id、file_id、source 和 download_url。
+            // 反序列化成功不等于来源字段真的被读到，必须按别名补齐，否则
+            // 管理页会显示“未知”，导出时也无法恢复稳定 FileID。
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                var root = document.RootElement;
+                metadata.Platform = FirstNonEmpty(
+                    metadata.Platform,
+                    GetJsonStringFlexibleByCandidates(root, "source", "platform", "provider", "site"));
+                metadata.ProjectId = FirstNonEmpty(
+                    metadata.ProjectId,
+                    GetJsonStringFlexibleByCandidates(
+                        root, "projectId", "project_id", "project", "collection"));
+                metadata.ModId = FirstNonEmpty(
+                    metadata.ModId,
+                    GetJsonStringFlexibleByCandidates(root, "modId", "mod_id", "nexusModId", "nexus_mod_id"));
+                metadata.ProjectId = FirstNonEmpty(metadata.ProjectId, metadata.ModId);
+                metadata.FileId = FirstNonEmpty(
+                    metadata.FileId,
+                    GetJsonStringFlexibleByCandidates(root, "fileId", "file_id", "file"));
+                metadata.FileName = FirstNonEmpty(
+                    metadata.FileName,
+                    GetJsonStringFlexibleByCandidates(
+                        root,
+                        "fileName",
+                        "file_name",
+                        "filename",
+                        "logicalFilename",
+                        "logical_filename"));
+                metadata.DownloadUrl = FirstNonEmpty(
+                    metadata.DownloadUrl,
+                    GetJsonStringFlexibleByCandidates(root, "downloadUrl", "download_url", "url", "nxmUrl", "nxm_url"));
+
+                // 第三方/旧 Collection 来源可能只保存 logicalFilename，且没有
+                // 单独的 fileId。将文件名中的 Nexus FileID 立即补回内存模型，
+                // 让管理页、导出页和后续来源补全使用同一份稳定信息。
+                if (string.IsNullOrWhiteSpace(metadata.FileId) &&
+                    DownloadOptionIdentityParser.TryExtractFileId(metadata.FileName, out var logicalFileId))
+                {
+                    metadata.FileId = logicalFileId.ToString(CultureInfo.InvariantCulture);
+                }
+            }
+
+            return metadata;
         }
         catch
         {
@@ -6076,7 +7661,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 return null;
             }
 
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            using var doc = JsonDocument.Parse(ReadTextFileWithBom(path));
             var root = doc.RootElement;
             var source = GetJsonStringFlexibleByCandidates(root, "source", "platform");
             var collection = GetJsonStringFlexibleByCandidates(root, "collection", "projectId", "modId");
@@ -6090,11 +7675,26 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 ? "NexusMods"
                 : source;
 
+            var fileName = GetJsonStringFlexibleByCandidates(
+                root,
+                "fileName",
+                "file_name",
+                "filename",
+                "logicalFilename",
+                "logical_filename");
+            var fileId = GetJsonStringFlexibleByCandidates(root, "file", "fileId", "file_id");
+            if (string.IsNullOrWhiteSpace(fileId) &&
+                DownloadOptionIdentityParser.TryExtractFileId(fileName, out var inferredFileId))
+            {
+                fileId = inferredFileId.ToString(CultureInfo.InvariantCulture);
+            }
+
             return new LocalSourceMetadata
             {
                 Platform = string.IsNullOrWhiteSpace(normalizedSource) ? "NexusMods" : normalizedSource,
                 ProjectId = collection,
-                FileId = GetJsonStringFlexibleByCandidates(root, "file", "fileId")
+                FileId = fileId,
+                FileName = fileName
             };
         }
         catch
@@ -6122,14 +7722,16 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         var normalizedPlatform = NormalizePlatform(sourceCredential.Platform);
         if (string.Equals(normalizedPlatform, "Curseforge", StringComparison.OrdinalIgnoreCase))
         {
-            var normalized = NormalizeProjectId(sourceCredential.ProjectId);
-            curseforgeProjectId = FirstNonEmpty(normalized, sourceCredential.ProjectId, curseforgeProjectId);
+            var normalized = NormalizePositiveId(
+                FirstNonEmpty(sourceCredential.ProjectId, sourceCredential.ModId));
+            curseforgeProjectId = FirstNonEmpty(normalized, curseforgeProjectId);
             updateSource = "Curseforge";
         }
         else if (string.Equals(normalizedPlatform, "NexusMods", StringComparison.OrdinalIgnoreCase))
         {
-            var normalized = NormalizeProjectId(sourceCredential.ProjectId);
-            nexusModsProjectId = FirstNonEmpty(normalized, sourceCredential.ProjectId, nexusModsProjectId);
+            var normalized = NormalizePositiveId(
+                FirstNonEmpty(sourceCredential.ProjectId, sourceCredential.ModId));
+            nexusModsProjectId = FirstNonEmpty(normalized, nexusModsProjectId);
             if (string.IsNullOrWhiteSpace(updateSource))
             {
                 updateSource = "NexusMods";
@@ -6182,8 +7784,51 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return string.Empty;
         }
 
-        var match = Regex.Match(raw, @"(\d+)(?!.*\d)");
-        return match.Success ? match.Groups[1].Value : raw.Trim();
+        var value = raw.Trim();
+
+        // 旧版来源文件和下载目录可能直接把 cf-项目ID-文件ID 当作
+        // projectId 保存。取最后一段数字会得到 FileID，导致管理页更新、
+        // 批量更新和导出三处使用不同的项目身份。
+        var curseforgeToken = Regex.Match(
+            value,
+            @"(?:^|[^a-z0-9])(?:cf|curseforge)[-_ ](?<project>\d+)[-_ ](?<file>\d+)(?:[^0-9]|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (curseforgeToken.Success)
+        {
+            return curseforgeToken.Groups["project"].Value;
+        }
+
+        // CurseForge 页面/API 来源通常把项目 ID 放在 /mods/{id}/ 后面，
+        // 不能用字符串最后一段数字，否则会把 /files/{fileId} 错当项目 ID。
+        if (Services.ModpackInstallService.TryParseCurseforgeIdsFromUrl(
+                value,
+                out var urlCurseforgeProjectId,
+                out _) &&
+            urlCurseforgeProjectId > 0)
+        {
+            return urlCurseforgeProjectId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (Services.NexusSourceParser.TryParsePageIds(value, out var nexusModId, out _))
+        {
+            return nexusModId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (Services.NexusSourceParser.TryParseModId(value, out var nexusOnlyModId))
+        {
+            return nexusOnlyModId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        var match = Regex.Match(value, @"(\d+)(?!.*\d)");
+        return match.Success ? match.Groups[1].Value : value;
+    }
+
+    private static string NormalizePositiveId(string? raw)
+    {
+        var normalized = NormalizeProjectId(raw);
+        return TryParsePositiveLong(normalized, out var value)
+            ? value.ToString(CultureInfo.InvariantCulture)
+            : string.Empty;
     }
 
     private static string NormalizePlatform(string? platform)
@@ -6221,7 +7866,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         var normalizedPlatform = NormalizePlatform(sourceInfo.Value.Platform);
-        var normalizedProjectId = NormalizeProjectId(sourceInfo.Value.ProjectId);
+        var normalizedProjectId = NormalizePositiveId(sourceInfo.Value.ProjectId);
         if (string.IsNullOrWhiteSpace(normalizedProjectId))
         {
             return null;
@@ -6330,51 +7975,67 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             CurseforgeProjectId = projectId
         };
 
-        try
+        var endpoints = new[]
         {
-            using var response = await s_modNetworkHttp.GetAsync($"https://api.curse.tools/v1/cf/mods/{projectId}/files?index=0&pageSize=30");
-            if (!response.IsSuccessStatusCode)
-            {
-                return result;
-            }
+            // RemoteCatalogService 使用的标准路径。
+            $"https://api.curse.tools/v1/mods/{projectId}/files?index=0&pageSize=60",
+            // 兼容早期 curse.tools API 的 cf 前缀路径。
+            $"https://api.curse.tools/v1/cf/mods/{projectId}/files?index=0&pageSize=60"
+        };
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
-            if (!doc.RootElement.TryGetProperty("data", out var files) || files.ValueKind != JsonValueKind.Array)
+        foreach (var endpoint in endpoints)
+        {
+            try
             {
-                return result;
-            }
-
-            JsonElement? latest = null;
-            long latestFileId = -1;
-            foreach (var file in files.EnumerateArray())
-            {
-                var fileId = GetJsonLongByCandidates(file, "id", "fileId");
-                if (latest == null || fileId > latestFileId)
+                using var response = await s_modNetworkHttp.GetAsync(endpoint);
+                if (!response.IsSuccessStatusCode)
                 {
-                    latest = file;
-                    latestFileId = fileId;
+                    continue;
                 }
-            }
 
-            if (latest.HasValue)
+                await using var stream = await response.Content.ReadAsStreamAsync();
+                using var doc = await JsonDocument.ParseAsync(stream);
+                if (!doc.RootElement.TryGetProperty("data", out var files) || files.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                JsonElement? latest = null;
+                long latestFileId = -1;
+                foreach (var file in files.EnumerateArray())
+                {
+                    var fileId = GetJsonLongByCandidates(file, "id", "fileId");
+                    if (latest == null || fileId > latestFileId)
+                    {
+                        latest = file;
+                        latestFileId = fileId;
+                    }
+                }
+
+                if (latest.HasValue)
+                {
+                    var remoteVersion = FirstNonEmpty(
+                        ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "displayName", "display_name")),
+                        ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "fileName", "file_name", "name")));
+                    result.LatestVersion = remoteVersion;
+                    result.HasUpdate = IsRemoteVersionNewer(mod.Version, remoteVersion);
+                    result.IsChecked = true;
+                    result.UpdateFileId = latestFileId;
+                    // 提取 Curseforge 直链供批量更新入队
+                    result.UpdateUrl = GetJsonStringFlexibleByCandidates(latest.Value, "downloadUrl", "download_url");
+                }
+
+                // 成功获得标准 data 数组后不再请求兼容 endpoint，即使项目暂无文件，
+                // 也不要重复发出同一查询。
+                return result;
+            }
+            catch
             {
-                var remoteVersion = FirstNonEmpty(
-                    ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "displayName", "display_name")),
-                    ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "fileName", "file_name", "name")));
-                result.LatestVersion = remoteVersion;
-                result.HasUpdate = IsRemoteVersionNewer(mod.Version, remoteVersion);
-                result.IsChecked = true;
-                // 提取 Curseforge 直链供批量更新入队
-                result.UpdateUrl = GetJsonStringFlexibleByCandidates(latest.Value, "downloadUrl", "download_url");
+                // 一个 API 路径不可用时继续尝试另一种历史路径。
             }
+        }
 
-            return result;
-        }
-        catch
-        {
-            return result;
-        }
+        return result;
     }
 
     private static bool IsRemoteVersionNewer(string localVersion, string remoteVersion)
@@ -6466,8 +8127,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return true;
         }
 
-        var manifestPath = Path.Combine(mod.FullPath ?? string.Empty, "manifest.json");
-        if (File.Exists(manifestPath))
+        var manifestPath = FindManifestPath(mod.FullPath ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(manifestPath))
         {
             try
             {
@@ -6475,7 +8136,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 if (doc != null)
                 {
                     var root = doc.RootElement;
-                    if (root.TryGetProperty("UpdateKeys", out var updateKeysElement) && updateKeysElement.ValueKind == JsonValueKind.Array)
+                    if (TryGetJsonPropertyIgnoreCase(root, "UpdateKeys", out var updateKeysElement) &&
+                        updateKeysElement.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var updateKeyElement in updateKeysElement.EnumerateArray())
                         {
@@ -6518,11 +8180,15 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         var credential = TryReadSourceCredential(mod.FullPath);
         if (credential != null && !string.IsNullOrWhiteSpace(credential.Platform) && !string.IsNullOrWhiteSpace(credential.ProjectId))
         {
-            return (NormalizePlatform(credential.Platform), NormalizeProjectId(credential.ProjectId));
+            var normalizedCredentialProjectId = NormalizePositiveId(credential.ProjectId);
+            if (!string.IsNullOrWhiteSpace(normalizedCredentialProjectId))
+            {
+                return (NormalizePlatform(credential.Platform), normalizedCredentialProjectId);
+            }
         }
 
-        var manifestPath = Path.Combine(mod.FullPath, "manifest.json");
-        if (File.Exists(manifestPath))
+        var manifestPath = FindManifestPath(mod.FullPath);
+        if (!string.IsNullOrWhiteSpace(manifestPath))
         {
             try
             {
@@ -6530,7 +8196,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 if (doc != null)
                 {
                     var root = doc.RootElement;
-                    if (root.TryGetProperty("UpdateKeys", out var updateKeysElement) && updateKeysElement.ValueKind == JsonValueKind.Array)
+                    if (TryGetJsonPropertyIgnoreCase(root, "UpdateKeys", out var updateKeysElement) &&
+                        updateKeysElement.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var updateKeyElement in updateKeysElement.EnumerateArray())
                         {
@@ -6552,7 +8219,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                             }
 
                             var source = NormalizePlatform(parts[0]);
-                            var id = NormalizeProjectId(parts[1]);
+                            var id = NormalizePositiveId(parts[1]);
                             if ((string.Equals(source, "Curseforge", StringComparison.OrdinalIgnoreCase) ||
                                  string.Equals(source, "NexusMods", StringComparison.OrdinalIgnoreCase)) &&
                                 !string.IsNullOrWhiteSpace(id))
@@ -6571,12 +8238,14 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         if (!string.IsNullOrWhiteSpace(mod.CurseforgeProjectId))
         {
-            return ("Curseforge", NormalizeProjectId(mod.CurseforgeProjectId));
+            var projectId = NormalizePositiveId(mod.CurseforgeProjectId);
+            return string.IsNullOrWhiteSpace(projectId) ? null : ("Curseforge", projectId);
         }
 
         if (!string.IsNullOrWhiteSpace(mod.NexusModsProjectId))
         {
-            return ("NexusMods", NormalizeProjectId(mod.NexusModsProjectId));
+            var projectId = NormalizePositiveId(mod.NexusModsProjectId);
+            return string.IsNullOrWhiteSpace(projectId) ? null : ("NexusMods", projectId);
         }
 
         return null;
@@ -6584,14 +8253,15 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private async Task<LocalCommunityLocalizationEntry?> TryFetchLocalizationEntryAsync(
         (string Platform, string ProjectId)? sourceInfo,
-        string? uniqueId)
+        string? uniqueId,
+        bool forceRefresh = false)
     {
         if (sourceInfo.HasValue)
         {
             var pathBySource = BuildCommunityLocalizationRelativePath(sourceInfo.Value.Platform, sourceInfo.Value.ProjectId);
             if (!string.IsNullOrWhiteSpace(pathBySource))
             {
-                var bySource = await FetchCommunityLocalizationByPathAsync(pathBySource);
+                var bySource = await FetchCommunityLocalizationByPathAsync(pathBySource, forceRefresh);
                 if (bySource != null)
                 {
                     return bySource;
@@ -6602,7 +8272,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         if (!string.IsNullOrWhiteSpace(uniqueId))
         {
             var pathByUniqueId = BuildCommunityLocalizationRelativePath("UniqueID", uniqueId);
-            return await FetchCommunityLocalizationByPathAsync(pathByUniqueId);
+            return await FetchCommunityLocalizationByPathAsync(pathByUniqueId, forceRefresh);
         }
 
         return null;
@@ -6627,7 +8297,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         return string.Empty;
     }
 
-    private async Task<LocalCommunityLocalizationEntry?> FetchCommunityLocalizationByPathAsync(string relativePath)
+    private async Task<LocalCommunityLocalizationEntry?> FetchCommunityLocalizationByPathAsync(
+        string relativePath,
+        bool forceRefresh = false)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
         {
@@ -6635,7 +8307,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         // 优先走 CommunityLocalizationService（带缓存 + 源选择 + 降级）
-        var entry = await _communityLocalizationService.GetByRelativePathAsync(relativePath);
+        var entry = await _communityLocalizationService.GetByRelativePathAsync(relativePath, forceRefresh);
         if (entry != null)
         {
             return new LocalCommunityLocalizationEntry
@@ -6762,19 +8434,23 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                mod.DisplayName = FirstNonEmpty(localization.Name?.ZhCn, mod.DisplayName);
-                mod.Description = FirstNonEmpty(localization.Description?.ZhCn, mod.Description);
+                mod.SetLocalizationData(
+                    sourceDisplayName: FirstNonEmpty(mod.SourceDisplayName, mod.DisplayName),
+                    localizedDisplayName: localization.Name?.ZhCn ?? string.Empty,
+                    sourceDescription: FirstNonEmpty(mod.SourceDescription, mod.Description),
+                    localizedDescription: localization.Description?.ZhCn ?? string.Empty,
+                    useLocalizedText: true);
                 mod.LocalizationUpdatedAt = credential.Localization?.UpdatedAt ?? mod.LocalizationUpdatedAt;
 
                 var normalized = NormalizePlatform(credential.Platform);
                 if (string.Equals(normalized, "Curseforge", StringComparison.OrdinalIgnoreCase))
                 {
-                    mod.CurseforgeProjectId = FirstNonEmpty(NormalizeProjectId(credential.ProjectId), mod.CurseforgeProjectId);
+                    mod.CurseforgeProjectId = FirstNonEmpty(NormalizePositiveId(credential.ProjectId), mod.CurseforgeProjectId);
                     mod.UpdateSource = "Curseforge";
                 }
                 else if (string.Equals(normalized, "NexusMods", StringComparison.OrdinalIgnoreCase))
                 {
-                    mod.NexusModsProjectId = FirstNonEmpty(NormalizeProjectId(credential.ProjectId), mod.NexusModsProjectId);
+                    mod.NexusModsProjectId = FirstNonEmpty(NormalizePositiveId(credential.ProjectId), mod.NexusModsProjectId);
                     mod.UpdateSource = "NexusMods";
                 }
             });
@@ -6807,6 +8483,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             IsInstalledButDisabled = installedMod != null && !installedMod.IsEnabled,
             InstalledModId = installedMod?.UniqueId ?? string.Empty,
             InstalledModName = installedMod?.DisplayName ?? string.Empty,
+            InstalledVersion = installedMod?.Version ?? string.Empty,
             Note = note
         };
     }
@@ -7112,21 +8789,29 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private void ApplyTagFilter()
     {
-        IEnumerable<ModManageItem> source = IsBackupTab ? BackupMods : Mods;
+        // 子 Mod 由父级分组行承载，顶层列表只显示根项目；搜索/筛选命中子 Mod
+        // 时仍保留其父级，避免用户因为折叠分组而看不到命中结果。
+        IEnumerable<ModManageItem> source = IsBackupTab
+            ? BackupMods
+            : Mods.Where(mod => !mod.IsChildMod);
 
         var keyword = (SearchKeyword ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(keyword))
         {
-            source = source.Where(mod => MatchesSearch(mod, keyword));
+            source = source.Where(mod => MatchesSearch(mod, keyword) ||
+                                         mod.ChildMods.Any(child => MatchesSearch(child, keyword)));
         }
 
         if (IsModsTab)
         {
             source = CurrentModSubFilter switch
             {
-                ModManageSubFilter.Enabled => source.Where(mod => mod.IsEnabled),
-                ModManageSubFilter.Disabled => source.Where(mod => !mod.IsEnabled),
-                ModManageSubFilter.Updatable => source.Where(mod => mod.HasUpdate),
+                ModManageSubFilter.Enabled => source.Where(mod => mod.IsEnabled ||
+                                                                  mod.ChildMods.Any(child => child.IsEnabled)),
+                ModManageSubFilter.Disabled => source.Where(mod => !mod.IsEnabled ||
+                                                                   mod.ChildMods.Any(child => !child.IsEnabled)),
+                ModManageSubFilter.Updatable => source.Where(mod => mod.HasUpdate ||
+                                                                    mod.ChildMods.Any(child => child.HasUpdate)),
                 _ => source
             };
         }
@@ -7357,30 +9042,516 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private static IEnumerable<string> EnumerateCandidateModDirectories(string modsPath)
     {
-        var directDirectories = Directory.GetDirectories(modsPath)
+        string[] topLevelDirectories;
+        try
+        {
+            topLevelDirectories = Directory.GetDirectories(modsPath);
+        }
+        catch
+        {
+            return [];
+        }
+
+        var directDirectories = topLevelDirectories
             .Where(path => !string.Equals(Path.GetFileName(path), BackupRootFolderName, StringComparison.OrdinalIgnoreCase));
         var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var directory in directDirectories)
         {
-            var manifestPath = Path.Combine(directory, "manifest.json");
-            if (File.Exists(manifestPath))
+            List<string> manifestDirectories;
+            try
             {
-                results.Add(directory);
+                manifestDirectories = FindManifestDirectories(directory);
+            }
+            catch
+            {
+                // 单个损坏/无权限 Mod 不应阻断剩余目录的加载。
                 continue;
             }
-
-            foreach (var child in Directory.GetDirectories(directory))
+            if (manifestDirectories.Count > 0)
             {
-                var childManifestPath = Path.Combine(child, "manifest.json");
-                if (File.Exists(childManifestPath))
+                foreach (var manifestDirectory in manifestDirectories)
                 {
-                    results.Add(child);
+                    results.Add(manifestDirectory);
                 }
+            }
+
+            // 复合 Mod 的父目录可以没有 manifest.json，只通过 svl-source.json
+            // 声明 isParentMod/childMods。把它加入候选，后续才能在 UI 中显示分组头。
+            var sourceCredential = TryReadSourceCredential(directory);
+            if (sourceCredential?.IsParentMod == true)
+            {
+                results.Add(Path.GetFullPath(directory));
             }
         }
 
         return results;
+    }
+
+    private static string? FindManifestPath(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        try
+        {
+            var candidates = new[] { Path.Combine(directory, "manifest.json") }
+                .Concat(Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+                .Where(path => string.Equals(
+                    Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            return candidates.FirstOrDefault(IsLikelyModManifest);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsLikelyModManifest(string manifestPath)
+    {
+        try
+        {
+            using var document = TryReadManifestDocument(manifestPath);
+            if (document == null || document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            var root = document.RootElement;
+            if (string.IsNullOrWhiteSpace(GetJsonStringFlexibleByCandidates(root, "Name", "name")))
+            {
+                return false;
+            }
+
+            var hasPackageShape = TryGetJsonPropertyIgnoreCase(root, "files", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "manifestType", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "minecraft", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "formatVersion", out _) ||
+                                  TryGetJsonPropertyIgnoreCase(root, "modpackVersion", out _);
+            var hasStrongModIdentity =
+                !string.IsNullOrWhiteSpace(GetJsonStringFlexibleByCandidates(
+                    root, "UniqueID", "UniqueId", "unique_id")) ||
+                TryGetJsonPropertyIgnoreCase(root, "EntryDll", out _) ||
+                TryGetJsonPropertyIgnoreCase(root, "ContentPackFor", out _) ||
+                TryGetJsonPropertyIgnoreCase(root, "UpdateKeys", out _);
+            if (!hasPackageShape && !hasStrongModIdentity && HasNestedManifest(manifestPath))
+            {
+                return false;
+            }
+
+            if (!hasPackageShape)
+            {
+                return true;
+            }
+
+            return hasStrongModIdentity;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasNestedManifest(string manifestPath)
+    {
+        var directory = Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return false;
+        }
+
+        try
+        {
+            return EnumerateManifestFilesSafe(directory)
+                .Any(path =>
+                    !string.Equals(path, manifestPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 根据 svl-source.json 中的父子引用构建复合 Mod 层级。
+    ///
+    /// SMAPI 的内容包通常是独立的一级目录，但 SVL 的复合 Mod（例如一个
+    /// 下载条目展开成主 Mod + 多个子 Mod）需要在管理页折叠为一个分组。这里
+    /// 只改变管理页的展示和选择关系，不移动磁盘上的 Mod 目录。
+    /// </summary>
+    private void BuildModHierarchy(string modsPath)
+    {
+        var itemsByPath = Mods
+            .Where(item => !string.IsNullOrWhiteSpace(item.FullPath))
+            .GroupBy(item => NormalizeModPathKey(item.FullPath), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        var credentialsByPath = Mods
+            .Where(item => !string.IsNullOrWhiteSpace(item.FullPath))
+            .Select(item => new
+            {
+                Path = NormalizeModPathKey(item.FullPath),
+                Credential = TryReadSourceCredential(item.FullPath)
+            })
+            .Where(item => item.Credential != null)
+            .ToDictionary(item => item.Path, item => item.Credential!, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in Mods)
+        {
+            item.ChildMods.Clear();
+            item.IsChildMod = false;
+            item.ParentModId = string.Empty;
+            item.ParentModName = string.Empty;
+        }
+
+        // 子目录上的 parentMod 引用是最可靠的关系来源。
+        foreach (var child in Mods.ToList())
+        {
+            if (!credentialsByPath.TryGetValue(NormalizeModPathKey(child.FullPath), out var credential) ||
+                credential.ParentMod == null ||
+                string.IsNullOrWhiteSpace(credential.ParentMod.RelativePath))
+            {
+                continue;
+            }
+
+            var parentPath = ResolveCompositeReferencePath(modsPath, credential.ParentMod.RelativePath);
+            if (string.IsNullOrWhiteSpace(parentPath))
+            {
+                continue;
+            }
+
+            var parent = GetOrCreateCompositeParent(
+                modsPath,
+                parentPath,
+                itemsByPath,
+                credentialsByPath);
+            AttachCompositeChild(parent, child);
+        }
+
+        // 父目录上的 childMods 引用用于兼容旧版导出格式。
+        foreach (var parent in Mods.ToList())
+        {
+            if (!credentialsByPath.TryGetValue(NormalizeModPathKey(parent.FullPath), out var credential) ||
+                credential.ChildMods == null ||
+                credential.ChildMods.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var childReference in credential.ChildMods)
+            {
+                if (string.IsNullOrWhiteSpace(childReference.RelativePath))
+                {
+                    continue;
+                }
+
+                var childPath = ResolveCompositeReferencePath(modsPath, childReference.RelativePath);
+                if (string.IsNullOrWhiteSpace(childPath) ||
+                    !itemsByPath.TryGetValue(NormalizeModPathKey(childPath), out var child))
+                {
+                    continue;
+                }
+
+                AttachCompositeChild(parent, child);
+            }
+        }
+
+        foreach (var parent in Mods.Where(item => item.IsCompositeParent && item.ChildMods.Count > 0))
+        {
+            var orderedChildren = parent.ChildMods
+                .OrderBy(child => child.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            parent.ChildMods.Clear();
+            foreach (var child in orderedChildren)
+            {
+                parent.ChildMods.Add(child);
+            }
+
+            // 分组头的启用状态反映所有子 Mod，避免筛选结果与实际状态相反。
+            parent.IsEnabled = orderedChildren.All(child => child.IsEnabled);
+            parent.UpdateStatus = "分组";
+            if (string.IsNullOrWhiteSpace(parent.Description))
+            {
+                parent.Description = $"包含 {orderedChildren.Count} 个子 Mod";
+            }
+
+            parent.NotifyGroupChanged();
+        }
+    }
+
+    private ModManageItem? GetOrCreateCompositeParent(
+        string modsPath,
+        string parentPath,
+        IDictionary<string, ModManageItem> itemsByPath,
+        IReadOnlyDictionary<string, LocalSourceMetadata> credentialsByPath)
+    {
+        var pathKey = NormalizeModPathKey(parentPath);
+        if (itemsByPath.TryGetValue(pathKey, out var existing))
+        {
+            existing.IsCompositeParent = true;
+            return existing;
+        }
+
+        if (!Directory.Exists(parentPath))
+        {
+            return null;
+        }
+
+        credentialsByPath.TryGetValue(pathKey, out var credential);
+        var folderName = Path.GetFileName(parentPath.TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar));
+        if (string.IsNullOrWhiteSpace(folderName))
+        {
+            return null;
+        }
+
+        var displayName = FirstNonEmpty(credential?.ModName, folderName);
+        var parent = new ModManageItem
+        {
+            DisplayName = displayName,
+            Version = "未知版本",
+            DirectoryName = NormalizeFolderName(folderName),
+            FolderName = NormalizeFolderName(folderName),
+            FullPath = parentPath,
+            Author = string.Empty,
+            Description = string.Empty,
+            IsEnabled = !IsDisabledFolderName(folderName),
+            IsCompositeParent = true,
+            UpdateStatus = "分组"
+        };
+
+        if (credential != null)
+        {
+            parent.ParentModId = credential.ParentMod?.Id ?? string.Empty;
+            parent.ParentModName = credential.ParentMod?.Name ?? string.Empty;
+            var resolvedDisplayName = parent.DisplayName;
+            var resolvedDescription = parent.Description;
+            var resolvedVersion = parent.Version;
+            var sourceFileName = string.Empty;
+            var updateSource = string.Empty;
+            var curseforgeProjectId = string.Empty;
+            var nexusModsProjectId = string.Empty;
+            var localizationUpdatedAt = string.Empty;
+            ApplySourceCredentialToModItem(
+                credential,
+                ref resolvedDisplayName,
+                ref resolvedDescription,
+                ref resolvedVersion,
+                ref sourceFileName,
+                ref updateSource,
+                ref curseforgeProjectId,
+                ref nexusModsProjectId,
+                ref localizationUpdatedAt);
+
+            parent.DisplayName = resolvedDisplayName;
+            parent.Description = resolvedDescription;
+            parent.Version = resolvedVersion;
+            parent.SourceFileName = sourceFileName;
+            parent.UpdateSource = updateSource;
+            parent.CurseforgeProjectId = curseforgeProjectId;
+            parent.NexusModsProjectId = nexusModsProjectId;
+            parent.LocalizationUpdatedAt = localizationUpdatedAt;
+        }
+
+        foreach (var tag in BuildFolderTagsForMod(modsPath, parentPath, parent.DirectoryName))
+        {
+            parent.FolderTags.Add(tag);
+        }
+
+        AttachModItem(parent);
+        Mods.Add(parent);
+        itemsByPath[pathKey] = parent;
+        return parent;
+    }
+
+    private static void AttachCompositeChild(ModManageItem? parent, ModManageItem child)
+    {
+        if (parent == null || ReferenceEquals(parent, child) ||
+            parent.ChildMods.Any(existing => ReferenceEquals(existing, child) ||
+                                             string.Equals(existing.FullPath, child.FullPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        parent.IsCompositeParent = true;
+        child.IsChildMod = true;
+        child.ParentModId = parent.FullPath;
+        child.ParentModName = parent.DisplayName;
+        parent.ChildMods.Add(child);
+    }
+
+    private static string? ResolveCompositeReferencePath(string modsPath, string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(modsPath) || string.IsNullOrWhiteSpace(relativePath))
+        {
+            return null;
+        }
+
+        var root = Path.GetFullPath(modsPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var candidate = Path.IsPathRooted(relativePath)
+            ? Path.GetFullPath(relativePath)
+            : Path.GetFullPath(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar)));
+
+        if (!IsPathUnderDirectoryOrEqual(candidate, root))
+        {
+            // 某些旧版本保存的是“Mods/父目录/子目录”而不是相对 Mods 的路径。
+            var normalized = relativePath.Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar)
+                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (normalized.StartsWith("Mods" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = Path.GetFullPath(Path.Combine(root, normalized[("Mods".Length + 1)..]));
+            }
+        }
+
+        return IsPathUnderDirectoryOrEqual(candidate, root) ? candidate : null;
+    }
+
+    private static bool IsPathUnderDirectoryOrEqual(string path, string directory)
+    {
+        var normalizedPath = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedDirectory = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(normalizedPath, normalizedDirectory, StringComparison.OrdinalIgnoreCase) ||
+               IsPathUnderDirectory(normalizedPath, normalizedDirectory);
+    }
+
+    private static string NormalizeModPathKey(string? path)
+    {
+        return string.IsNullOrWhiteSpace(path)
+            ? string.Empty
+            : Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static List<string> FindManifestDirectories(string rootDirectory)
+    {
+        var manifestDirectories = new List<string>();
+        if (string.IsNullOrWhiteSpace(rootDirectory) || !Directory.Exists(rootDirectory))
+        {
+            return manifestDirectories;
+        }
+
+        try
+        {
+            manifestDirectories = EnumerateManifestFilesSafe(rootDirectory)
+                .Where(path => string.Equals(
+                    Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase))
+                .Where(IsLikelyModManifest)
+                .Select(path => Path.GetDirectoryName(path))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => Path.GetFullPath(path!))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()!;
+        }
+        catch
+        {
+            return [];
+        }
+
+        // 若外层目录自身已经是 Mod 根目录，则忽略其内部内容包的 manifest，
+        // 以 SMAPI 的“一个顶层 Mod 一个 manifest 根”为准。
+        return manifestDirectories
+            .Where(directory => !manifestDirectories.Any(parent =>
+                !string.Equals(parent, directory, StringComparison.OrdinalIgnoreCase) &&
+                IsPathUnderDirectory(directory, parent)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 逐目录扫描 manifest，隔离单个损坏、无权限或重解析点目录的异常。
+    /// 不使用 AllDirectories，避免一个不可访问的残留目录让整个 Mod 列表
+    /// 都无法加载。
+    /// </summary>
+    private static IEnumerable<string> EnumerateManifestFilesSafe(string rootDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(rootDirectory) || !Directory.Exists(rootDirectory))
+        {
+            return [];
+        }
+
+        var pending = new Stack<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            pending.Push(Path.GetFullPath(rootDirectory));
+        }
+        catch
+        {
+            return [];
+        }
+
+        var results = new List<string>();
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!visited.Add(current))
+            {
+                continue;
+            }
+
+            List<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(current, "*", SearchOption.TopDirectoryOnly)
+                    .Where(path => string.Equals(
+                        Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+            catch
+            {
+                files = [];
+            }
+
+            results.AddRange(files);
+
+            List<string> directories;
+            try
+            {
+                directories = Directory.EnumerateDirectories(current, "*", SearchOption.TopDirectoryOnly).ToList();
+            }
+            catch
+            {
+                directories = [];
+            }
+
+            foreach (var directory in directories)
+            {
+                try
+                {
+                    if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+
+                pending.Push(directory);
+            }
+        }
+
+        return results;
+    }
+
+    private static bool IsPathUnderDirectory(string path, string directory)
+    {
+        var normalizedDirectory = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedPath = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return normalizedPath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool MatchesTagFilterSingle(ModManageItem mod, ModTagFilterOption option)
@@ -7990,7 +10161,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     }
 
     [RelayCommand]
-    private void EnableSelectedMods()
+    private async Task EnableSelectedMods()
     {
         if (IsBackupTab)
         {
@@ -8006,12 +10177,16 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
+        if (!await ConfirmAndEnableDisabledDependenciesAsync(targets))
+        {
+            return;
+        }
+
         var changed = 0;
         foreach (var target in targets)
         {
             SelectedMod = target;
-            EnableSelectedMod();
-            if (target.IsEnabled)
+            if (TryEnableModDirectory(target))
             {
                 changed++;
             }
@@ -8250,8 +10425,18 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         var selected = source.Where(mod => mod.IsSelected).ToList();
         if (selected.Count > 0)
         {
-            return selected;
-        }
+        var selectedParentPaths = selected
+            .Where(mod => !mod.IsChildMod)
+            .Select(mod => NormalizeModPathKey(mod.FullPath))
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return selected
+            .Where(mod => !mod.IsChildMod ||
+                          string.IsNullOrWhiteSpace(mod.ParentModId) ||
+                          !selectedParentPaths.Contains(NormalizeModPathKey(mod.ParentModId)))
+            .ToList();
+    }
 
         if (SelectedMod != null && source.Contains(SelectedMod))
         {
@@ -8276,7 +10461,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     }
 
     [RelayCommand]
-    private void EnableSelectedMod()
+    private async Task EnableSelectedMod()
     {
         if (!TryGetSelectedModForAction("启用", out var target))
         {
@@ -8288,12 +10473,140 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
+        if (!await ConfirmAndEnableDisabledDependenciesAsync([target]))
+        {
+            return;
+        }
+
+        TryEnableModDirectory(target);
+    }
+
+    private async Task<bool> ConfirmAndEnableDisabledDependenciesAsync(
+        IEnumerable<ModManageItem> targets)
+    {
+        var disabledDependencies = CollectDisabledDependencyItems(targets);
+        if (disabledDependencies.Count == 0)
+        {
+            return true;
+        }
+
+        var dependencyNames = disabledDependencies
+            .Select(item => string.IsNullOrWhiteSpace(item.DisplayName)
+                ? item.UniqueId
+                : item.DisplayName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var confirmed = await _dialogService.ShowDependencyEnableDialogAsync(
+            dependencyNames,
+            "启用前置 Mod",
+            "检测到以下前置 Mod 已安装但处于禁用状态。是否先启用它们，再启用当前 Mod？");
+        if (!confirmed)
+        {
+            Status = "已取消启用：前置 Mod 未启用";
+            RefreshModManageHint("已取消启用，请先启用当前 Mod 所需的前置 Mod");
+            return false;
+        }
+
+        var enabledCount = 0;
+        foreach (var dependency in disabledDependencies)
+        {
+            if (TryEnableModDirectory(dependency))
+            {
+                enabledCount++;
+            }
+        }
+
+        if (enabledCount < disabledDependencies.Count)
+        {
+            Status = $"前置 Mod 启用完成：{enabledCount}/{disabledDependencies.Count}，将继续启用目标 Mod";
+            RefreshModManageHint("部分前置 Mod 启用失败，请检查目录冲突或权限");
+        }
+
+        return true;
+    }
+
+    private List<ModManageItem> CollectDisabledDependencyItems(
+        IEnumerable<ModManageItem> targets)
+    {
+        var installedByUniqueId = Mods
+            .Where(mod => !string.IsNullOrWhiteSpace(mod.UniqueId))
+            .GroupBy(mod => mod.UniqueId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        // 采用后序遍历：A -> B -> C 时先返回 C，再返回 B，保证启用顺序符合
+        // 依赖优先原则。visited/visiting 同时避免重复提示和循环依赖导致的递归。
+        var result = new List<ModManageItem>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        string GetDependencyKey(ModManageItem mod)
+        {
+            return string.IsNullOrWhiteSpace(mod.UniqueId)
+                ? NormalizeModPathKey(mod.FullPath)
+                : mod.UniqueId.Trim();
+        }
+
+        void Visit(ModManageItem mod)
+        {
+            var modKey = GetDependencyKey(mod);
+            if (string.IsNullOrWhiteSpace(modKey) ||
+                visited.Contains(modKey) ||
+                !visiting.Add(modKey))
+            {
+                return;
+            }
+
+            foreach (var dependency in mod.DisplayDependencies.Where(item =>
+                         item.IsRequired &&
+                         !string.IsNullOrWhiteSpace(item.UniqueId) &&
+                         installedByUniqueId.TryGetValue(item.UniqueId, out _)))
+            {
+                if (!installedByUniqueId.TryGetValue(dependency.UniqueId, out var installedMod) ||
+                    installedMod.IsBackupItem)
+                {
+                    continue;
+                }
+
+                Visit(installedMod);
+                if (!installedMod.IsEnabled && !result.Contains(installedMod))
+                {
+                    result.Add(installedMod);
+                }
+            }
+
+            visiting.Remove(modKey);
+            visited.Add(modKey);
+        }
+
+        foreach (var target in targets ?? [])
+        {
+            if (target != null && !target.IsBackupItem)
+            {
+                Visit(target);
+            }
+        }
+
+        return result;
+    }
+
+    private bool TryEnableModDirectory(ModManageItem target)
+    {
+        if (string.IsNullOrWhiteSpace(target.FullPath) || !Directory.Exists(target.FullPath))
+        {
+            Status = $"启用失败：{target.DisplayName} 的目录不可用";
+            RefreshModManageHint("目标目录已丢失，请刷新列表后重试");
+            return false;
+        }
+
         var currentFolderName = Path.GetFileName(target.FullPath);
         if (!IsDisabledFolderName(currentFolderName))
         {
             Status = "启用失败：当前 Mod 目录后缀异常";
             RefreshModManageHint("启用失败：目录后缀异常，请刷新列表后重试");
-            return;
+            return false;
         }
 
         var newPath = GetEnabledFolderPath(target.FullPath);
@@ -8301,7 +10614,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         {
             Status = "启用失败：已存在同名启用目录";
             RefreshModManageHint("启用失败：存在同名目录，请先处理冲突后重试");
-            return;
+            return false;
         }
 
         try
@@ -8317,11 +10630,13 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             OnPropertyChanged(nameof(ModsSummary));
             OnPropertyChanged(nameof(SelectedModDetails));
             ApplyTagFilter();
+            return true;
         }
         catch (Exception ex)
         {
             Status = $"启用失败: {ex.Message}";
             RefreshModManageHint($"启用失败：{target.DisplayName}");
+            return false;
         }
     }
 
@@ -8489,6 +10804,24 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         Status = "已重置启动选项到默认值";
     }
 
+    /// <summary>
+    /// 显示游戏窗口标题占位符帮助。
+    /// 版本设置页是当前实际使用的实例设置入口，不能只在兼容旧视图中提供该功能。
+    /// </summary>
+    [RelayCommand]
+    private async Task ShowWindowTitleHelp()
+    {
+        const string helpText =
+            "窗口标题支持以下占位符：\n\n" +
+            "<name>：当前实例名称\n" +
+            "<ver>：当前游戏版本\n" +
+            "<smver>：当前 SMAPI 版本\n" +
+            "<modscount>：已加载的 Mod 数量\n\n" +
+            "留空或填写 <default> 可恢复默认标题。占位符会在启动游戏时替换为当前实例信息。";
+
+        await _dialogService.ShowWindowTitleHelpDialogAsync(helpText, "窗口标题占位符帮助");
+    }
+
     [RelayCommand]
     private async Task WriteSteamLaunchOptionsAsync()
     {
@@ -8637,6 +10970,20 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 TaskKind = Models.DownloadTaskKind.Generic,
                 TaskAction = Models.DownloadTaskAction.InstallSmapi,
                 SourceUrl = selected.DownloadUrl,
+                // 外部 SMAPI 流程本身直接执行下载，但任务失败后仍允许从任务页重试；
+                // 必须提前持久化一个下载目标，否则重试会进入通用下载路由并因目标为空失败。
+                OutputFilePath = System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(),
+                    "SVL",
+                    "smapi",
+                    $"SMAPI-{SanitizeFileName(selected.Version)}.zip"),
+                SourcePlatform = selected.Source,
+                SourceModId = string.Equals(selected.Source, "Curseforge", StringComparison.OrdinalIgnoreCase)
+                    ? 898372
+                    : string.Equals(selected.Source, "NexusMods", StringComparison.OrdinalIgnoreCase)
+                        ? Services.SmapiDownloadService.SmapiModId
+                        : null,
+                SourceFileId = selected.FileId,
                 CanCancel = true,
                 CanRetry = false,
                 TargetGamePath = gameBasePath,
@@ -8663,6 +11010,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             {
                 taskItem.SetState(DownloadTaskState.Failed, "下载失败");
                 taskItem.FailedDetails = "SMAPI 下载失败：文件不存在";
+                taskItem.CanRetry = true;
                 Status = "SMAPI 下载失败";
                 return;
             }
@@ -8690,16 +11038,31 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 SmapiVersionText = selected.Version;
                 SaveVersionSettings();
 
+                // 新装模式会在 Base/versions/<实例名> 创建隔离实例。这里只保存
+                // PreferredLaunchMode 仍会让当前页和启动页继续读取旧的 Base 路径，
+                // 于是刚安装完成的 SMAPI 实例会被 Vanilla 图标遮住，Mod 管理也会
+                // 继续作用于错误目录。安装结果成功后必须把新运行目录设为当前实例，
+                // 与下载页的 SMAPI 安装路由保持相同语义。
+                var installedSettings = _settingsStore.Load();
+                installedSettings.PreferredInstancePath = installResult.RuntimePath;
+                installedSettings.InstanceName = instanceName;
+                installedSettings.PreferredLaunchMode = "SMAPI";
+                _settingsStore.Save(installedSettings);
+                InstanceName = instanceName;
+
                 // 写入 SMAPI 预设图标（Modded.png），物化"此实例为 SMAPI"标识到磁盘。
                 // 仅当用户未设置自定义图标时写入，避免覆盖个性化设置。
                 // CleanupRuntimeDirectoryForUpdate 更新时会保留 .svl-* 文件，图标自动延续。
-                TryWriteDefaultSmapiIcon();
+                // 新装时当前页面仍可能停留在 Base 路径；必须使用安装结果的运行时目录，
+                // 否则默认图标会写到 Base，而不会写入实际的 Nexus/CurseForge SMAPI 实例。
+                TryWriteDefaultSmapiIcon(installResult.RuntimePath);
 
                 RefreshInstanceRuntimeInfo();
 
                 taskItem.Progress = 100;
                 taskItem.SetState(DownloadTaskState.Completed, $"SMAPI {selected.Version} {actionText}完成");
                 taskItem.InstalledPath = installResult.VersionRootPath;
+                taskItem.InstalledDirectory = installResult.VersionRootPath;
                 Status = $"SMAPI {selected.Version} {actionText}成功";
             }
             else if (installResult.IsCancelled)
@@ -8712,6 +11075,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             {
                 taskItem.SetState(DownloadTaskState.Failed, $"{actionText}失败");
                 taskItem.FailedDetails = installResult.Message;
+                taskItem.CanRetry = true;
                 Status = $"SMAPI {actionText}失败: {installResult.Message}";
             }
         }
@@ -8727,6 +11091,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             {
                 taskItem.SetState(DownloadTaskState.Failed, $"{actionText}失败");
                 taskItem.FailedDetails = ex.Message;
+                taskItem.CanRetry = true;
             }
 
             Status = $"SMAPI {actionText}失败: {ex.Message}";
@@ -8794,6 +11159,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 File.Copy(selected, targetPath, true);
             }
 
+            // 即使用户选择的是 Vanilla/SMAPI 等内置预设，也必须视为用户自定义选择，
+            // 不能在之后导入整合包时被包内图标覆盖。
+            Services.InstanceIconResolver.TryDeleteGeneratedSmapiIconMarker(instancePath);
+
             RefreshInstanceRuntimeInfo();
             Status = "图标已更新";
             NotifyInstanceContextChanged();
@@ -8809,10 +11178,20 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     /// 委托给 InstanceIconResolver.TryWriteDefaultSmapiIcon 公共方法，
     /// 供 VersionSettingsPageViewModel 和 DownloadPageViewModel 共用。
     /// </summary>
-    private void TryWriteDefaultSmapiIcon()
+    private void TryWriteDefaultSmapiIcon(string? instancePath = null)
     {
-        var instancePath = ResolveCurrentInstancePath();
-        Services.InstanceIconResolver.TryWriteDefaultSmapiIcon(instancePath);
+        var targetPath = string.IsNullOrWhiteSpace(instancePath)
+            ? ResolveCurrentInstancePath()
+            : instancePath;
+        Services.InstanceIconResolver.TryWriteDefaultSmapiIcon(targetPath);
+    }
+
+    partial void OnModpackNameChanged(string value)
+    {
+        if (!_isUpdatingDefaultModpackName)
+        {
+            _lastAutoModpackName = string.Empty;
+        }
     }
 
     [RelayCommand]
@@ -8862,19 +11241,19 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         // 等待对话框完全关闭，避免 UI 线程阻塞导致对话框残留
         await Task.Delay(50);
 
-        // 删除前先清除图标引用：Image 控件加载 .svl-instance-icon.gif 后会锁定文件，
-        // 导致 Directory.Delete 失败。将图标切换为预设图标（不引用本地文件），
-        // 同时通知 LaunchPage 清除图标引用，等待 UI 刷新释放文件句柄后再删除。
-        InstanceIconSource = "avares://SVL.Avalonia/Assets/Icons/Vanilla.png";
-        NotifyInstanceContextChanged();
-        await Task.Delay(100);
+        // 删除前先清除当前页的图标绑定，并剔除该实例的内存图像索引。
+        // 静态本地图标从共享读取流复制到内存，APNG/GIF 则先复制到应用缓存，
+        // 因而不会再持有版本目录中的 .svl-instance-icon-smapi.png。
+        InstanceIconSource = string.Empty;
+        AssetImageConverter.RemoveCachedLocalFilesUnderDirectory(versionRoot);
+        await Task.Delay(150);
 
         try
         {
             // 在后台线程执行删除，避免阻塞 UI 线程导致对话框无法关闭
             // 先处理 Content/game junction/symlink，避免 Directory.Delete 跟随连接误删源目录
             // 参考 SVL.Core.Platform.Services.SmapiInstallService.CleanupVersionDirectory
-            await Task.Run(() => DeleteVersionDirectorySafe(versionRoot));
+            var deletionOutcome = await Task.Run(() => DeleteVersionDirectorySafe(versionRoot));
 
             // 删除后自动切换到所在的 Base 版本路径
             // versionRoot 结构: gameBasePath/versions/instanceName
@@ -8908,7 +11287,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
             RefreshInstanceRuntimeInfo();
             NotifyInstanceContextChanged();
-            Status = "当前版本已删除，已切换到 Base 版本";
+            Status = deletionOutcome switch
+            {
+                VersionDirectoryDeletionOutcome.Deferred => "当前版本已移除，正在后台清理目录，已切换到 Base 版本",
+                VersionDirectoryDeletionOutcome.ScheduledForReboot => "当前版本已移除，图标文件仍被占用，已安排重启后清理，已切换到 Base 版本",
+                _ => "当前版本已删除，已切换到 Base 版本"
+            };
             NotifyOverviewActionStateChanged();
 
             // 返回主页面
@@ -8916,6 +11300,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
         catch (Exception ex)
         {
+            // 删除失败时恢复当前实例信息与图标，避免页面停留在空白状态。
+            RefreshInstanceRuntimeInfo();
+            NotifyInstanceContextChanged();
             Status = $"删除版本失败: {ex.Message}";
         }
     }
@@ -8924,11 +11311,18 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     /// 安全删除版本目录，先处理 game/Content junction/symlink 避免误删源目录。
     /// 参考 SVL.Core.Platform.Services.SmapiInstallService.CleanupVersionDirectory。
     /// </summary>
-    private static void DeleteVersionDirectorySafe(string versionRoot)
+    private enum VersionDirectoryDeletionOutcome
+    {
+        Deleted,
+        Deferred,
+        ScheduledForReboot
+    }
+
+    private static VersionDirectoryDeletionOutcome DeleteVersionDirectorySafe(string versionRoot)
     {
         if (string.IsNullOrWhiteSpace(versionRoot) || !Directory.Exists(versionRoot))
         {
-            return;
+            return VersionDirectoryDeletionOutcome.Deleted;
         }
 
         // 检查 game 本身是否为 junction/symlink（新版隔离模式：game -> gameBasePath）
@@ -8952,7 +11346,173 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             RemoveJunction(directContentPath);
         }
 
-        Directory.Delete(versionRoot, true);
+        Exception? lastError = null;
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                ClearDeletionAttributes(versionRoot);
+                Directory.Delete(versionRoot, true);
+                return VersionDirectoryDeletionOutcome.Deleted;
+            }
+            catch (IOException ex) when (attempt < 5)
+            {
+                lastError = ex;
+            }
+            catch (UnauthorizedAccessException ex) when (attempt < 5)
+            {
+                lastError = ex;
+            }
+
+            // UI image bindings and antivirus scanners may release a just-closed handle a
+            // moment later. Keep the retry bounded and preserve the original exception if all
+            // attempts fail.
+            Thread.Sleep(125 * (attempt + 1));
+        }
+
+        // Avalonia/动画解码器或安全软件偶尔会在版本目录内短暂持有文件句柄。
+        // 同卷改名通常不需要等待该文件句柄释放；先把目录移出 versions，再在后台
+        // 重试物理删除，避免用户已经确认删除却被留在当前版本页面。
+        if (TryDeferVersionDirectoryDeletion(versionRoot))
+        {
+            return VersionDirectoryDeletionOutcome.Deferred;
+        }
+
+        // Windows 的图片解码器、预览器或安全软件可能以“不允许删除”的共享模式
+        // 持有图标文件，此时连目录改名也会失败。MoveFileEx 的延迟删除不会阻塞
+        // 当前流程，用户已经确认删除后可以立即离开版本设置页，系统重启时再清理
+        // 整个版本目录。非 Windows 平台没有这个 API，仍保留原异常给上层提示。
+        if (TryScheduleVersionDirectoryDeletionAtReboot(versionRoot))
+        {
+            return VersionDirectoryDeletionOutcome.ScheduledForReboot;
+        }
+
+        throw lastError ?? new IOException($"无法删除版本目录: {versionRoot}");
+    }
+
+    private const int MoveFileDelayUntilReboot = 0x00000004;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool MoveFileEx(
+        string existingFileName,
+        string? newFileName,
+        int flags);
+
+    private static bool TryScheduleVersionDirectoryDeletionAtReboot(string versionRoot)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(versionRoot))
+        {
+            return false;
+        }
+
+        try
+        {
+            var scheduled = MoveFileEx(versionRoot, null, MoveFileDelayUntilReboot);
+            if (!scheduled)
+            {
+                Debug.WriteLine(
+                    $"[VersionSettings] 无法安排重启后清理版本目录: {versionRoot}, Win32Error={Marshal.GetLastWin32Error()}");
+            }
+
+            return scheduled;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VersionSettings] 重启后清理版本目录异常: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>清除归档/解压后可能残留的只读、隐藏属性，不跟随连接点。</summary>
+    private static void ClearDeletionAttributes(string path)
+    {
+        try
+        {
+            if (IsJunctionOrSymlink(path))
+            {
+                return;
+            }
+
+            File.SetAttributes(path, FileAttributes.Normal);
+            if (!Directory.Exists(path))
+            {
+                return;
+            }
+
+            foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+            {
+                if (IsJunctionOrSymlink(entry))
+                {
+                    continue;
+                }
+
+                ClearDeletionAttributes(entry);
+            }
+        }
+        catch
+        {
+            // 单个文件属性失败不应阻止后续删除/重试。
+        }
+    }
+
+    private static bool TryDeferVersionDirectoryDeletion(string versionRoot)
+    {
+        try
+        {
+            var versionsDirectory = Directory.GetParent(versionRoot)?.FullName;
+            if (string.IsNullOrWhiteSpace(versionsDirectory) ||
+                !Directory.Exists(versionsDirectory) ||
+                !Directory.Exists(versionRoot))
+            {
+                return false;
+            }
+
+            var deferredPath = Path.Combine(
+                versionsDirectory,
+                $".svl-delete-{Guid.NewGuid():N}");
+            Directory.Move(versionRoot, deferredPath);
+
+            _ = Task.Run(() => DeleteDeferredVersionDirectory(deferredPath));
+            Debug.WriteLine($"[VersionSettings] 版本目录已移入后台清理队列: {deferredPath}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VersionSettings] 无法延后清理版本目录: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void DeleteDeferredVersionDirectory(string deferredPath)
+    {
+        // 最长约 30 秒；若外部进程仍未释放句柄，留下隐藏清理目录比误报已删除
+        // 更安全，下一次启动/人工清理仍可处理它。
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(deferredPath))
+                {
+                    return;
+                }
+
+                ClearDeletionAttributes(deferredPath);
+                Directory.Delete(deferredPath, true);
+                return;
+            }
+            catch (IOException) when (attempt < 39)
+            {
+                // retry below
+            }
+            catch (UnauthorizedAccessException) when (attempt < 39)
+            {
+                // retry below
+            }
+
+            Thread.Sleep(Math.Min(1000, 150 + attempt * 25));
+        }
+
+        Debug.WriteLine($"[VersionSettings] 后台清理版本目录仍失败: {deferredPath}");
     }
 
     /// <summary>判断路径是否为 junction 或 symbolic link。</summary>
@@ -9146,7 +11706,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 return;
             }
 
-            var json = File.ReadAllText(configPath, Encoding.UTF8);
+            // 导出配置可能来自旧版 WPF，按 BOM 自动识别 UTF-8/UTF-16，避免
+            // 配置可保存但再次读取时报格式无效。
+            var json = ReadTextFileWithBom(configPath);
             var config = JsonSerializer.Deserialize<VersionSettingsExportConfig>(json);
             if (config == null)
             {
@@ -9195,9 +11757,14 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
+        // 导出动作可能发生在页面已打开但当前实例刚切换后的时刻，导出前再同步一次默认名称。
+        RefreshDefaultModpackName(_settingsStore.Load());
         ReloadExportModItems();
 
-        var selectedMods = ExportModItems.Where(item => item.IsSelected).ToList();
+        // 关闭“包含 Mod”时，清单、来源和配置都不应再携带已勾选的 Mod。
+        var selectedMods = IncludeMods
+            ? ExportModItems.Where(item => item.IsSelected).ToList()
+            : [];
         if (IncludeMods && selectedMods.Count == 0)
         {
             ExportStatusMessage = "请至少选择一个 Mod";
@@ -9212,15 +11779,57 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
-        var targetFolder = await _dialogService.BrowseFolderPathAsync("选择整合包导出目录");
-        if (string.IsNullOrWhiteSpace(targetFolder))
+        // 旧版本安装记录可能只有 Nexus Mod ID，没有具体 FileID。导出前在已有
+        // Nexus 登录凭据可用时补全当前主文件的 FileID，并回写到 Mod 目录；没有
+        // 凭据时保留项目 ID，导入端仍会按 Mod 页等待用户触发 NXM 回调。
+        var unresolvedSourceFileIds = 0;
+        var missingSourceFileIds = selectedMods.Count(item =>
+            (IsNexusPlatform(item.SourcePlatform) || IsCurseforgePlatform(item.SourcePlatform)) &&
+            !string.IsNullOrWhiteSpace(item.SourceProjectId) &&
+            string.IsNullOrWhiteSpace(item.SourceFileId));
+        if (missingSourceFileIds > 0)
+        {
+            ExportStatusMessage = $"正在补全 {missingSourceFileIds} 个 Nexus/CurseForge Mod 的 FileID...";
+            Status = ExportStatusMessage;
+            var resolvedSourceFileIds = await FillMissingExportSourceFileIdsAsync(selectedMods);
+            unresolvedSourceFileIds = selectedMods.Count(item =>
+                (IsNexusPlatform(item.SourcePlatform) || IsCurseforgePlatform(item.SourcePlatform)) &&
+                !string.IsNullOrWhiteSpace(item.SourceProjectId) &&
+                string.IsNullOrWhiteSpace(item.SourceFileId));
+            ExportStatusMessage = unresolvedSourceFileIds == 0
+                ? $"已补全 {resolvedSourceFileIds} 个 Nexus/CurseForge Mod 的 FileID"
+                : $"有 {unresolvedSourceFileIds} 个 Nexus/CurseForge Mod 缺少 FileID，将在导入时按兼容流程处理";
+            Status = ExportStatusMessage;
+        }
+
+        // 导出包是用户要交付/分享的文件，使用系统“另存为”让用户同时选择目录和文件名。
+        // 默认名取当前整合包名称，但允许用户在对话框中直接改名。
+        var defaultName = SanitizeFileName(FirstNonEmpty(ModpackName, ExportNamePrefix, "SVL-Modpack"));
+        var selectedOutputPath = await _dialogService.SaveFilePathAsync(
+            "另存为整合包",
+            $"{defaultName}.zip",
+            [new global::Avalonia.Platform.Storage.FilePickerFileType("ZIP 整合包")
+            {
+                Patterns = ["*.zip"],
+                MimeTypes = ["application/zip"]
+            }]);
+        if (string.IsNullOrWhiteSpace(selectedOutputPath))
         {
             return;
         }
 
-        Directory.CreateDirectory(targetFolder);
-        var defaultName = SanitizeFileName(FirstNonEmpty(ModpackName, ExportNamePrefix, "SVL-Modpack"));
-        var outputPath = Path.Combine(targetFolder, $"{defaultName}-{DateTime.Now:yyyyMMddHHmmss}.zip");
+        // 某些系统文件选择器允许用户删掉扩展名；无论如何都保证导出结果为 ZIP。
+        var outputPath = string.Equals(
+            Path.GetExtension(selectedOutputPath),
+            ".zip",
+            StringComparison.OrdinalIgnoreCase)
+            ? selectedOutputPath
+            : Path.ChangeExtension(selectedOutputPath, ".zip");
+        var outputDirectory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            Directory.CreateDirectory(outputDirectory);
+        }
 
         IsExporting = true;
         ExportProgress = 0;
@@ -9242,7 +11851,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                     DirectoryName = item.DirectoryName,
                     SourcePlatform = item.SourcePlatform,
                     SourceProjectId = item.SourceProjectId,
-                    SourceFileId = item.SourceFileId
+                    SourceFileId = item.SourceFileId,
+                    SourceDownloadUrl = item.SourceDownloadUrl,
+                    SourceFileName = item.SourceFileName,
+                    IsCompositeParent = item.IsCompositeParent,
+                    ParentMod = item.ParentMod,
+                    ChildMods = item.ChildMods.ToList()
                 })
                 .ToList();
 
@@ -9251,7 +11865,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
             ExportProgress = 100;
             LastExportPath = outputPath;
-            ExportStatusMessage = $"导出完成：{Path.GetFileName(outputPath)}";
+            ExportStatusMessage = unresolvedSourceFileIds > 0
+                ? $"导出完成：{Path.GetFileName(outputPath)}（{unresolvedSourceFileIds} 个 Nexus/CurseForge Mod 缺少 FileID）"
+                : $"导出完成：{Path.GetFileName(outputPath)}";
             Status = ExportStatusMessage;
         }
         catch (Exception ex)
@@ -9265,12 +11881,208 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
     }
 
+    private async Task<int> FillMissingExportSourceFileIdsAsync(
+        IReadOnlyList<ExportModSelectionItem> selectedMods)
+    {
+        var settings = _settingsStore.Load();
+        var hasNexusCandidates = selectedMods.Any(item =>
+            IsNexusPlatform(item.SourcePlatform) &&
+            TryParsePositiveLong(item.SourceProjectId, out _) &&
+            string.IsNullOrWhiteSpace(item.SourceFileId));
+        var hasCurseforgeCandidates = selectedMods.Any(item =>
+            IsCurseforgePlatform(item.SourcePlatform) &&
+            TryParsePositiveLong(item.SourceProjectId, out _) &&
+            string.IsNullOrWhiteSpace(item.SourceFileId));
+
+        // Nexus files.json 需要 API/OAuth 凭据；CurseForge 的 curse.tools 文件列表
+        // 是公开接口，不能因为用户没有登录 Nexus 就连 CurseForge 一并跳过。
+        if ((!hasCurseforgeCandidates) &&
+            (!hasNexusCandidates || !HasNexusCredential(settings)))
+        {
+            return 0;
+        }
+
+        var resolvedCount = 0;
+        foreach (var item in selectedMods.Where(item =>
+                     (IsNexusPlatform(item.SourcePlatform) || IsCurseforgePlatform(item.SourcePlatform)) &&
+                     TryParsePositiveLong(item.SourceProjectId, out _) &&
+                     string.IsNullOrWhiteSpace(item.SourceFileId)))
+        {
+            var mod = Mods.FirstOrDefault(candidate =>
+                string.Equals(candidate.FullPath, item.ModPath, StringComparison.OrdinalIgnoreCase));
+            if (mod == null || !TryParsePositiveLong(item.SourceProjectId, out var projectId))
+            {
+                continue;
+            }
+
+            try
+            {
+                var isNexus = IsNexusPlatform(item.SourcePlatform);
+                if (isNexus && !HasNexusCredential(settings))
+                {
+                    continue;
+                }
+
+                var latest = isNexus
+                    ? await CheckNexusUpdateAsync(mod, projectId.ToString(CultureInfo.InvariantCulture))
+                    : await CheckCurseforgeUpdateAsync(mod, projectId.ToString(CultureInfo.InvariantCulture));
+                if (latest.UpdateFileId <= 0)
+                {
+                    continue;
+                }
+
+                var fileId = latest.UpdateFileId.ToString(CultureInfo.InvariantCulture);
+                item.SetSourceFileId(fileId);
+
+                var credential = TryReadSourceCredential(item.ModPath) ?? new LocalSourceMetadata();
+                credential.Platform = isNexus ? "NexusMods" : "Curseforge";
+                credential.ProjectId = projectId.ToString(CultureInfo.InvariantCulture);
+                credential.FileId = fileId;
+                WriteSourceCredential(item.ModPath, credential);
+                resolvedCount++;
+            }
+            catch
+            {
+                // 导出不能因为某一个来源查询失败而中断；清单会保留项目 ID，
+                // 导入端再按缺少 FileID 的兼容流程处理。
+            }
+        }
+
+        return resolvedCount;
+    }
+
+    private static bool IsNexusPlatform(string? platform)
+    {
+        return string.Equals(platform, "Nexus", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "NexusMods", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "Nexus Mod", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCurseforgePlatform(string? platform)
+    {
+        return string.Equals(platform, "Curseforge", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "CurseForge", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "Curse", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParsePositiveLong(string? value, out long result)
+    {
+        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result) && result > 0;
+    }
+
+    private static string TryExtractFileIdFromNexusUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return string.Empty;
+        }
+
+        var match = Regex.Match(
+            url,
+            @"(?:/files/|[?&](?:file_id|fileId)=)(?<id>\d+)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success ? match.Groups["id"].Value : string.Empty;
+    }
+
+    /// <summary>
+    /// 从本地来源元数据中恢复 FileID，避免旧版本写入的 svl-source.json
+    /// 因遗漏 fileId 而让导出包退化为“缺少来源”。下载文件名和安装目录名
+    /// 都是本地已存在的稳定信息，不需要访问网络即可安全回填。
+    /// </summary>
+    private static string TryExtractSourceFileIdFromLocalMetadata(
+        string? platform,
+        string? projectId,
+        params string?[] values)
+    {
+        var normalizedPlatform = NormalizePlatform(platform);
+        foreach (var value in values ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (IsNexusPlatform(normalizedPlatform))
+            {
+                if (DownloadOptionIdentityParser.TryExtractFileId(value, out var parsedFileId))
+                {
+                    return parsedFileId.ToString(CultureInfo.InvariantCulture);
+                }
+            }
+
+            if (IsCurseforgePlatform(normalizedPlatform) &&
+                TryParsePositiveLong(projectId, out var expectedProjectId))
+            {
+                // CurseForge CDN 的文件 ID 由 /files/{前 4 位}/{后 3 位}/ 组成，
+                // 例如 /files/5312/529/ 实际对应 5312529。这里复用安装端的
+                // 解析器，不能只取 /files/ 后的第一段，否则导出包会写入错误
+                // FileID，后续导入会请求不存在的文件。
+                if (Services.ModpackInstallService.TryParseCurseforgeFileIdFromCdnUrl(
+                        value,
+                        out var cdnFileId))
+                {
+                    return cdnFileId.ToString(CultureInfo.InvariantCulture);
+                }
+
+                var curseforgeMatch = Regex.Match(
+                    value,
+                    @"(?:^|[^a-z0-9])cf[-_](?<project>\d+)[-_](?<file>\d+)(?:[^0-9]|$)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (curseforgeMatch.Success &&
+                    long.TryParse(
+                        curseforgeMatch.Groups["project"].Value,
+                        NumberStyles.Integer,
+                        CultureInfo.InvariantCulture,
+                        out var actualProjectId) &&
+                    actualProjectId == expectedProjectId)
+                {
+                    return curseforgeMatch.Groups["file"].Value;
+                }
+
+                var filesPathMatch = Regex.Match(
+                    value,
+                    @"[/\\]files[/\\](?<id>\d+)(?:[/\\]|$)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (filesPathMatch.Success)
+                {
+                    return filesPathMatch.Groups["id"].Value;
+                }
+            }
+        }
+
+        // 旧版 svl-source.json 可能只保存了 Nexus ModID；下载完成后缓存文件名
+        // 仍保留真实 FileID。导出前扫描有效缓存并回填，避免导出的 sources.json
+        // 再次退化成只能打开浏览器的模糊来源。
+        if (IsNexusPlatform(normalizedPlatform) &&
+            TryParsePositiveLong(projectId, out var nexusModId) &&
+            Services.NexusDownloadCache.TryGetAnyForMod(
+                nexusModId,
+                Services.ModpackInstallService.IsValidModArchiveFile,
+                out var cachedPath) &&
+            Services.NexusDownloadCache.TryGetFileIdFromCachePath(cachedPath, nexusModId, out var cachedFileId))
+        {
+            return cachedFileId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return string.Empty;
+    }
+
     private void BuildVersionSettingsExportPackage(
         string outputPath,
         string instancePath,
         IReadOnlyList<ExportModPackageItem> selectedMods)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "svl-export-" + Guid.NewGuid().ToString("N"));
+        var finalOutputPath = Path.GetFullPath(outputPath);
+        var outputDirectory = Path.GetDirectoryName(finalOutputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            Directory.CreateDirectory(outputDirectory);
+        }
+
+        // 先在目标目录生成完整临时包，成功后再替换目标文件；避免导出中断时
+        // 破坏已有整合包或留下一个看似存在但无法导入的半成品 ZIP。
+        var stagingOutputPath = finalOutputPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         Directory.CreateDirectory(tempRoot);
 
         try
@@ -9297,7 +12109,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                     SourcePlatform = mod.SourcePlatform,
                     SourceProjectId = mod.SourceProjectId,
                     SourceFileId = mod.SourceFileId,
-                    RequiresManualInstall = !mod.HasSourceCredential
+                    SourceDownloadUrl = mod.SourceDownloadUrl,
+                    RequiresManualInstall = !mod.HasCompleteSourceCredential
                 }).ToList()
             };
 
@@ -9306,35 +12119,141 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 JsonSerializer.Serialize(exportManifest, new JsonSerializerOptions { WriteIndented = true }),
                 Encoding.UTF8);
 
+            // 同时生成 SVL 安装器可直接识别的标准文件。export-manifest.json 是导出审计信息，
+            // 不能作为安装清单；可回导包必须包含 modpack.json + sources.json。
+            var svlManifest = new SvlExportModpackManifest
+            {
+                Name = FirstNonEmpty(ModpackName, "SVL-Modpack"),
+                Version = FirstNonEmpty(ModpackVersion, "1.0.0"),
+                Author = ModpackAuthor ?? string.Empty,
+                SmapiVersion = IsUnknownVersion(SmapiVersionText) ||
+                               string.Equals(SmapiVersionText, "未安装", StringComparison.OrdinalIgnoreCase)
+                    ? string.Empty
+                    : SmapiVersionText,
+                Mods = selectedMods.Select(mod => new SvlExportModpackMod
+                {
+                    Name = FirstNonEmpty(mod.Name, mod.UniqueId, mod.DirectoryName),
+                    UniqueId = mod.UniqueId,
+                    Version = mod.Version,
+                    Author = mod.Author
+                }).ToList()
+            };
+
+            File.WriteAllText(
+                Path.Combine(tempRoot, "modpack.json"),
+                JsonSerializer.Serialize(svlManifest, new JsonSerializerOptions { WriteIndented = true }),
+                Encoding.UTF8);
+
+            var sourceEntries = selectedMods.Select(mod => new SvlExportSourceEntry
+            {
+                Name = FirstNonEmpty(mod.Name, mod.UniqueId, mod.DirectoryName),
+                DirectoryName = FirstNonEmpty(mod.DirectoryName, mod.UniqueId, mod.Name),
+                Bundled = false,
+                IsParentMod = mod.IsCompositeParent && mod.ChildMods.Count > 0,
+                ParentMod = mod.ParentMod,
+                ChildMods = mod.ChildMods.ToList(),
+                Source = new SvlExportSource
+                {
+                    Platform = mod.SourcePlatform,
+                    ProjectId = mod.SourceProjectId,
+                    FileId = mod.SourceFileId,
+                    DownloadUrl = mod.SourceDownloadUrl,
+                    FileName = mod.SourceFileName
+                }
+            }).ToList();
+
+            File.WriteAllText(
+                Path.Combine(tempRoot, "sources.json"),
+                JsonSerializer.Serialize(sourceEntries, new JsonSerializerOptions { WriteIndented = true }),
+                Encoding.UTF8);
+
+            var customIconPath = ResolveExportCustomIconPath(instancePath);
+            if (!string.IsNullOrWhiteSpace(customIconPath) && File.Exists(customIconPath))
+            {
+                File.Copy(customIconPath, Path.Combine(tempRoot, "icon.png"), overwrite: true);
+            }
+
             if (IncludeModSettings)
             {
-                var settingsRoot = Path.Combine(tempRoot, "mod-settings");
+                // ModpackInstallService 会把 settings/ 下的相对路径覆盖到运行目录，
+                // 因此必须以 settings/Mods/<Mod>/... 保存，而不是导出页内部的 mod-settings/。
+                var settingsRoot = Path.Combine(tempRoot, "settings", "Mods");
                 foreach (var mod in selectedMods)
                 {
                     CopyModSettingsForExport(mod, settingsRoot);
                 }
             }
 
-            if (IncludeSvlLauncher)
+            if (!IncludeSvlLauncher)
             {
-                var processPath = Environment.ProcessPath;
-                if (!string.IsNullOrWhiteSpace(processPath) && File.Exists(processPath))
+                // 普通导出包直接平铺内容，ModpackTypeDetector/ModpackInstallService 可直接识别。
+                ZipFile.CreateFromDirectory(
+                    tempRoot,
+                    stagingOutputPath,
+                    CompressionLevel.SmallestSize,
+                    includeBaseDirectory: false);
+            }
+            else
+            {
+                // 与上游增强导出格式保持一致：带启动器的包是“外层启动器 + 内层
+                // modpack.zip”。此前把启动器放在 launcher/ 子目录，虽然 ZIP 能打开，
+                // 但上游/本地启动器都不会按启动器包处理。
+                var innerZipPath = Path.Combine(Path.GetTempPath(), $"svl-export-inner-{Guid.NewGuid():N}.zip");
+                try
                 {
-                    var launcherRoot = Path.Combine(tempRoot, "launcher");
-                    Directory.CreateDirectory(launcherRoot);
-                    File.Copy(processPath, Path.Combine(launcherRoot, Path.GetFileName(processPath)), overwrite: true);
+                    ZipFile.CreateFromDirectory(
+                        tempRoot,
+                        innerZipPath,
+                        CompressionLevel.SmallestSize,
+                        includeBaseDirectory: false);
+
+                    using var outerArchive = ZipFile.Open(stagingOutputPath, ZipArchiveMode.Create);
+                    var processPath = Environment.ProcessPath;
+                    if (!string.IsNullOrWhiteSpace(processPath) && File.Exists(processPath))
+                    {
+                        var launcherEntry = outerArchive.CreateEntry(Path.GetFileName(processPath), CompressionLevel.SmallestSize);
+                        using var launcherInput = File.OpenRead(processPath);
+                        using var launcherOutput = launcherEntry.Open();
+                        launcherInput.CopyTo(launcherOutput);
+                    }
+
+                    var modpackEntry = outerArchive.CreateEntry("modpack.zip", CompressionLevel.SmallestSize);
+                    using var modpackInput = File.OpenRead(innerZipPath);
+                    using var modpackOutput = modpackEntry.Open();
+                    modpackInput.CopyTo(modpackOutput);
+                }
+                finally
+                {
+                    try
+                    {
+                        if (File.Exists(innerZipPath))
+                        {
+                            File.Delete(innerZipPath);
+                        }
+                    }
+                    catch
+                    {
+                        // ignore temporary archive cleanup failure
+                    }
                 }
             }
 
-            if (File.Exists(outputPath))
-            {
-                File.Delete(outputPath);
-            }
-
-            ZipFile.CreateFromDirectory(tempRoot, outputPath, CompressionLevel.SmallestSize, includeBaseDirectory: false);
+            File.Move(stagingOutputPath, finalOutputPath, overwrite: true);
         }
         finally
         {
+            try
+            {
+                if (File.Exists(stagingOutputPath))
+                {
+                    File.Delete(stagingOutputPath);
+                }
+            }
+            catch
+            {
+                // 临时导出包清理失败不应覆盖真正的导出结果。
+            }
+
             try
             {
                 if (Directory.Exists(tempRoot))
@@ -9349,6 +12268,66 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
     }
 
+    private string ResolveExportCustomIconPath(string instancePath)
+    {
+        if (string.IsNullOrWhiteSpace(instancePath) || !Directory.Exists(instancePath))
+        {
+            return string.Empty;
+        }
+
+        // 当前页面选择的变体优先；若用户当前显式选择了原版但正在导出一个实际含
+        // SMAPI 的实例，则继续检查实际运行时对应的自定义图标，避免漏掉个性化图标。
+        var custom = Services.InstanceIconResolver.ResolveIconPath(instancePath, IsSmapiInstance);
+        if (!string.IsNullOrWhiteSpace(custom) &&
+            !IsGeneratedSmapiIconPath(custom, instancePath))
+        {
+            return custom;
+        }
+
+        var actualIsSmapi = Services.InstanceIconResolver.IsSmapiRuntime(instancePath);
+        if (actualIsSmapi != IsSmapiInstance)
+        {
+            custom = Services.InstanceIconResolver.ResolveIconPath(instancePath, actualIsSmapi);
+            if (!string.IsNullOrWhiteSpace(custom) &&
+                !IsGeneratedSmapiIconPath(custom, instancePath))
+            {
+                return custom;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsGeneratedSmapiIconPath(string? iconPath, string instancePath)
+    {
+        return Services.InstanceIconResolver.IsGeneratedSmapiIcon(instancePath) &&
+               !string.IsNullOrWhiteSpace(iconPath) &&
+               Path.GetFileName(iconPath).StartsWith(
+                   ".svl-instance-icon-smapi",
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryGetJsonPropertyIgnoreCase(
+        JsonElement element,
+        string propertyName,
+        out JsonElement propertyElement)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    propertyElement = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        propertyElement = default;
+        return false;
+    }
+
     private static void CopyModSettingsForExport(ExportModPackageItem mod, string settingsRoot)
     {
         if (string.IsNullOrWhiteSpace(mod.ModPath) || !Directory.Exists(mod.ModPath))
@@ -9356,7 +12335,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
-        var folderName = SanitizeFileName(FirstNonEmpty(mod.UniqueId, mod.DirectoryName, Path.GetFileName(mod.ModPath)));
+        var folderName = SanitizeFileName(FirstNonEmpty(mod.DirectoryName, mod.UniqueId, Path.GetFileName(mod.ModPath)));
         var targetRoot = Path.Combine(settingsRoot, folderName);
         Directory.CreateDirectory(targetRoot);
 
@@ -9423,7 +12402,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private void RefreshDetectedPathCore(bool updateStatus)
     {
-        var gamePath = _gameInstallPathLocator.TryLocateSteamStardewPath() ?? _gameInstallPathLocator.TryLocateGogStardewPath();
+        var gamePath = _gameInstallPathLocator.TryLocateSteamStardewPath()
+            ?? _gameInstallPathLocator.TryLocateGogStardewPath()
+            ?? _gameInstallPathLocator.TryLocateXboxStardewPath();
         if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
         {
             DetectedGamePath = "未探测到";
@@ -9478,10 +12459,15 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         SmapiVersionText = hasSmapi ? smapiVersion : "未安装";
 
         var mode = NormalizeLaunchMode(SelectedLaunchMode);
-        var preferSmapiByName = !string.IsNullOrWhiteSpace(settings.InstanceName) &&
-                                settings.InstanceName.Contains("SMAPI", StringComparison.OrdinalIgnoreCase);
-        IsSmapiInstance = string.Equals(mode, "smapi", StringComparison.OrdinalIgnoreCase) ||
-                          (string.Equals(mode, "auto", StringComparison.OrdinalIgnoreCase) && preferSmapiByName);
+        // 实例类型以实际运行时文件为准；名称只是展示字段，不能作为 SMAPI 判定依据。
+        // 显式选择原版时仍允许在同一个 Base 路径上查看/启动原版变体。
+        // 隔离实例只存在一个实际运行时，图标类型必须由文件判定；只有 Base 路径才允许
+        // 通过启动模式在原版/SMAPI 两个变体之间切换。
+        var isIsolatedInstance = Services.InstanceIconResolver.IsVersionIsolatedInstance(path);
+        IsSmapiInstance = hasSmapi &&
+                          (isIsolatedInstance ||
+                           string.Equals(mode, "smapi", StringComparison.OrdinalIgnoreCase) ||
+                           (string.Equals(mode, "auto", StringComparison.OrdinalIgnoreCase) && hasSmapi));
 
         if (!hasValidPath)
         {
@@ -10130,6 +13116,53 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         return string.IsNullOrWhiteSpace(name) ? "Default Instance" : name;
     }
 
+    private void RefreshDefaultModpackName(AppUserSettings settings)
+    {
+        var currentName = ResolveDefaultModpackName(settings);
+        if (string.IsNullOrWhiteSpace(currentName))
+        {
+            currentName = "我的整合包";
+        }
+
+        var canReplace = string.IsNullOrWhiteSpace(ModpackName) ||
+                         string.Equals(ModpackName, "我的整合包", StringComparison.Ordinal) ||
+                         (!string.IsNullOrWhiteSpace(_lastAutoModpackName) &&
+                          string.Equals(ModpackName, _lastAutoModpackName, StringComparison.Ordinal));
+        if (!canReplace || string.Equals(ModpackName, currentName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _isUpdatingDefaultModpackName = true;
+        try
+        {
+            ModpackName = currentName;
+        }
+        finally
+        {
+            _isUpdatingDefaultModpackName = false;
+        }
+
+        _lastAutoModpackName = currentName;
+    }
+
+    private static string ResolveDefaultModpackName(AppUserSettings settings)
+    {
+        var configuredName = settings.InstanceName?.Trim();
+        if (!string.IsNullOrWhiteSpace(configuredName) &&
+            !string.Equals(configuredName, "Default Instance", StringComparison.OrdinalIgnoreCase))
+        {
+            return configuredName;
+        }
+
+        if (TryGetVersionRootDirectory(settings.PreferredInstancePath, out var versionRoot))
+        {
+            return ResolvePathDisplayName(versionRoot);
+        }
+
+        return ResolvePathDisplayName(settings.PreferredInstancePath);
+    }
+
     private static bool TryGetVersionRootDirectory(string instancePath, out string versionRoot)
     {
         versionRoot = string.Empty;
@@ -10364,7 +13397,11 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         try
         {
             var path = Path.Combine(modDir, "svl-source.json");
-            File.WriteAllText(path, JsonSerializer.Serialize(metadata, s_sourceJsonOptions), Encoding.UTF8);
+            // 来源凭证会在更新检测/汉化写回时被覆盖；使用原子替换，避免
+            // 进程中断留下半截 JSON，导致下次启动把本来有效的来源误判成缺失。
+            Services.AtomicFileWriter.WriteUtf8(
+                path,
+                JsonSerializer.Serialize(metadata, s_sourceJsonOptions));
             return true;
         }
         catch
@@ -10404,6 +13441,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         [JsonPropertyName("projectId")]
         public string ProjectId { get; set; } = string.Empty;
 
+        /// <summary>兼容 WPF/Core 旧版写入的 modId 字段。</summary>
+        [JsonPropertyName("modId")]
+        public string ModId { get; set; } = string.Empty;
+
         [JsonPropertyName("fileId")]
         public string FileId { get; set; } = string.Empty;
 
@@ -10413,14 +13454,82 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         [JsonPropertyName("fileName")]
         public string FileName { get; set; } = string.Empty;
 
+        [JsonPropertyName("downloadUrl")]
+        public string DownloadUrl { get; set; } = string.Empty;
+
         [JsonPropertyName("schemaVersion")]
         public int SchemaVersion { get; set; } = 3;
+
+        [JsonPropertyName("isParentMod")]
+        public bool IsParentMod { get; set; }
+
+        [JsonPropertyName("parentMod")]
+        public LocalParentModReference? ParentMod { get; set; }
+
+        [JsonPropertyName("childMods")]
+        public List<LocalChildModReference> ChildMods { get; set; } = [];
 
         [JsonPropertyName("localization")]
         public LocalSourceLocalization? Localization { get; set; }
 
         [JsonExtensionData]
         public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+    }
+
+    /// <summary>兼容旧版来源凭证把 ID 写成 JSON number 的情况。</summary>
+    private sealed class FlexibleStringJsonConverter : JsonConverter<string>
+    {
+        public override string Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options)
+        {
+            return reader.TokenType switch
+            {
+                JsonTokenType.String => reader.GetString() ?? string.Empty,
+                JsonTokenType.Number => reader.TryGetInt64(out var integer)
+                    ? integer.ToString(CultureInfo.InvariantCulture)
+                    : reader.GetDouble().ToString(CultureInfo.InvariantCulture),
+                JsonTokenType.True or JsonTokenType.False => reader.GetBoolean().ToString(),
+                JsonTokenType.Null => string.Empty,
+                _ => throw new JsonException($"无法将 {reader.TokenType} 转为字符串")
+            };
+        }
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            string value,
+            JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(value ?? string.Empty);
+        }
+    }
+
+    private sealed class LocalParentModReference
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("relativePath")]
+        public string RelativePath { get; set; } = string.Empty;
+    }
+
+    private sealed class LocalChildModReference
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("relativePath")]
+        public string RelativePath { get; set; } = string.Empty;
+
+        [JsonPropertyName("uniqueId")]
+        public string UniqueId { get; set; } = string.Empty;
     }
 
     private sealed class LocalSourceLocalization
@@ -10524,16 +13633,77 @@ public partial class ExportModSelectionItem : ObservableObject
 
     public string SourceFileId { get; set; } = string.Empty;
 
-    public bool HasSourceCredential =>
-        !string.IsNullOrWhiteSpace(SourcePlatform) &&
-        !string.Equals(SourcePlatform, "未知", StringComparison.OrdinalIgnoreCase) &&
-        !string.IsNullOrWhiteSpace(SourceProjectId);
+    /// <summary>来源下载文件名，用于旧 Nexus 来源缺少 FileID 时的本地恢复。</summary>
+    public string SourceFileName { get; set; } = string.Empty;
 
-    public string SourceDescription => HasSourceCredential
-        ? $"{SourcePlatform} #{SourceProjectId}"
-        : "无来源信息（需手动安装）";
+    /// <summary>直链来源（适用于没有平台项目/FileID 的 Mod）。</summary>
+    public string SourceDownloadUrl { get; set; } = string.Empty;
+
+    /// <summary>复合 Mod 的父级关系。导出时写入 sources.json，导入后恢复分组。</summary>
+    public bool IsCompositeParent { get; set; }
+
+    public ExportModParentReference? ParentMod { get; set; }
+
+    public List<ExportModChildReference> ChildMods { get; set; } = [];
+
+    public bool HasDirectSourceUrl =>
+        Uri.TryCreate(SourceDownloadUrl, UriKind.Absolute, out var sourceUri) &&
+        (sourceUri.Scheme == Uri.UriSchemeHttp || sourceUri.Scheme == Uri.UriSchemeHttps) &&
+        // Nexus/CurseForge 的文件页也是 HTTP 地址，但不能作为归档直链。
+        // 这些页面应继续依赖稳定 ID/API/NXM 回退，否则导出清单会错误地把
+        // “打开网页”标记成无需人工处理的完整来源。
+        ((!IsNexusPlatformToken(SourcePlatform) && !IsCurseforgePlatformToken(SourcePlatform)) ||
+         global::SVL.Avalonia.Services.ModpackInstallService.IsLikelyDirectDownloadUrl(SourceDownloadUrl));
+
+    public bool HasSourceCredential =>
+        HasDirectSourceUrl ||
+        (!string.IsNullOrWhiteSpace(SourcePlatform) &&
+         !string.Equals(SourcePlatform, "未知", StringComparison.OrdinalIgnoreCase) &&
+         !string.IsNullOrWhiteSpace(SourceProjectId));
+
+    public bool HasCompleteSourceCredential =>
+        HasDirectSourceUrl ||
+        (HasSourceCredential &&
+         (!IsNexusPlatformToken(SourcePlatform) &&
+          !IsCurseforgePlatformToken(SourcePlatform) ||
+          !string.IsNullOrWhiteSpace(SourceFileId)));
+
+    public string SourceDescription => HasDirectSourceUrl
+        ? "直链"
+        : HasSourceCredential
+            ? string.IsNullOrWhiteSpace(SourceFileId)
+                ? $"{SourcePlatform} #{SourceProjectId}（FileID 缺失）"
+                : $"{SourcePlatform} #{SourceProjectId} / FileID {SourceFileId}"
+            : "无来源信息（需手动安装）";
+
+    public void SetSourceFileId(string fileId)
+    {
+        if (string.Equals(SourceFileId, fileId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SourceFileId = fileId ?? string.Empty;
+        OnPropertyChanged(nameof(SourceFileId));
+        OnPropertyChanged(nameof(HasCompleteSourceCredential));
+        OnPropertyChanged(nameof(SourceDescription));
+    }
 
     public string SelectionKey => !string.IsNullOrWhiteSpace(UniqueId) ? UniqueId : DirectoryName;
+
+    private static bool IsNexusPlatformToken(string? platform)
+    {
+        return string.Equals(platform, "Nexus", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "NexusMods", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "Nexus Mod", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCurseforgePlatformToken(string? platform)
+    {
+        return string.Equals(platform, "Curseforge", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "CurseForge", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "Curse", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public sealed class VersionSettingsExportConfig
@@ -10596,7 +13766,109 @@ public sealed class VersionSettingsExportManifestMod
 
     public string SourceFileId { get; set; } = string.Empty;
 
+    public string SourceDownloadUrl { get; set; } = string.Empty;
+
     public bool RequiresManualInstall { get; set; }
+}
+/// <summary>可被 ModpackInstallService 直接导入的 SVL 标准清单。</summary>
+internal sealed class SvlExportModpackManifest
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = "1.0.0";
+
+    [JsonPropertyName("author")]
+    public string Author { get; set; } = string.Empty;
+
+    [JsonPropertyName("smapi_version")]
+    public string SmapiVersion { get; set; } = string.Empty;
+
+    [JsonPropertyName("mods")]
+    public List<SvlExportModpackMod> Mods { get; set; } = [];
+}
+internal sealed class SvlExportModpackMod
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("uniqueId")]
+    public string UniqueId { get; set; } = string.Empty;
+
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = string.Empty;
+
+    [JsonPropertyName("author")]
+    public string Author { get; set; } = string.Empty;
+}
+internal sealed class SvlExportSourceEntry
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("directoryName")]
+    public string DirectoryName { get; set; } = string.Empty;
+
+    [JsonPropertyName("bundled")]
+    public bool Bundled { get; set; }
+
+    [JsonPropertyName("isParentMod")]
+    public bool IsParentMod { get; set; }
+
+    [JsonPropertyName("parentMod")]
+    public ExportModParentReference? ParentMod { get; set; }
+
+    [JsonPropertyName("childMods")]
+    public List<ExportModChildReference> ChildMods { get; set; } = [];
+
+    [JsonPropertyName("source")]
+    public SvlExportSource Source { get; set; } = new();
+}
+
+internal sealed class SvlExportSource
+{
+    [JsonPropertyName("platform")]
+    public string Platform { get; set; } = string.Empty;
+
+    [JsonPropertyName("projectId")]
+    public string ProjectId { get; set; } = string.Empty;
+
+    [JsonPropertyName("fileId")]
+    public string FileId { get; set; } = string.Empty;
+
+    [JsonPropertyName("downloadUrl")]
+    public string DownloadUrl { get; set; } = string.Empty;
+
+    [JsonPropertyName("fileName")]
+    public string FileName { get; set; } = string.Empty;
+}
+
+public sealed class ExportModParentReference
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("relativePath")]
+    public string RelativePath { get; set; } = string.Empty;
+}
+
+public sealed class ExportModChildReference
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("relativePath")]
+    public string RelativePath { get; set; } = string.Empty;
+
+    [JsonPropertyName("uniqueId")]
+    public string UniqueId { get; set; } = string.Empty;
 }
 
 internal sealed class ExportModPackageItem
@@ -10619,17 +13891,65 @@ internal sealed class ExportModPackageItem
 
     public string SourceFileId { get; set; } = string.Empty;
 
+    /// <summary>来源下载文件名，用于导出/回导时保留 FileID 恢复线索。</summary>
+    public string SourceFileName { get; set; } = string.Empty;
+
+    public string SourceDownloadUrl { get; set; } = string.Empty;
+
+    public bool IsCompositeParent { get; set; }
+
+    public ExportModParentReference? ParentMod { get; set; }
+
+    public List<ExportModChildReference> ChildMods { get; set; } = [];
+
+    public bool HasDirectSourceUrl =>
+        Uri.TryCreate(SourceDownloadUrl, UriKind.Absolute, out var sourceUri) &&
+        (sourceUri.Scheme == Uri.UriSchemeHttp || sourceUri.Scheme == Uri.UriSchemeHttps) &&
+        // Nexus/CurseForge 的文件页也是 HTTP 地址，但不能作为归档直链。
+        // 导出审计与导入器必须使用同一规则，避免把“打开网页”误报为可自动安装。
+        ((!IsNexusPlatformToken(SourcePlatform) && !IsCurseforgePlatformToken(SourcePlatform)) ||
+         global::SVL.Avalonia.Services.ModpackInstallService.IsLikelyDirectDownloadUrl(SourceDownloadUrl));
+
     public bool HasSourceCredential =>
-        !string.IsNullOrWhiteSpace(SourcePlatform) &&
-        !string.Equals(SourcePlatform, "未知", StringComparison.OrdinalIgnoreCase) &&
-        !string.IsNullOrWhiteSpace(SourceProjectId);
+        HasDirectSourceUrl ||
+        (!string.IsNullOrWhiteSpace(SourcePlatform) &&
+         !string.Equals(SourcePlatform, "未知", StringComparison.OrdinalIgnoreCase) &&
+         !string.IsNullOrWhiteSpace(SourceProjectId));
+
+    public bool HasCompleteSourceCredential =>
+        HasDirectSourceUrl ||
+        (HasSourceCredential &&
+         (!IsNexusPlatformToken(SourcePlatform) &&
+          !IsCurseforgePlatformToken(SourcePlatform) ||
+          !string.IsNullOrWhiteSpace(SourceFileId)));
+
+    private static bool IsNexusPlatformToken(string? platform)
+    {
+        return string.Equals(platform, "Nexus", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "NexusMods", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "Nexus Mod", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCurseforgePlatformToken(string? platform)
+    {
+        return string.Equals(platform, "Curseforge", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "CurseForge", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(platform, "Curse", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>批量更新入口项：一个可更新 Mod 的下载信息，供 DownloadPage 入队。</summary>
 /// <param name="DisplayName">Mod 显示名（用作任务名前缀）。</param>
 /// <param name="UpdateUrl">更新下载 URL（Curseforge HTTP 直链或 Nexus NXM 链接）。</param>
 /// <param name="UpdateSource">更新来源标记（"NexusMods" / "Curseforge"）。</param>
-public sealed record ModBatchUpdateEntry(string DisplayName, string UpdateUrl, string UpdateSource);
+/// <param name="ProjectId">来源平台项目 ID，供安装后写回来源凭证。</param>
+/// <param name="FileId">本次更新对应的文件 ID，供 CurseForge 解析 CDN 地址或导出。</param>
+public sealed record ModBatchUpdateEntry(
+    string DisplayName,
+    string UpdateUrl,
+    string UpdateSource,
+    string ProjectId = "",
+    string FileId = "");
 
 public partial class ModManageItem : ObservableObject
 {
@@ -10640,6 +13960,10 @@ public partial class ModManageItem : ObservableObject
         DisplayDependencies.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasDisplayDependencies));
+        };
+        ChildMods.CollectionChanged += (_, _) =>
+        {
+            NotifyGroupChanged();
         };
     }
 
@@ -10679,6 +14003,23 @@ public partial class ModManageItem : ObservableObject
     [ObservableProperty]
     private string _description = string.Empty;
 
+    // 本地化显示需要同时保留 manifest 原文和 svl-source.json 中的汉化文本。
+    // 只保存当前显示值会导致切回英文时无法恢复原文。
+    [ObservableProperty]
+    private string _sourceDisplayName = string.Empty;
+
+    [ObservableProperty]
+    private string _localizedDisplayName = string.Empty;
+
+    [ObservableProperty]
+    private string _sourceDescription = string.Empty;
+
+    [ObservableProperty]
+    private string _localizedDescription = string.Empty;
+
+    [ObservableProperty]
+    private bool _isUsingLocalizedText = true;
+
     [ObservableProperty]
     private string _sourceFileName = string.Empty;
 
@@ -10703,6 +14044,21 @@ public partial class ModManageItem : ObservableObject
     [ObservableProperty]
     private string _updateStatus = "待检查";
 
+    [ObservableProperty]
+    private bool _isChildMod;
+
+    [ObservableProperty]
+    private bool _isCompositeParent;
+
+    [ObservableProperty]
+    private string _parentModId = string.Empty;
+
+    [ObservableProperty]
+    private string _parentModName = string.Empty;
+
+    [ObservableProperty]
+    private bool _isGroupExpanded;
+
     /// <summary>远端最新版本号（检测后回写），供 UI 展示与批量更新参考。</summary>
     [ObservableProperty]
     private string _latestVersion = string.Empty;
@@ -10711,11 +14067,17 @@ public partial class ModManageItem : ObservableObject
     [ObservableProperty]
     private string _updateUrl = string.Empty;
 
+    /// <summary>更新检测得到的目标文件 ID；CurseForge 批量更新也需要保留它。</summary>
+    [ObservableProperty]
+    private string _updateFileId = string.Empty;
+
     public ObservableCollection<string> FolderTags { get; } = [];
 
     public ObservableCollection<string> CustomTags { get; } = [];
 
     public ObservableCollection<ModDependencyDisplayItem> DisplayDependencies { get; } = [];
+
+    public ObservableCollection<ModManageItem> ChildMods { get; } = [];
 
     public IEnumerable<string> AllTags => FolderTags
         .Concat(CustomTags)
@@ -10757,6 +14119,12 @@ public partial class ModManageItem : ObservableObject
 
     public bool HasDisplayDependencies => DisplayDependencies.Count > 0;
 
+    public bool HasChildren => ChildMods.Count > 0;
+
+    public string ChildModsSummaryText => HasChildren ? $"子 Mod：{ChildMods.Count} 个" : string.Empty;
+
+    public string GroupToggleText => IsGroupExpanded ? "收起" : "展开";
+
     public bool HasBackupSummary => IsBackupItem && !string.IsNullOrWhiteSpace(BackupOriginalFolderName);
 
     public string BackupSummaryText => HasBackupSummary ? $"来源目录：{BackupOriginalFolderName}" : string.Empty;
@@ -10764,6 +14132,49 @@ public partial class ModManageItem : ObservableObject
     public string UpdateTagText => HasUpdate ? " | 可更新" : string.Empty;
 
     public string UpdateTagColor => HasUpdate ? "#3E8EDE" : "#B0B0B0";
+
+    public bool HasLocalization => !string.IsNullOrWhiteSpace(LocalizedDisplayName) ||
+                                   !string.IsNullOrWhiteSpace(LocalizedDescription);
+
+    public string LocalizationToggleButtonText => IsUsingLocalizedText ? "EN" : "中";
+
+    public void SetLocalizationData(
+        string? sourceDisplayName,
+        string? localizedDisplayName,
+        string? sourceDescription,
+        string? localizedDescription,
+        bool useLocalizedText)
+    {
+        SourceDisplayName = FirstNonEmptyText(sourceDisplayName, SourceDisplayName, DisplayName);
+        SourceDescription = FirstNonEmptyText(sourceDescription, SourceDescription, Description);
+        LocalizedDisplayName = localizedDisplayName?.Trim() ?? string.Empty;
+        LocalizedDescription = localizedDescription?.Trim() ?? string.Empty;
+        SetLocalizationLanguage(useLocalizedText);
+    }
+
+    public void SetLocalizationLanguage(bool useLocalizedText)
+    {
+        IsUsingLocalizedText = useLocalizedText;
+        DisplayName = useLocalizedText
+            ? FirstNonEmptyText(LocalizedDisplayName, SourceDisplayName, DisplayName)
+            : FirstNonEmptyText(SourceDisplayName, DisplayName);
+        Description = useLocalizedText
+            ? FirstNonEmptyText(LocalizedDescription, SourceDescription, Description)
+            : FirstNonEmptyText(SourceDescription, Description);
+    }
+
+    private static string FirstNonEmptyText(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
 
     partial void OnIsEnabledChanged(bool value)
     {
@@ -10792,6 +14203,21 @@ public partial class ModManageItem : ObservableObject
         OnPropertyChanged(nameof(UpdateTagColor));
     }
 
+    partial void OnLocalizedDisplayNameChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasLocalization));
+    }
+
+    partial void OnLocalizedDescriptionChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasLocalization));
+    }
+
+    partial void OnIsUsingLocalizedTextChanged(bool value)
+    {
+        OnPropertyChanged(nameof(LocalizationToggleButtonText));
+    }
+
     partial void OnBackupOriginalFolderNameChanged(string value)
     {
         OnPropertyChanged(nameof(HasBackupSummary));
@@ -10800,6 +14226,37 @@ public partial class ModManageItem : ObservableObject
 
     partial void OnUpdateStatusChanged(string value)
     {
+        OnPropertyChanged(nameof(SecondaryStateText));
+    }
+
+    partial void OnIsSelectedChanged(bool value)
+    {
+        if (!IsCompositeParent || ChildMods.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var child in ChildMods)
+        {
+            child.IsSelected = value;
+        }
+    }
+
+    partial void OnIsGroupExpandedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(GroupToggleText));
+    }
+
+    partial void OnIsCompositeParentChanged(bool value)
+    {
+        OnPropertyChanged(nameof(HasChildren));
+    }
+
+    public void NotifyGroupChanged()
+    {
+        OnPropertyChanged(nameof(HasChildren));
+        OnPropertyChanged(nameof(ChildModsSummaryText));
+        OnPropertyChanged(nameof(GroupToggleText));
         OnPropertyChanged(nameof(SecondaryStateText));
     }
 
@@ -10838,23 +14295,57 @@ public partial class ModManageItem : ObservableObject
 public sealed partial class InstanceSettingsPageViewModel : FeaturePageViewModelBase
 {
     private readonly Services.AppUserSettingsStore _settingsStore;
+    private readonly Services.DialogService _dialogService;
 
     public override string Title => "实例设置";
     public override string Description => "对应 WPF InstanceSettingsView，承载 Steam 参数与实例元数据。";
 
-    public string InstanceName { get; set; } = "Default Instance";
+    [ObservableProperty]
+    private string _instanceName = "Default Instance";
 
-    public bool OverrideSteamLaunchOptions { get; set; }
+    [ObservableProperty]
+    private string _windowTitle = "<default>";
 
-    public string SteamLaunchOptions { get; set; } = string.Empty;
+    [ObservableProperty]
+    private string _customArguments = string.Empty;
 
-    public string Status { get; private set; } = "已加载";
+    [ObservableProperty]
+    private bool _autoConnectServer;
 
-    public InstanceSettingsPageViewModel(Services.AppUserSettingsStore settingsStore)
+    [ObservableProperty]
+    private string _serverAddress = string.Empty;
+
+    [ObservableProperty]
+    private string _steamInviteCode = string.Empty;
+
+    [ObservableProperty]
+    private bool _isFavoriteInstance;
+
+    [ObservableProperty]
+    private bool _overrideSteamLaunchOptions;
+
+    [ObservableProperty]
+    private string _steamLaunchOptions = string.Empty;
+
+    [ObservableProperty]
+    private string _status = "已加载";
+
+    public InstanceSettingsPageViewModel(
+        Services.AppUserSettingsStore settingsStore,
+        Services.DialogService dialogService)
     {
         _settingsStore = settingsStore;
+        _dialogService = dialogService;
         var settings = _settingsStore.Load();
         InstanceName = settings.InstanceName;
+        WindowTitle = string.IsNullOrWhiteSpace(settings.GameWindowTitle)
+            ? "<default>"
+            : settings.GameWindowTitle;
+        CustomArguments = settings.InstanceCustomLaunchArguments;
+        AutoConnectServer = settings.InstanceAutoConnectServer;
+        ServerAddress = settings.InstanceServerAddress;
+        SteamInviteCode = settings.InstanceSteamInviteCode;
+        IsFavoriteInstance = settings.IsFavoriteInstance;
         OverrideSteamLaunchOptions = settings.OverrideSteamLaunchOptions;
         SteamLaunchOptions = settings.SteamLaunchOptions;
     }
@@ -10863,122 +14354,49 @@ public sealed partial class InstanceSettingsPageViewModel : FeaturePageViewModel
     private void Save()
     {
         var settings = _settingsStore.Load();
-        settings.InstanceName = InstanceName;
+        settings.InstanceName = string.IsNullOrWhiteSpace(InstanceName)
+            ? "Default Instance"
+            : InstanceName.Trim();
+        settings.GameWindowTitle = string.IsNullOrWhiteSpace(WindowTitle)
+            ? "<default>"
+            : WindowTitle.Trim();
+        settings.InstanceCustomLaunchArguments = CustomArguments?.Trim() ?? string.Empty;
+        settings.InstanceAutoConnectServer = AutoConnectServer;
+        settings.InstanceServerAddress = ServerAddress?.Trim() ?? string.Empty;
+        settings.InstanceSteamInviteCode = SteamInviteCode?.Trim() ?? string.Empty;
+        settings.IsFavoriteInstance = IsFavoriteInstance;
         settings.OverrideSteamLaunchOptions = OverrideSteamLaunchOptions;
-        settings.SteamLaunchOptions = SteamLaunchOptions;
+        settings.SteamLaunchOptions = SteamLaunchOptions?.Trim() ?? string.Empty;
         _settingsStore.Save(settings);
 
         Status = $"实例设置已保存（{DateTime.Now:HH:mm:ss}）";
         OnPropertyChanged(nameof(Status));
     }
-}
-
-public sealed partial class ExportPageViewModel : FeaturePageViewModelBase
-{
-    private readonly IGameInstallPathLocator _gameInstallPathLocator;
-    private readonly IExternalProcessService _externalProcessService;
-    private readonly Services.AppUserSettingsStore _settingsStore;
-
-    public override string Title => "导出";
-    public override string Description => "对应 WPF ExportView，承载 Modpack 导出链路。";
-
-    [ObservableProperty]
-    private string _exportNamePrefix = "SVL-Modpack";
-
-    [ObservableProperty]
-    private string _lastExportPath = string.Empty;
-
-    [ObservableProperty]
-    private string _status = "就绪";
-
-    public ExportPageViewModel(
-        IGameInstallPathLocator gameInstallPathLocator,
-        IExternalProcessService externalProcessService,
-        Services.AppUserSettingsStore settingsStore)
-    {
-        _gameInstallPathLocator = gameInstallPathLocator;
-        _externalProcessService = externalProcessService;
-        _settingsStore = settingsStore;
-    }
 
     [RelayCommand]
-    private void ExportCurrentMods()
+    private async Task ResetToDefault()
     {
-        var settings = _settingsStore.Load();
-        var gamePath = !string.IsNullOrWhiteSpace(settings.PreferredInstancePath) &&
-                       Directory.Exists(settings.PreferredInstancePath)
-            ? settings.PreferredInstancePath
-            : _gameInstallPathLocator.TryLocateSteamStardewPath() ?? _gameInstallPathLocator.TryLocateGogStardewPath();
-        if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+        var confirmed = await _dialogService.ShowConfirmAsync(
+            "恢复实例默认设置",
+            "将清空当前实例的窗口标题、启动参数、服务器连接和 Steam 覆写设置。\n\n实例路径和 Mod 文件不会被删除。是否继续？");
+        if (!confirmed)
         {
-            Status = "未探测到游戏目录，无法导出";
             return;
         }
 
-        var modsPath = Path.Combine(gamePath, "Mods");
-        if (!Directory.Exists(modsPath))
-        {
-            Status = "当前实例不存在 Mods 目录，无法导出";
-            return;
-        }
-
-        try
-        {
-            var exportRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SVL",
-                "Avalonia",
-                "Exports");
-            Directory.CreateDirectory(exportRoot);
-
-            var prefix = string.IsNullOrWhiteSpace(ExportNamePrefix) ? "SVL-Modpack" : ExportNamePrefix.Trim();
-            var fileName = $"{prefix}-{DateTime.Now:yyyyMMddHHmmss}.zip";
-            var exportPath = Path.Combine(exportRoot, fileName);
-
-            if (File.Exists(exportPath))
-            {
-                File.Delete(exportPath);
-            }
-
-            ZipFile.CreateFromDirectory(modsPath, exportPath, CompressionLevel.SmallestSize, true);
-
-            var metadataPath = Path.ChangeExtension(exportPath, ".metadata.json");
-            var metadata = new
-            {
-                ExportName = fileName,
-                ExportTime = DateTimeOffset.Now,
-                GamePath = gamePath,
-                ModsPath = modsPath,
-                InstanceName = settings.InstanceName,
-                PreferredLaunchMode = settings.PreferredLaunchMode,
-                EnableSafeLaunch = settings.EnableSafeLaunch,
-                Source = "SVL.Avalonia"
-            };
-            File.WriteAllText(metadataPath, System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
-            {
-                WriteIndented = true
-            }));
-
-            LastExportPath = exportPath;
-            Status = $"导出成功（{DateTime.Now:HH:mm:ss}），元数据: {Path.GetFileName(metadataPath)}";
-        }
-        catch (Exception ex)
-        {
-            Status = $"导出失败: {ex.Message}";
-        }
+        InstanceName = string.IsNullOrWhiteSpace(InstanceName)
+            ? "Default Instance"
+            : InstanceName.Trim();
+        WindowTitle = "<default>";
+        CustomArguments = string.Empty;
+        AutoConnectServer = false;
+        ServerAddress = string.Empty;
+        SteamInviteCode = string.Empty;
+        IsFavoriteInstance = false;
+        OverrideSteamLaunchOptions = false;
+        SteamLaunchOptions = string.Empty;
+        Status = "实例设置已恢复默认值（未删除实例数据）";
+        OnPropertyChanged(nameof(Status));
     }
 
-    [RelayCommand]
-    private void OpenExportFolder()
-    {
-        var path = LastExportPath;
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-        {
-            Status = "暂无可打开的导出文件";
-            return;
-        }
-
-        var opened = _externalProcessService.TryOpenPath(path);
-        Status = opened ? "已打开导出文件" : "打开导出文件失败";
-    }
 }

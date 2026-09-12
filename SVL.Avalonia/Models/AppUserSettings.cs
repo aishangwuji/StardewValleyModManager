@@ -130,6 +130,9 @@ public sealed class AppUserSettings
     /// <summary>NexusMods 搜索缓存保留时长（分钟）。</summary>
     public int CacheRetentionMinutes { get; set; } = 5;
 
+    /// <summary>已完成下载归档缓存保留时长（分钟）。默认 7 天，避免清理搜索缓存时误删可复用的 Mod 归档。</summary>
+    public int DownloadCacheRetentionMinutes { get; set; } = 10080;
+
     /// <summary>社区汉化首选源（GitHub / Gitee），默认 Gitee（国内访问更稳定）。</summary>
     public string LocalizationPreferredSource { get; set; } = "Gitee";
 }

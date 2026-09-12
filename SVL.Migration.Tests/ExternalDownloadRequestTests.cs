@@ -50,4 +50,68 @@ public class ExternalDownloadRequestTests
 
         Assert.AreEqual("[安装] SMAPI", displayName);
     }
+
+    [TestMethod]
+    public void ResolveSuggestedFileName_ShouldStripLegacyNexusFilePrefix()
+    {
+        var request = new ExternalDownloadRequest
+        {
+            ResourceName = "Content Patcher",
+            SelectedDownloadOption = "File 7448774_ Content Patcher 2.9.0 2.9.0.zip"
+        };
+
+        Assert.AreEqual(
+            "Content Patcher 2.9.0 2.9.0.zip",
+            request.ResolveSuggestedFileName());
+    }
+
+    [TestMethod]
+    public void ResolveSuggestedFileName_ShouldStripLegacyNexusFilePrefixBeforeUrl()
+    {
+        var request = new ExternalDownloadRequest
+        {
+            ResourceName = "Content Patcher",
+            SelectedDownloadOption = "File 7448774_ Content Patcher.zip | https://example.invalid/download"
+        };
+
+        Assert.AreEqual(
+            "Content Patcher.zip",
+            request.ResolveSuggestedFileName());
+    }
+
+    [TestMethod]
+    public void ResolveSuggestedFileName_ShouldKeepGeneratedTokenWithoutReadableName()
+    {
+        var request = new ExternalDownloadRequest
+        {
+            ResourceName = "Content Patcher",
+            SelectedDownloadOption = "cf-1012214-5312529.zip"
+        };
+
+        Assert.AreEqual("cf-1012214-5312529.zip", request.ResolveSuggestedFileName());
+    }
+
+    [TestMethod]
+    public void ResolveSuggestedFileName_ShouldUseFileNameFromDirectUrl()
+    {
+        var request = new ExternalDownloadRequest
+        {
+            ResourceName = "Content Patcher",
+            SelectedDownloadOption = "https://cdn.example.invalid/files/Content%20Patcher.zip"
+        };
+
+        Assert.AreEqual("Content Patcher.zip", request.ResolveSuggestedFileName());
+    }
+
+    [TestMethod]
+    public void ResolveSuggestedFileName_ShouldFallbackWhenDirectUrlHasNoFileName()
+    {
+        var request = new ExternalDownloadRequest
+        {
+            ResourceName = "Content Patcher",
+            SelectedDownloadOption = "https://cdn.example.invalid/download?id=123"
+        };
+
+        Assert.AreEqual("Content Patcher", request.ResolveSuggestedFileName());
+    }
 }

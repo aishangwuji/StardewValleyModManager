@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -23,10 +24,18 @@ public sealed class CurseforgeModpackManifest
     public string MinecraftVersion { get; set; } = string.Empty;
 
     [JsonPropertyName("manifestVersion")]
+    [JsonConverter(typeof(FlexibleInt32JsonConverter))]
     public int ManifestVersion { get; set; }
 
     [JsonPropertyName("files")]
-    public List<CurseforgeModpackFile> Files { get; set; } = new();
+    private List<CurseforgeModpackFile> _files = new();
+
+    /// <summary>允许部分导出器把无 Mod 的整合包写成 files: null。</summary>
+    public List<CurseforgeModpackFile> Files
+    {
+        get => _files;
+        set => _files = value ?? new();
+    }
 
     [JsonPropertyName("overrides")]
     public string? Overrides { get; set; }
@@ -36,13 +45,77 @@ public sealed class CurseforgeModpackManifest
 public sealed class CurseforgeModpackFile
 {
     [JsonPropertyName("projectID")]
+    [JsonConverter(typeof(FlexibleInt64JsonConverter))]
     public long ProjectId { get; set; }
 
     [JsonPropertyName("fileID")]
+    [JsonConverter(typeof(FlexibleInt64JsonConverter))]
     public long FileId { get; set; }
 
     [JsonPropertyName("required")]
     public bool Required { get; set; } = true;
+}
+
+/// <summary>兼容部分导出工具把 CurseForge ID 写成 JSON 字符串的情况。</summary>
+internal sealed class FlexibleInt64JsonConverter : JsonConverter<long>
+{
+    public override long Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt64(out var number))
+        {
+            return number;
+        }
+
+        if (reader.TokenType == JsonTokenType.String &&
+            long.TryParse(reader.GetString(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var textNumber))
+        {
+            return textNumber;
+        }
+
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return 0;
+        }
+
+        throw new JsonException("CurseForge 项目/文件 ID 不是有效的整数");
+    }
+
+    public override void Write(Utf8JsonWriter writer, long value, JsonSerializerOptions options)
+    {
+        writer.WriteNumberValue(value);
+    }
+}
+
+/// <summary>兼容部分导出工具把 CurseForge manifestVersion 写成数字字符串。</summary>
+internal sealed class FlexibleInt32JsonConverter : JsonConverter<int>
+{
+    public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        if (reader.TokenType == JsonTokenType.String &&
+            int.TryParse(reader.GetString(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var textNumber))
+        {
+            return textNumber;
+        }
+
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return 0;
+        }
+
+        throw new JsonException("CurseForge manifestVersion 不是有效的整数");
+    }
+
+    public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options)
+    {
+        writer.WriteNumberValue(value);
+    }
 }
 
 /// <summary>
@@ -53,7 +126,9 @@ public static class CurseforgeModpackParser
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip
     };
 
     /// <summary>从已解压的 manifest.json 文件解析。</summary>
@@ -64,7 +139,11 @@ public static class CurseforgeModpackParser
             throw new FileNotFoundException($"manifest.json 文件不存在: {manifestJsonPath}");
         }
 
-        var jsonContent = File.ReadAllText(manifestJsonPath);
+        using var reader = new StreamReader(
+            manifestJsonPath,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: true);
+        var jsonContent = reader.ReadToEnd();
         return JsonSerializer.Deserialize<CurseforgeModpackManifest>(jsonContent, JsonOptions)
             ?? throw new InvalidOperationException("无法解析 manifest.json");
     }
@@ -83,7 +162,10 @@ public static class CurseforgeModpackParser
             }
 
             using var stream = manifestEntry.Open();
-            using var reader = new StreamReader(stream);
+            using var reader = new StreamReader(
+                stream,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true);
             var jsonContent = reader.ReadToEnd();
             return JsonSerializer.Deserialize<CurseforgeModpackManifest>(jsonContent, JsonOptions);
         }

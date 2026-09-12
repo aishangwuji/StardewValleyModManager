@@ -34,6 +34,22 @@ public class MainFlowSmokeTests
             Path.Combine(disabledModPath, "manifest.json"),
             "{\"Name\":\"Lookup Anything\",\"Version\":\"2.0.0\"}");
 
+        // CurseForge/SVL 整合包中常见带 BOM 的 manifest.json；页面应和普通清单一样读取。
+        var bomModPath = Path.Combine(tempInstancePath, "Mods", "BomManifestMod");
+        Directory.CreateDirectory(bomModPath);
+        File.WriteAllText(
+            Path.Combine(bomModPath, "manifest.json"),
+            "{\"Name\":\"BOM Manifest Mod\",\"Version\":\"3.0.0\"}",
+            new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+        // 少数旧 Mod 使用 UTF-16 BOM；版本列表不能因此退回“未知版本”。
+        var utf16ModPath = Path.Combine(tempInstancePath, "Mods", "Utf16ManifestMod");
+        Directory.CreateDirectory(utf16ModPath);
+        File.WriteAllText(
+            Path.Combine(utf16ModPath, "manifest.json"),
+            "{\"Name\":\"UTF16 Manifest Mod\",\"Version\":\"4.0.0\"}",
+            System.Text.Encoding.Unicode);
+
         try
         {
             settingsStore.Save(new AppUserSettings
@@ -60,7 +76,11 @@ public class MainFlowSmokeTests
 
             var modPage = mainWindow.VersionSettingsPage;
             Assert.IsTrue(modPage.HasMods);
-            Assert.AreEqual(2, modPage.Mods.Count);
+            Assert.AreEqual(4, modPage.Mods.Count);
+            var bomMod = modPage.Mods.Single(item => string.Equals(item.DisplayName, "BOM Manifest Mod", StringComparison.Ordinal));
+            Assert.AreEqual("3.0.0", bomMod.Version);
+            var utf16Mod = modPage.Mods.Single(item => string.Equals(item.DisplayName, "UTF16 Manifest Mod", StringComparison.Ordinal));
+            Assert.AreEqual("4.0.0", utf16Mod.Version);
 
             var disabledMod = modPage.Mods.First(item => !item.IsEnabled);
             modPage.SelectedMod = disabledMod;
@@ -99,6 +119,7 @@ public class MainFlowSmokeTests
             mainWindow.NavigateToDownloadCommand.Execute(null);
             Assert.AreEqual("下载", mainWindow.CurrentPage);
 
+            var taskCountBeforeUnresolvedDownload = mainWindow.DownloadPage.DownloadTasks.Count;
             var queued = await mainWindow.DownloadPage.AddTaskFromExternalAsync(new ExternalDownloadRequest
             {
                 ResourceName = "Smoke Mod",
@@ -107,7 +128,7 @@ public class MainFlowSmokeTests
             });
 
             Assert.IsFalse(queued);
-            Assert.AreEqual(0, mainWindow.DownloadPage.DownloadTasks.Count);
+            Assert.AreEqual(taskCountBeforeUnresolvedDownload, mainWindow.DownloadPage.DownloadTasks.Count);
 
             mainWindow.NavigateToTasksCommand.Execute(null);
             Assert.AreEqual("任务", mainWindow.CurrentPage);

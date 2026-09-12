@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using SVL.Avalonia.Models;
 using System;
 using System.Collections.Generic;
@@ -38,10 +40,13 @@ public static class ThemeService
     private static ThemeStyleType _currentStyle = ThemeStyleType.Stardew;
     private static MaterialScheme _currentScheme = MaterialScheme.Blue;
     private static bool _isDarkMode;
+    private static bool _followSystemTheme;
+    private static IPlatformSettings? _platformSettings;
 
     public static ThemeStyleType CurrentStyle => _currentStyle;
     public static MaterialScheme CurrentScheme => _currentScheme;
     public static bool IsDarkMode => _isDarkMode;
+    public static bool FollowSystemTheme => _followSystemTheme;
 
     /// <summary>
     /// 主题或暗色模式变更时触发。独立窗口（如 DebugConsoleWindow）可订阅此事件
@@ -137,6 +142,75 @@ public static class ThemeService
         System.Diagnostics.Debug.WriteLine($"[ThemeService] Dark mode: {dark}");
 
         ThemeChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 设置主题模式。跟随系统时读取 Avalonia 平台主题，并监听后续系统主题变化；
+    /// 手动浅/深色仍沿用现有的自定义颜色覆盖逻辑。
+    /// </summary>
+    public static void SetThemeMode(bool dark, bool followSystem)
+    {
+        _followSystemTheme = followSystem;
+        ConfigurePlatformThemeMonitoring();
+        SetDarkMode(followSystem ? ReadSystemDarkMode() : dark);
+    }
+
+    private static void ConfigurePlatformThemeMonitoring()
+    {
+        var platformSettings = Application.Current?.PlatformSettings;
+        if (ReferenceEquals(_platformSettings, platformSettings))
+        {
+            return;
+        }
+
+        if (_platformSettings != null)
+        {
+            _platformSettings.ColorValuesChanged -= HandlePlatformColorValuesChanged;
+        }
+
+        _platformSettings = platformSettings;
+        if (_platformSettings != null)
+        {
+            _platformSettings.ColorValuesChanged += HandlePlatformColorValuesChanged;
+        }
+    }
+
+    private static bool ReadSystemDarkMode()
+    {
+        try
+        {
+            return _platformSettings?.GetColorValues().ThemeVariant == PlatformThemeVariant.Dark;
+        }
+        catch
+        {
+            // 某些无窗口/测试平台没有系统主题信息，安全回退为浅色。
+            return false;
+        }
+    }
+
+    private static void HandlePlatformColorValuesChanged(object? sender, PlatformColorValues e)
+    {
+        if (!_followSystemTheme)
+        {
+            return;
+        }
+
+        void ApplySystemTheme()
+        {
+            if (_followSystemTheme)
+            {
+                SetDarkMode(ReadSystemDarkMode());
+            }
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            ApplySystemTheme();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(ApplySystemTheme);
+        }
     }
 
     private static void ApplyThemeResources(Dictionary<string, Color> colors)
@@ -482,7 +556,11 @@ public static class ThemeService
 
     public static void RestoreFromSettings(AppUserSettings settings)
     {
-        _isDarkMode = settings.ThemeMode.Contains("深") || settings.ThemeMode.Contains("暗") || settings.ThemeMode.Contains("Dark", StringComparison.OrdinalIgnoreCase);
+        _followSystemTheme = IsSystemThemeMode(settings.ThemeMode);
+        ConfigurePlatformThemeMonitoring();
+        _isDarkMode = _followSystemTheme
+            ? ReadSystemDarkMode()
+            : IsDarkThemeMode(settings.ThemeMode);
 
         if (Enum.TryParse<ThemeStyleType>(settings.ThemeStyleName, out var style))
         {
@@ -509,6 +587,19 @@ public static class ThemeService
 
         // 设置主题变体（必须在 ApplyTheme 之后）
         SetDarkMode(_isDarkMode);
+    }
+
+    private static bool IsSystemThemeMode(string? value)
+    {
+        return value?.Contains("跟随", StringComparison.OrdinalIgnoreCase) == true ||
+               value?.Contains("System", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsDarkThemeMode(string? value)
+    {
+        return value?.Contains("深") == true ||
+               value?.Contains("暗") == true ||
+               value?.Contains("Dark", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     public static void SaveToSettings(AppUserSettings settings)

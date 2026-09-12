@@ -52,7 +52,30 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var settings = new AppUserSettingsStore().Load();
+            var settingsStore = new AppUserSettingsStore();
+            var instanceRegistryStore = new InstanceRegistryStore();
+            LegacyConfigurationMigrationResult migration;
+            try
+            {
+                migration = new LegacyConfigurationMigrationService(settingsStore, instanceRegistryStore).Migrate();
+            }
+            catch (Exception ex)
+            {
+                // 旧配置迁移属于增强功能；文件权限/损坏不应阻止 Avalonia 主界面启动。
+                System.Diagnostics.Debug.WriteLine($"[Migration] 旧配置迁移失败，继续启动: {ex.Message}");
+                migration = new LegacyConfigurationMigrationResult();
+            }
+            if (migration.SettingsChanged || migration.ImportedInstanceCount > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Migration] 已迁移旧 WPF 配置：设置 {migration.ImportedSettingsCount} 项，实例 {migration.ImportedInstanceCount} 个");
+            }
+            foreach (var migrationError in migration.Errors)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Migration] {migrationError}");
+            }
+
+            var settings = settingsStore.Load();
             var enableDebugConsole = settings.DebugMode;
 
 #if DEBUG
@@ -172,6 +195,7 @@ public partial class App : Application
         desktop.MainWindow = mainWindow;
         desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
         await Dispatcher.UIThread.InvokeAsync(mainWindow.Show);
+        s_mainVm?.ResumePendingDownloadTasks();
 
         if (autoOpenDebugConsole)
         {

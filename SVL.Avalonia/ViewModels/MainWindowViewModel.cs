@@ -17,6 +17,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly DialogService _dialogService;
     private readonly LauncherUpdateService _launcherUpdateService;
     private readonly Stack<(string Page, ObservableObject ViewModel)> _backStack = new();
+    private readonly HashSet<Models.DownloadTaskItem> _failureDialogsShown = [];
     private Models.DownloadTaskItem? _currentDownloadTask;
 
     public LaunchPageViewModel LaunchPage { get; }
@@ -44,8 +45,6 @@ public partial class MainWindowViewModel : ObservableObject
     public VersionSettingsPageViewModel VersionSettingsPage { get; }
 
     public InstanceSettingsPageViewModel InstanceSettingsPage { get; }
-
-    public ExportPageViewModel ExportPage { get; }
 
     [ObservableProperty]
     private string _currentPage = "启动";
@@ -125,6 +124,8 @@ public partial class MainWindowViewModel : ObservableObject
 
     public string GogPathPreview => _gameInstallPathLocator.TryLocateGogStardewPath() ?? "未探测到（可手动选择）";
 
+    public string XboxPathPreview => _gameInstallPathLocator.TryLocateXboxStardewPath() ?? "未探测到（可手动选择）";
+
     public bool IsLaunchPage => string.Equals(CurrentPage, "启动", StringComparison.Ordinal);
 
     public bool IsDownloadPage => string.Equals(CurrentPage, "下载", StringComparison.Ordinal);
@@ -169,7 +170,8 @@ public partial class MainWindowViewModel : ObservableObject
         var nxmLinkParser = new NxmLinkParser();
         var nxmProtocolRegistrationService = new NxmProtocolRegistrationService();
         var smapiInstallService = new SVL.Avalonia.Services.SmapiInstallService();
-        var smapiDownloadService = new SVL.Avalonia.Services.SmapiDownloadService(httpDownloadService, nxmLinkParser);
+        var smapiDownloadService = new SVL.Avalonia.Services.SmapiDownloadService(
+            httpDownloadService, nxmLinkParser, nexusModDownloadResolverService);
         SmapiDownloadService = smapiDownloadService;
         var browserDownloadFallbackService = new SVL.Avalonia.Services.BrowserDownloadFallbackService(nxmLinkParser, externalProcessService);
         BrowserDownloadFallbackService = browserDownloadFallbackService;
@@ -181,7 +183,7 @@ public partial class MainWindowViewModel : ObservableObject
         remoteCatalogService.SetLocalizationService(communityLocalizationService);
         var modpackInstallService = new SVL.Avalonia.Services.ModpackInstallService(
             _gameInstallPathLocator, smapiInstallService, httpDownloadService, remoteCatalogService,
-            _settingsStore, nexusModDownloadResolverService, nxmLinkParser);
+            _settingsStore, nexusModDownloadResolverService, nxmLinkParser, browserDownloadFallbackService);
         var collectionInstallService = new SVL.Avalonia.Services.CollectionInstallService(
             _gameInstallPathLocator, smapiInstallService, httpDownloadService, remoteCatalogService,
             _settingsStore, nexusModDownloadResolverService, nxmLinkParser, browserDownloadFallbackService,
@@ -280,15 +282,15 @@ public partial class MainWindowViewModel : ObservableObject
                         instance.Name,
                         instance.Path,
                         pathEntry.GamePath,
-                        instance.IsBaseInstance)))
+                        instance.IsBaseInstance,
+                        instance.SmapiVersion)))
                 .GroupBy(target => target.Path, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
         };
         VersionSettingsPage.OpenDetailsRequested += HandleOpenDetailsFromModManage;
         VersionSettingsPage.BatchUpdateModsRequested += HandleBatchUpdateModsRequested;
-        InstanceSettingsPage = new InstanceSettingsPageViewModel(_settingsStore);
-        ExportPage = new ExportPageViewModel(_gameInstallPathLocator, externalProcessService, _settingsStore);
+        InstanceSettingsPage = new InstanceSettingsPageViewModel(_settingsStore, dialogService);
         LaunchPage.NavigateToInstancesRequested += HandleNavigateToInstances;
         LaunchPage.NavigateToVersionSettingsRequested += HandleNavigateToVersionSettings;
         LaunchPage.NavigateToModManageRequested += HandleNavigateToModManage;
@@ -307,6 +309,7 @@ public partial class MainWindowViewModel : ObservableObject
         DownloadPage.NavigateToModpackSearchRequested += HandleNavigateToModpackSearch;
         DownloadPage.NavigateToSettingsRequested += HandleNavigateToSettingsForNexusLogin;
         DownloadPage.OpenDetailsRequested += HandleOpenDetails;
+        DownloadPage.OpenStructuredDetailsRequested += HandleOpenDetailsFromSearch;
         // SMAPI/Modpack/Collection 安装成功后刷新 LaunchPage/InstancesPage 实例图标
         DownloadPage.InstanceContextChanged += HandleInstanceContextChanged;
         // 任务状态页统一视图：任务操作事件转发到 DownloadPage 执行
@@ -336,6 +339,15 @@ public partial class MainWindowViewModel : ObservableObject
 
         // 启动时按设置自动检查启动器更新（延迟 2 秒避免与初始化抢资源）
         _ = PerformAutoUpdateCheckAsync();
+    }
+
+    /// <summary>
+    /// 主窗口显示后恢复下载页持久化的 Pending 任务。
+    /// 延迟到窗口显示完成，确保需要补充交互的任务拥有真实主窗口作为对话框宿主。
+    /// </summary>
+    public void ResumePendingDownloadTasks()
+    {
+        DownloadPage.ResumePendingTasks();
     }
 
     /// <summary>启动时自动检查更新：仅当 EnableAutoUpdateCheck 且未跳过该版本时弹窗。</summary>
@@ -441,24 +453,45 @@ public partial class MainWindowViewModel : ObservableObject
     {
         LaunchPage.RefreshFromSettingsAndEnvironment();
         InstancesPage.RefreshFromSettingsChange();
+        // 整合包安装会更新当前实例路径；若用户正停留在 Mod 管理页，必须同步重新读取
+        // 新实例的 Mods，而不是保留安装前页面缓存的清单结果。
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: VersionSettingsPage.IsModManageSection);
     }
 
     private void HandleSmapiInstallTaskCreated(Models.DownloadTaskItem taskItem)
     {
-        DownloadPage.DownloadTasks.Insert(0, taskItem);
-        DownloadPage.DownloadTasks[0].StatusIconSource = "avares://SVL.Avalonia/Assets/Icons/Modded.png";
-        DownloadPage.Status = $"SMAPI 安装任务已创建: {taskItem.Name}";
+        // 版本设置页会在这里之后直接执行安装，不能调用 EnqueueTask（会重复执行）；
+        // 但仍通过 DownloadPage 的外部任务入口统一挂载持久化和任务列表监听。
+        DownloadPage.RegisterExternalTask(taskItem, $"SMAPI 安装任务已创建: {taskItem.Name}");
+        // RegisterExternalTask 只负责加入 DownloadPage；这里同步任务页集合，
+        // 否则首次从版本设置发起 SMAPI 安装时，右侧虽有状态文字，左侧列表仍为空。
+        TaskStatusPage.SyncTasks(DownloadPage.DownloadTasks);
+        UpdateTaskStatusOverview();
         RefreshTaskNavNotification();
         NavigateToPage("任务", TaskStatusPage, pushCurrentToBackStack: true);
-        TaskStatusPage.SetCurrentTask(taskItem.Name, taskItem.Status);
+        TaskStatusPage.SetCurrentTask(taskItem);
 
         // 监听任务状态变化以更新导航通知
         taskItem.PropertyChanged += (_, args) =>
         {
-            if (string.Equals(args.PropertyName, nameof(Models.DownloadTaskItem.Status), StringComparison.Ordinal))
+            void RefreshExternalTaskPresentation()
             {
                 RefreshTaskNavNotification();
-                TaskStatusPage.SetCurrentTask(taskItem.Name, taskItem.Status);
+                TaskStatusPage.SetCurrentTask(taskItem);
+            }
+
+            if (!string.Equals(args.PropertyName, nameof(Models.DownloadTaskItem.Status), StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (global::Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+            {
+                RefreshExternalTaskPresentation();
+            }
+            else
+            {
+                global::Avalonia.Threading.Dispatcher.UIThread.Post(RefreshExternalTaskPresentation);
             }
         };
     }
@@ -494,7 +527,28 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void HandleTaskStateChanged(Models.DownloadTaskItem task)
     {
+        // 下载/安装队列可能从线程池线程发出状态事件；任务页会更新
+        // ObservableCollection，必须在 UI 线程处理整个事件，而不是只切进度回调。
+        if (!global::Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            global::Avalonia.Threading.Dispatcher.UIThread.Post(() => HandleTaskStateChanged(task));
+            return;
+        }
+
         _currentDownloadTask = task;
+
+        if (task.TaskState == Models.DownloadTaskState.Pending)
+        {
+            // 允许同一任务重试后再次显示失败汇总。
+            _failureDialogsShown.Remove(task);
+        }
+        else if (task.IsFailed &&
+                 (task.TaskAction is Models.DownloadTaskAction.InstallModpack or
+                     Models.DownloadTaskAction.InstallCollection) &&
+                 _failureDialogsShown.Add(task))
+        {
+            _ = ShowModpackFailureDialogAsync(task);
+        }
 
         // 仅当任务列表结构变化（新增/删除/状态类型变化）时才同步列表，
         // 避免下载进度回调频繁 Clear+Add 导致整个列表重绘闪烁。
@@ -548,6 +602,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         DownloadPage.RemoveTaskCommand.Execute(task);
         TaskStatusPage.SyncTasks(DownloadPage.DownloadTasks);
+        _failureDialogsShown.Remove(task);
         if (_currentDownloadTask == task)
         {
             _currentDownloadTask = null;
@@ -574,6 +629,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         DownloadPage.ClearCompletedTasksCommand.Execute(null);
         TaskStatusPage.SyncTasks(DownloadPage.DownloadTasks);
+        _failureDialogsShown.RemoveWhere(task => task.IsFinished);
         UpdateTaskStatusOverview();
     }
 
@@ -597,15 +653,20 @@ public partial class MainWindowViewModel : ObservableObject
             StatusIconSource = "avares://SVL.Avalonia/Assets/Icons/Modded.png"
         };
 
-        DownloadPage.DownloadTasks.Insert(0, taskItem);
-        DownloadPage.Status = $"接管下载任务已创建: {fileName}";
-        RefreshTaskNavNotification();
-        NavigateToPage("任务", TaskStatusPage, pushCurrentToBackStack: true);
+        // 接管下载必须进入统一队列：直接 Insert 只会更新列表，不会持久化或触发调度器，
+        // 应用重启后也无法恢复这条任务。
+        DownloadPage.EnqueueTask(taskItem, $"接管下载任务已创建: {fileName}");
         TaskStatusPage.SetCurrentTask(taskItem);
     }
 
     private void HandleTaskLogGenerated(string message)
     {
+        if (!global::Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            global::Avalonia.Threading.Dispatcher.UIThread.Post(() => HandleTaskLogGenerated(message));
+            return;
+        }
+
         TaskStatusPage.AddLog(message);
 
         const string retryPrefix = "重试对比报告: ";
@@ -649,6 +710,7 @@ public partial class MainWindowViewModel : ObservableObject
     private void HandleNavigateToModpackSearch()
     {
         NavigateToPage("Modpack搜索", ModpackSearchPage);
+        _ = ModpackSearchPage.InitializeAsync();
     }
 
     private void HandleOpenDetails(string details)
@@ -737,6 +799,14 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        // SMAPI 专用下载流程已经保存了目标实例。若协议层重复投递同一回调，
+        // 不得再落入通用 ImportNxmLinkAsync，否则会创建第二个任务并再次弹窗。
+        if (DownloadPage.IsActiveSmapiExternalCallback(link))
+        {
+            BringToFrontRequested?.Invoke();
+            return;
+        }
+
         // 先导航到下载页，让用户看到导入状态；入队后 DownloadPage 会再跳任务页。
         NavigateToPage("下载", DownloadPage, clearBackStack: true);
 
@@ -755,13 +825,14 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     /// 处理拖放或按钮选中的本地 Modpack 整合包文件：先验证格式，再弹出元数据预览对话框，
-    /// 用户确认导入后将整合包任务入队（安装执行器留后续迁移）。临时解压目录随任务保留。
+    /// 用户确认导入后将整合包任务入队，并由 DownloadPage 的统一调度器执行安装。
+    /// 源压缩包路径随任务保留，任务状态可在重启后恢复。
     /// </summary>
     public async Task HandleModpackDropAsync(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !ModpackTypeDetector.IsSupportedFile(filePath))
         {
-            await _dialogService.ShowMessageAsync("不支持的文件", "仅支持 .zip 和 .cfmodpack 整合包格式（.7z 暂不支持）。");
+            await _dialogService.ShowMessageAsync("不支持的文件", "支持 .zip、.cfmodpack 和 .7z 整合包格式。");
             return;
         }
 
@@ -791,33 +862,76 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        // 检测器返回的包内图标位于临时解压目录，不能把这个短生命周期路径写入
+        // 持久化任务。安装器会从原始压缩包重新解压并读取包内图标；只有压缩包旁路
+        // 的自定义图标才需要作为任务元数据保留。
+        var detection = result.Detection;
+        if (IsPathUnderDirectory(detection.ModpackIconPath, detection.TempExtractPath))
+        {
+            detection.ModpackIconPath = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(detection.TempExtractPath))
+        {
+            ModpackTypeDetector.CleanupTempDirectory(detection.TempExtractPath);
+            detection.TempExtractPath = string.Empty;
+        }
+
         EnqueueModpackImportTask(result);
+    }
+
+    private static bool IsPathUnderDirectory(string? path, string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(directory))
+        {
+            return false;
+        }
+
+        try
+        {
+            var normalizedDirectory = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            var normalizedPath = Path.GetFullPath(path);
+            return normalizedPath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task ShowModpackFailureDialogAsync(Models.DownloadTaskItem task)
+    {
+        try
+        {
+            var failureReason = string.IsNullOrWhiteSpace(task.FailedDetails)
+                ? task.Status
+                : task.FailedDetails;
+            var logPath = !string.IsNullOrWhiteSpace(task.RetryReportPath)
+                ? task.RetryReportPath
+                : task.ReportPath;
+            var action = await _dialogService.ShowModpackFailureDialogAsync(
+                failureReason,
+                logPath,
+                $"整合包安装结果 - {task.Name}");
+
+            if (action == ModpackFailureDialogAction.Retry && task.CanRetry)
+            {
+                DownloadPage.RetryTaskCommand.Execute(task);
+            }
+        }
+        catch
+        {
+            // 失败汇总弹窗属于辅助提示；若窗口在关闭过程中不可用，
+            // 保留任务页中的失败明细，不影响任务状态和重试入口。
+        }
     }
 
     private static string? ResolveBasePathForInstance(string? instancePath)
     {
-        if (string.IsNullOrWhiteSpace(instancePath))
-        {
-            return null;
-        }
-
-        var fullPath = instancePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var current = new DirectoryInfo(fullPath);
-        var parent = current.Parent;
-        if (parent != null && string.Equals(parent.Name, "versions", StringComparison.OrdinalIgnoreCase))
-        {
-            return parent.Parent?.FullName;
-        }
-
-        var grandParent = parent?.Parent;
-        if (string.Equals(current.Name, "game", StringComparison.OrdinalIgnoreCase) &&
-            grandParent != null &&
-            string.Equals(grandParent.Name, "versions", StringComparison.OrdinalIgnoreCase))
-        {
-            return grandParent.Parent?.FullName;
-        }
-
-        return fullPath;
+        var resolved = InstanceRuntimePathResolver.ResolveBasePath(instancePath);
+        return string.IsNullOrWhiteSpace(resolved) ? null : resolved;
     }
 
     /// <summary>将整合包导入任务入队（按检测类型设置 TaskKind，ExecuteTaskAsync 据此路由到 ModpackInstallService）。</summary>
@@ -852,24 +966,12 @@ public partial class MainWindowViewModel : ObservableObject
             OutputFilePath = result.ModpackFilePath,
             TargetInstanceName = result.InstanceName,
             TargetGamePath = result.TargetGamePath,
+            CustomIconPath = result.Detection.ModpackIconPath ?? string.Empty,
             StatusIconSource = "avares://SVL.Avalonia/Assets/Icons/Modded.png"
         };
         taskItem.SetState(Models.DownloadTaskState.Pending, "已加入队列");
 
-        DownloadPage.DownloadTasks.Insert(0, taskItem);
-        DownloadPage.Status = $"整合包导入任务已创建: {displayName}";
-        RefreshTaskNavNotification();
-        NavigateToPage("任务", TaskStatusPage, pushCurrentToBackStack: true);
-        TaskStatusPage.SetCurrentTask(taskItem.Name, taskItem.Status);
-
-        taskItem.PropertyChanged += (_, args) =>
-        {
-            if (string.Equals(args.PropertyName, nameof(Models.DownloadTaskItem.Status), StringComparison.Ordinal))
-            {
-                RefreshTaskNavNotification();
-                TaskStatusPage.SetCurrentTask(taskItem.Name, taskItem.Status);
-            }
-        };
+        DownloadPage.EnqueueTask(taskItem, $"整合包导入任务已创建: {displayName}");
     }
 
     /// <summary>按钮路径：打开文件选择器选取整合包文件后进入导入流程。</summary>

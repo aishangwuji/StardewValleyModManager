@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Avalonia.Threading;
 using SVL.Avalonia.Models;
 using SVL.Avalonia.Services;
 using SVL.Core.Platform.Abstractions;
@@ -269,6 +270,19 @@ public partial class SettingsPageViewModel : ObservableObject
     private string _nexusDownloadCacheSizeText = "-";
 
     [ObservableProperty]
+    private int _cacheRetentionMinutes = 5;
+
+    [ObservableProperty]
+    private int _downloadCacheRetentionMinutes = 10080;
+
+    [ObservableProperty]
+    private bool _isCleaningCache;
+
+    /// <summary>过期缓存清理的保留时长选项（分钟）。</summary>
+    public ObservableCollection<int> CacheRetentionOptionsMinutes { get; } =
+    [5, 15, 30, 60, 180, 720, 1440, 10080, 43200];
+
+    [ObservableProperty]
     private string _selectedLocalizationSource = "Gitee";
 
     public ObservableCollection<string> ThemeStyleOptions { get; } =
@@ -411,6 +425,21 @@ public partial class SettingsPageViewModel : ObservableObject
         _externalProcessService.TryOpenUrl("https://svl.qzz.io/");
     }
 
+    /// <summary>显示全局游戏窗口标题占位符说明。</summary>
+    [RelayCommand]
+    private async Task ShowWindowTitleHelp()
+    {
+        const string helpText =
+            "窗口标题支持以下占位符：\n\n" +
+            "<name>：当前实例名称\n" +
+            "<ver>：当前游戏版本\n" +
+            "<smver>：当前 SMAPI 版本\n" +
+            "<modscount>：已加载的 Mod 数量\n\n" +
+            "留空或填写 <default> 可恢复默认标题。占位符会在启动游戏时替换为当前实例信息。";
+
+        await _dialogService.ShowWindowTitleHelpDialogAsync(helpText, "窗口标题占位符帮助");
+    }
+
     private void ApplySettings(AppUserSettings settings)
     {
         GameWindowTitle = settings.GameWindowTitle;
@@ -420,6 +449,11 @@ public partial class SettingsPageViewModel : ObservableObject
         InstanceServerAddress = settings.InstanceServerAddress;
         InstanceSteamInviteCode = settings.InstanceSteamInviteCode;
         EnableDownloadCache = settings.EnableDownloadCache;
+        CacheRetentionMinutes = Math.Clamp(settings.CacheRetentionMinutes <= 0 ? 5 : settings.CacheRetentionMinutes, 1, 10080);
+        DownloadCacheRetentionMinutes = Math.Clamp(
+            settings.DownloadCacheRetentionMinutes <= 0 ? 10080 : settings.DownloadCacheRetentionMinutes,
+            60,
+            43200);
         SelectedLocalizationSource = string.IsNullOrWhiteSpace(settings.LocalizationPreferredSource) ? "Gitee" : settings.LocalizationPreferredSource;
         EnableDownloadProxy = settings.EnableDownloadProxy;
         DownloadProxyUrl = settings.DownloadProxyUrl;
@@ -438,8 +472,7 @@ public partial class SettingsPageViewModel : ObservableObject
         SelectedCollectionDownloadParallelism = Math.Clamp(settings.CollectionDownloadParallelism, 1, 8);
         SelectedDownloadThreads = SnapToDownloadThreadOption(settings.DownloadSegmentThreads);
         SelectedThemeMode = settings.ThemeMode;
-        var isDark = settings.ThemeMode.Contains("暗") || settings.ThemeMode.Contains("Dark", StringComparison.OrdinalIgnoreCase);
-        IsDarkMode = isDark;
+        IsDarkMode = ThemeService.IsDarkMode;
 
         // 主题风格
         var styleName = settings.ThemeStyleName ?? "Stardew";
@@ -476,6 +509,8 @@ public partial class SettingsPageViewModel : ObservableObject
         settings.InstanceServerAddress = InstanceServerAddress?.Trim() ?? string.Empty;
         settings.InstanceSteamInviteCode = InstanceSteamInviteCode?.Trim() ?? string.Empty;
         settings.EnableDownloadCache = EnableDownloadCache;
+        settings.CacheRetentionMinutes = Math.Clamp(CacheRetentionMinutes, 1, 10080);
+        settings.DownloadCacheRetentionMinutes = Math.Clamp(DownloadCacheRetentionMinutes, 60, 43200);
         settings.LocalizationPreferredSource = SelectedLocalizationSource;
         settings.EnableDownloadProxy = EnableDownloadProxy;
         settings.DownloadProxyUrl = DownloadProxyUrl?.Trim() ?? string.Empty;
@@ -623,9 +658,11 @@ public partial class SettingsPageViewModel : ObservableObject
 
     partial void OnSelectedThemeModeChanged(string value)
     {
+        var followSystem = value.Contains("跟随", StringComparison.OrdinalIgnoreCase) ||
+                           value.Contains("System", StringComparison.OrdinalIgnoreCase);
         var isDark = value.Contains("深") || value.Contains("暗") || value.Contains("Dark", StringComparison.OrdinalIgnoreCase);
-        IsDarkMode = isDark;
-        ThemeService.SetDarkMode(isDark);
+        ThemeService.SetThemeMode(isDark, followSystem);
+        IsDarkMode = ThemeService.IsDarkMode;
         StatusMessage = $"主题模式切换为：{value}（已自动保存）";
         ScheduleAutoSave();
     }
@@ -781,6 +818,43 @@ public partial class SettingsPageViewModel : ObservableObject
         ScheduleAutoSave();
     }
 
+    partial void OnCacheRetentionMinutesChanged(int value)
+    {
+        var normalized = Math.Clamp(value, 1, 10080);
+        if (normalized != value)
+        {
+            CacheRetentionMinutes = normalized;
+            return;
+        }
+
+        StatusMessage = $"缓存保留时长已设为 {CacheRetentionMinutes} 分钟（已自动保存）";
+        ScheduleAutoSave();
+    }
+
+    partial void OnDownloadCacheRetentionMinutesChanged(int value)
+    {
+        var normalized = Math.Clamp(value, 60, 43200);
+        if (normalized != value)
+        {
+            DownloadCacheRetentionMinutes = normalized;
+            return;
+        }
+
+        StatusMessage = $"下载归档缓存保留时长已设为 {FormatRetentionMinutes(DownloadCacheRetentionMinutes)}（已自动保存）";
+        ScheduleAutoSave();
+    }
+
+    private static string FormatRetentionMinutes(int minutes)
+    {
+        return minutes switch
+        {
+            >= 10080 when minutes % 10080 == 0 => $"{minutes / 10080} 周",
+            >= 1440 when minutes % 1440 == 0 => $"{minutes / 1440} 天",
+            >= 60 when minutes % 60 == 0 => $"{minutes / 60} 小时",
+            _ => $"{minutes} 分钟"
+        };
+    }
+
     [RelayCommand]
     private void SelectTab(object? index)
     {
@@ -800,22 +874,45 @@ public partial class SettingsPageViewModel : ObservableObject
 
     /// <summary>刷新所有缓存类别的统计信息。</summary>
     [RelayCommand]
-    private Task RefreshCacheStatisticsAsync()
+    private async Task RefreshCacheStatisticsAsync()
     {
-        return Task.Run(() =>
+        var statistics = await Task.Run(() =>
         {
-            var total = CacheManagementService.GetTotalStatistics();
-            TotalCacheSizeText = total.DisplaySize;
-            TotalCacheFileCount = total.FileCount;
+            return new
+            {
+                Total = CacheManagementService.GetTotalStatistics(),
+                CommunityLocalization = CacheManagementService.GetStatistics(CacheCategory.CommunityLocalization),
+                SmapiDownloads = CacheManagementService.GetStatistics(CacheCategory.SmapiDownloads),
+                DownloadInstall = CacheManagementService.GetStatistics(CacheCategory.DownloadInstall),
+                SmapiIcons = CacheManagementService.GetStatistics(CacheCategory.SmapiIcons),
+                Downloads = CacheManagementService.GetStatistics(CacheCategory.DownloadsCache),
+                Game = CacheManagementService.GetStatistics(CacheCategory.Game),
+                Nexus = CacheManagementService.GetStatistics(CacheCategory.Nexus)
+            };
 
-            CommunityLocalizationCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.CommunityLocalization).DisplaySize;
-            SmapiDownloadsCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.SmapiDownloads).DisplaySize;
-            DownloadInstallCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.DownloadInstall).DisplaySize;
-            SmapiIconsCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.SmapiIcons).DisplaySize;
-            DownloadsCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.DownloadsCache).DisplaySize;
-            GameDownloadCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.Game).DisplaySize;
-            NexusDownloadCacheSizeText = CacheManagementService.GetStatistics(CacheCategory.Nexus).DisplaySize;
         });
+
+        void ApplyStatistics()
+        {
+            TotalCacheSizeText = statistics.Total.DisplaySize;
+            TotalCacheFileCount = statistics.Total.FileCount;
+            CommunityLocalizationCacheSizeText = statistics.CommunityLocalization.DisplaySize;
+            SmapiDownloadsCacheSizeText = statistics.SmapiDownloads.DisplaySize;
+            DownloadInstallCacheSizeText = statistics.DownloadInstall.DisplaySize;
+            SmapiIconsCacheSizeText = statistics.SmapiIcons.DisplaySize;
+            DownloadsCacheSizeText = statistics.Downloads.DisplaySize;
+            GameDownloadCacheSizeText = statistics.Game.DisplaySize;
+            NexusDownloadCacheSizeText = statistics.Nexus.DisplaySize;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            ApplyStatistics();
+        }
+        else
+        {
+            await Dispatcher.UIThread.InvokeAsync(ApplyStatistics);
+        }
     }
 
     /// <summary>清理社区汉化缓存。</summary>
@@ -890,6 +987,53 @@ public partial class SettingsPageViewModel : ObservableObject
         _ = RefreshCacheStatisticsAsync();
     }
 
+    /// <summary>按保留时长清理所有已过期缓存。</summary>
+    [RelayCommand]
+    private async Task ClearExpiredCache()
+    {
+        if (IsCleaningCache)
+        {
+            return;
+        }
+
+        IsCleaningCache = true;
+        try
+        {
+            var retentionMinutes = Math.Clamp(DownloadCacheRetentionMinutes, 60, 43200);
+            var removed = await Task.Run(() => CacheManagementService.ClearExpired(TimeSpan.FromMinutes(retentionMinutes)));
+            StatusMessage = $"已清理过期缓存 {removed} 个文件（保留 {retentionMinutes} 分钟）";
+            await RefreshCacheStatisticsAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"清理过期缓存失败: {ex.Message}";
+        }
+        finally
+        {
+            IsCleaningCache = false;
+        }
+    }
+
+    /// <summary>打开 SVL 缓存根目录。</summary>
+    [RelayCommand]
+    private void OpenCacheFolder()
+    {
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SVL");
+
+        try
+        {
+            Directory.CreateDirectory(path);
+            var opened = _externalProcessService.TryOpenPath(path);
+            StatusMessage = opened ? $"已打开缓存目录: {path}" : "打开缓存目录失败";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"打开缓存目录失败: {ex.Message}";
+        }
+    }
+
     partial void OnSelectedLocalizationSourceChanged(string value)
     {
         ScheduleAutoSave();
@@ -902,6 +1046,44 @@ public partial class SettingsPageViewModel : ObservableObject
         _settingsStore.Save(BuildSettings());
         _localizationService.SetLanguage(SelectedUiLanguage);
         StatusMessage = $"设置已保存（{System.DateTime.Now:HH:mm:ss}）";
+    }
+
+    /// <summary>
+    /// 将 Avalonia 配置恢复为默认值。
+    ///
+    /// 实例路径、实例名称、收藏列表属于用户数据，不是应用偏好设置，
+    /// 因此恢复设置时必须保留，避免用户因为点击“恢复默认”而丢失实例入口。
+    /// Nexus 登录凭据则按旧 WPF 行为清空，并由确认对话框明确告知用户。
+    /// </summary>
+    [RelayCommand]
+    private async Task ResetSettings()
+    {
+        var confirmed = await _dialogService.ShowConfirmAsync(
+            "恢复默认设置",
+            "将恢复界面、下载、主题和启动器偏好设置，并退出 Nexus 登录。\n\n现有游戏实例、实例路径和收藏列表不会被删除。是否继续？");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _autoSaveCts?.Cancel();
+
+        var current = _settingsStore.Load();
+        var defaults = new AppUserSettings
+        {
+            // 实例注册属于数据层，不能随应用偏好一起重置。
+            InstanceName = current.InstanceName,
+            InstanceDescription = current.InstanceDescription,
+            IsFavoriteInstance = current.IsFavoriteInstance,
+            PreferredInstancePath = current.PreferredInstancePath,
+            FavoriteInstanceKeys = current.FavoriteInstanceKeys?.ToList() ?? []
+        };
+
+        ApplySettings(defaults);
+        _settingsStore.Save(BuildSettings());
+        _localizationService.SetLanguage(SelectedUiLanguage);
+        RefreshNxmProtocolStatus();
+        StatusMessage = "设置已恢复默认值（实例数据未改变）";
     }
 
     /// <summary>从磁盘重新加载设置（用于外部导航进入设置页时刷新状态）。</summary>

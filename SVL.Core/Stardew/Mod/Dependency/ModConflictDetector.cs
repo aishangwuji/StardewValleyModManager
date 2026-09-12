@@ -27,35 +27,24 @@ public class ModConflictDetector
     {
         var conflicts = new List<ConflictResult>();
 
-        var uniqueIds = mods.Where(m => m.IsEnabled)
-                                .Select(m => m.UniqueId)
-                                .Where(id => !string.IsNullOrEmpty(id))
-                                .ToList();
-
-        var duplicates = uniqueIds.GroupBy(id => id)
-                                    .Where(g => g.Count() > 1)
-                                    .SelectMany(g => g)
-                                    .ToList();
-
-        foreach (var duplicate in duplicates)
+        foreach (var duplicateGroup in mods
+                     .Where(m => m.IsEnabled && !string.IsNullOrWhiteSpace(m.UniqueId))
+                     .GroupBy(m => m.UniqueId, StringComparer.OrdinalIgnoreCase)
+                     .Where(group => group.Count() > 1))
         {
-            var modsWithDuplicateId = mods.Where(m => m.UniqueId == duplicate)
-                                                       .ToList();
+            var modsWithDuplicateId = duplicateGroup.ToList();
 
-            if (modsWithDuplicateId.Count > 1)
+            for (int i = 0; i < modsWithDuplicateId.Count - 1; i++)
             {
-                for (int i = 1; i < modsWithDuplicateId.Count; i++)
+                for (int j = i + 1; j < modsWithDuplicateId.Count; j++)
                 {
-                    for (int j = i + 1; j < modsWithDuplicateId.Count; j++)
+                    conflicts.Add(new ConflictResult
                     {
-                        conflicts.Add(new ConflictResult
-                        {
-                            ModId1 = modsWithDuplicateId[i - 1].UniqueId,
-                            ModId2 = modsWithDuplicateId[j - 1].UniqueId,
-                            Type = ConflictType.DuplicateId,
-                            Description = $"Duplicate UniqueID: {duplicate}"
-                        });
-                    }
+                        ModId1 = modsWithDuplicateId[i].UniqueId,
+                        ModId2 = modsWithDuplicateId[j].UniqueId,
+                        Type = ConflictType.DuplicateId,
+                        Description = $"Duplicate UniqueID: {duplicateGroup.Key}"
+                    });
                 }
             }
         }
@@ -84,11 +73,13 @@ public class ModConflictDetector
         var conflicts = new List<ConflictResult>();
         var enabledMods = mods.Where(m => m.IsEnabled).ToList();
 
-        foreach (var mod1 in enabledMods)
+        for (var firstIndex = 0; firstIndex < enabledMods.Count - 1; firstIndex++)
         {
-            foreach (var mod2 in enabledMods)
+            var mod1 = enabledMods[firstIndex];
+            for (var secondIndex = firstIndex + 1; secondIndex < enabledMods.Count; secondIndex++)
             {
-                if (mod1.UniqueId == mod2.UniqueId)
+                var mod2 = enabledMods[secondIndex];
+                if (string.Equals(mod1.UniqueId, mod2.UniqueId, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -136,22 +127,39 @@ public class ModConflictDetector
             return files;
         }
 
-        files.AddRange(System.IO.Directory.GetFiles(modPath, "*.json", System.IO.SearchOption.AllDirectories));
-        files.AddRange(System.IO.Directory.GetFiles(modPath, "*.dll", System.IO.SearchOption.AllDirectories));
-        files.AddRange(System.IO.Directory.GetFiles(modPath, "*.png", System.IO.SearchOption.AllDirectories));
-
-        var manifestPath = System.IO.Path.Combine(modPath, "manifest.json");
-        if (System.IO.File.Exists(manifestPath))
+        try
         {
-            files.Add(manifestPath);
+            files.AddRange(System.IO.Directory
+                .GetFiles(modPath, "*", System.IO.SearchOption.AllDirectories)
+                .Select(path => GetRelativeFilePath(modPath, path)
+                    .Replace(System.IO.Path.DirectorySeparatorChar, '/')));
+        }
+        catch (System.IO.IOException)
+        {
+            // 单个损坏/被占用的 Mod 目录不应阻止其它目录继续检测。
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // 同上，权限不足时把该目录视为没有可扫描文件。
         }
 
         return files;
     }
 
+    private static string GetRelativeFilePath(string rootPath, string filePath)
+    {
+        var normalizedRoot = System.IO.Path.GetFullPath(rootPath)
+            .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar) +
+            System.IO.Path.DirectorySeparatorChar;
+        var normalizedFile = System.IO.Path.GetFullPath(filePath);
+        return normalizedFile.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            ? normalizedFile.Substring(normalizedRoot.Length)
+            : System.IO.Path.GetFileName(normalizedFile);
+    }
+
     private static bool IsAssetFile(string fileName)
     {
-        var lowerName = fileName.ToLower();
+        var lowerName = System.IO.Path.GetFileName(fileName).ToLowerInvariant();
         return lowerName == "icon.png" ||
                lowerName == "manifest.json" ||
                lowerName.EndsWith(".cs") ||

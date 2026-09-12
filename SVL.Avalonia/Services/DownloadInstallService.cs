@@ -1,6 +1,8 @@
 using SVL.Core.Platform.Abstractions;
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
+using SVL.Core.Platform.IO;
 
 namespace SVL.Avalonia.Services;
 
@@ -36,7 +38,15 @@ public sealed class DownloadInstallService
         Directory.CreateDirectory(_backupRoot);
     }
 
-    public async Task<DownloadInstallResult> InstallAsync(string downloadedFilePath, string taskName, CancellationToken cancellationToken = default)
+    public async Task<DownloadInstallResult> InstallAsync(
+        string downloadedFilePath,
+        string taskName,
+        CancellationToken cancellationToken = default,
+        string? sourcePlatform = null,
+        long? sourceProjectId = null,
+        long? sourceFileId = null,
+        string? sourceDownloadUrl = null,
+        string? sourceFileName = null)
     {
         if (string.IsNullOrWhiteSpace(downloadedFilePath) || !File.Exists(downloadedFilePath))
         {
@@ -48,6 +58,8 @@ public sealed class DownloadInstallService
         var targetModsPath = ResolveTargetModsPath();
         var safeName = CreateSafeFolderName(taskName);
         var installPath = Path.Combine(targetModsPath, safeName);
+        var installedNames = new List<string>();
+        var isArchive = IsArchiveFile(downloadedFilePath);
 
         try
         {
@@ -55,21 +67,33 @@ public sealed class DownloadInstallService
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                if (isArchive)
+                {
+                    // Mod 发布包常见为“发行包名/实际 Mod 目录/manifest.json”。
+                    // 以 manifest 的父目录为安装根，避免 Mods/任务名/发行包名/...
+                    // 这种游戏无法识别的多余嵌套；同时拒绝没有 manifest 的损坏/错误下载。
+                    if (!ModpackInstallService.InstallDownloadedModArchive(
+                        downloadedFilePath, targetModsPath, safeName, out var archiveInstalledNames))
+                    {
+                        throw new InvalidDataException("Mod 压缩包中未找到有效的 manifest.json");
+                    }
+
+                    installedNames.AddRange(archiveInstalledNames);
+                    return;
+                }
+
+                // 压缩包安装由 ModpackInstallService 负责事务式替换。
+                // 只有普通文件安装才在复制前清理同名目录，避免损坏压缩包
+                // 先删掉旧 Mod，导致新包安装失败后无法恢复。
                 if (Directory.Exists(installPath))
                 {
                     Directory.Delete(installPath, true);
                 }
 
-                if (IsZipFile(downloadedFilePath))
-                {
-                    Directory.CreateDirectory(installPath);
-                    ZipExtractor.ExtractToDirectory(downloadedFilePath, installPath);
-                    return;
-                }
-
                 Directory.CreateDirectory(installPath);
                 var targetFile = Path.Combine(installPath, Path.GetFileName(downloadedFilePath));
                 File.Copy(downloadedFilePath, targetFile, true);
+                installedNames.Add(safeName);
             }, cancellationToken);
         }
         catch (OperationCanceledException)
@@ -81,7 +105,17 @@ public sealed class DownloadInstallService
             return DownloadInstallResult.Failed($"安装失败: {ex.Message}");
         }
 
-        return DownloadInstallResult.Success(installPath, [safeName]);
+        WriteSourceCredentials(
+            targetModsPath,
+            installedNames,
+            sourcePlatform,
+            sourceProjectId,
+            sourceFileId,
+            sourceDownloadUrl,
+            sourceFileName);
+
+        var primaryName = installedNames.FirstOrDefault() ?? safeName;
+        return DownloadInstallResult.Success(Path.Combine(targetModsPath, primaryName), installedNames);
     }
 
     public async Task<DownloadInstallResult> InstallCollectionAsync(
@@ -134,7 +168,7 @@ public sealed class DownloadInstallService
 
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    if (!IsZipFile(file))
+                    if (!IsArchiveFile(file))
                     {
                         var payloadDir = Path.Combine(targetModsPath, "__collection_payload");
                         Directory.CreateDirectory(payloadDir);
@@ -146,7 +180,7 @@ public sealed class DownloadInstallService
 
                     var extractDir = Path.Combine(extractRoot, $"part-{i + 1}");
                     Directory.CreateDirectory(extractDir);
-                    ZipExtractor.ExtractToDirectory(file, extractDir);
+                    ExtractArchive(file, extractDir);
 
                     var foundModDirs = DiscoverModDirectories(extractDir);
                     if (foundModDirs.Count == 0)
@@ -161,7 +195,14 @@ public sealed class DownloadInstallService
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        var modName = Path.GetFileName(modDir);
+                        // Collection 多文件入口与普通 Mod/整合包安装必须使用同一
+                        // 目录名规则。Nexus/CurseForge 经常把 manifest 直接放在
+                        // cf-项目ID-文件ID 或 File 文件名目录中，这只是下载器的
+                        // 临时目录名，不能把它原样写入 Mods。
+                        var modName = ModpackInstallService.ResolveInstalledModDirectoryName(
+                            modDir,
+                            extractDir,
+                            Path.GetFileName(modDir));
                         var targetModDir = Path.Combine(targetModsPath, modName);
 
                         if (Directory.Exists(targetModDir))
@@ -289,18 +330,22 @@ public sealed class DownloadInstallService
                     cancellationToken.ThrowIfCancellationRequested();
 
                     var file = downloadedFiles[i];
-                    if (string.IsNullOrWhiteSpace(file) || !File.Exists(file) || !IsZipFile(file))
+                    if (string.IsNullOrWhiteSpace(file) || !File.Exists(file) || !IsArchiveFile(file))
                     {
                         continue;
                     }
 
                     var extractDir = Path.Combine(previewRoot, $"part-{i + 1}");
                     Directory.CreateDirectory(extractDir);
-                    ZipExtractor.ExtractToDirectory(file, extractDir);
+                    ExtractArchive(file, extractDir);
 
                     foreach (var modDir in DiscoverModDirectories(extractDir))
                     {
-                        discoveredMods.Add(Path.GetFileName(modDir));
+                        discoveredMods.Add(
+                            ModpackInstallService.ResolveInstalledModDirectoryName(
+                                modDir,
+                                extractDir,
+                                Path.GetFileName(modDir)));
                     }
                 }
             }, cancellationToken);
@@ -503,9 +548,9 @@ public sealed class DownloadInstallService
         foreach (var modDir in modDirectories.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var modName = Path.GetFileName(modDir);
-            var manifestPath = Path.Combine(modDir, "manifest.json");
+            var manifestPath = FindManifestPath(modDir);
 
-            if (!File.Exists(manifestPath))
+            if (string.IsNullOrWhiteSpace(manifestPath))
             {
                 errors.Add($"{modName}: 缺少 manifest.json");
                 continue;
@@ -513,16 +558,15 @@ public sealed class DownloadInstallService
 
             try
             {
-                using var stream = File.OpenRead(manifestPath);
-                using var doc = JsonDocument.Parse(stream);
+                using var doc = JsonDocument.Parse(ReadTextFileWithBom(manifestPath));
                 var root = doc.RootElement;
 
-                var uniqueId = root.TryGetProperty("UniqueID", out var uniqueIdProp)
-                    ? uniqueIdProp.GetString() ?? string.Empty
-                    : string.Empty;
-                var version = root.TryGetProperty("Version", out var versionProp)
-                    ? versionProp.GetString() ?? string.Empty
-                    : string.Empty;
+                // SMAPI 清单通常使用 PascalCase，但第三方打包器/转换器可能
+                // 输出 camelCase、全小写，甚至把版本号写成 JSON 数值。安装校验
+                // 必须与 Mod 管理页的宽松解析规则一致，否则合法 Mod 会被误报
+                // 为“缺少 UniqueID/Version”，整合包也会出现假失败。
+                var uniqueId = GetManifestValue(root, "UniqueID", "UniqueId", "unique_id");
+                var version = GetManifestValue(root, "Version", "version");
 
                 if (string.IsNullOrWhiteSpace(uniqueId))
                 {
@@ -549,6 +593,56 @@ public sealed class DownloadInstallService
             : new CollectionValidationResult(false, errors);
     }
 
+    /// <summary>读取 Mod manifest，兼容 UTF-8/UTF-16 BOM，避免合法清单被误判为损坏。</summary>
+    private static string ReadTextFileWithBom(string path)
+    {
+        return ManifestTextReader.ReadAllText(path);
+    }
+
+    private static string GetManifestValue(JsonElement root, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!TryGetJsonPropertyIgnoreCase(root, propertyName, out var value))
+            {
+                continue;
+            }
+
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString() ?? string.Empty;
+            }
+
+            if (value.ValueKind == JsonValueKind.Number)
+            {
+                return value.ToString();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool TryGetJsonPropertyIgnoreCase(
+        JsonElement element,
+        string propertyName,
+        out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
     private string ResolveTargetModsPath()
     {
         // 优先使用当前选中实例的 Mods 路径（由 DownloadPageViewModel 设置）
@@ -563,7 +657,9 @@ public sealed class DownloadInstallService
         }
 
         // 回退：自动探测 Steam/GOG 路径
-        var gamePath = _gameInstallPathLocator.TryLocateSteamStardewPath() ?? _gameInstallPathLocator.TryLocateGogStardewPath();
+        var gamePath = _gameInstallPathLocator.TryLocateSteamStardewPath()
+            ?? _gameInstallPathLocator.TryLocateGogStardewPath()
+            ?? _gameInstallPathLocator.TryLocateXboxStardewPath();
         if (!string.IsNullOrWhiteSpace(gamePath))
         {
             var modsPath = Path.Combine(gamePath, "Mods");
@@ -578,15 +674,36 @@ public sealed class DownloadInstallService
 
     private static List<string> DiscoverModDirectories(string extractPath)
     {
-        var manifests = Directory
-            .EnumerateFiles(extractPath, "manifest.json", SearchOption.AllDirectories)
-            .Select(Path.GetDirectoryName)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Cast<string>()
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // 旧 Collection 安装入口也必须跳过发行包外层的 Name-only
+        // manifest，并在嵌套布局中只返回真正可安装的 Mod 根目录。
+        return ModpackInstallService.FindInstallableModDirectories(extractPath).ToList();
+    }
 
-        return manifests;
+    private static string? FindManifestPath(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        var direct = Path.Combine(directory, "manifest.json");
+        if (File.Exists(direct))
+        {
+            return direct;
+        }
+
+        try
+        {
+            return Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                .FirstOrDefault(path => string.Equals(
+                    Path.GetFileName(path),
+                    "manifest.json",
+                    StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void CopyDirectory(string sourceDir, string targetDir, bool overwrite)
@@ -613,11 +730,126 @@ public sealed class DownloadInstallService
         }
     }
 
-    private static bool IsZipFile(string path)
+    private static bool IsArchiveFile(string path)
     {
-        var ext = Path.GetExtension(path);
-        return string.Equals(ext, ".zip", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(ext, ".cfmodpack", StringComparison.OrdinalIgnoreCase);
+        return ArchiveExtractor.IsZip(path) ||
+               ArchiveExtractor.IsSevenZip(path);
+    }
+
+    private static void ExtractArchive(string archivePath, string destinationDirectory)
+    {
+        if (ArchiveExtractor.IsSevenZip(archivePath))
+        {
+            ArchiveExtractor.ExtractSevenZipToDirectory(archivePath, destinationDirectory);
+            return;
+        }
+
+        ZipExtractor.ExtractToDirectory(archivePath, destinationDirectory);
+    }
+
+    /// <summary>
+    /// 将在线安装任务的来源写入实际 Mod 目录，供版本设置页导出时恢复
+    /// CurseForge/Nexus 的 projectId 与 fileId。保留已有的本地化扩展字段。
+    /// </summary>
+    private static void WriteSourceCredentials(
+        string modsPath,
+        IReadOnlyList<string> installedNames,
+        string? sourcePlatform,
+        long? sourceProjectId,
+        long? sourceFileId,
+        string? sourceDownloadUrl,
+        string? sourceFileName)
+    {
+        if ((string.IsNullOrWhiteSpace(sourcePlatform) &&
+             string.IsNullOrWhiteSpace(sourceDownloadUrl)) ||
+            installedNames == null ||
+            installedNames.Count == 0)
+        {
+            return;
+        }
+
+        var normalizedPlatform = string.Equals(sourcePlatform, "curseforge", StringComparison.OrdinalIgnoreCase)
+            ? "Curseforge"
+            : string.Equals(sourcePlatform, "nexus", StringComparison.OrdinalIgnoreCase)
+                ? "NexusMods"
+                : sourcePlatform?.Trim() ?? string.Empty;
+
+        foreach (var installedName in installedNames.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(installedName))
+            {
+                continue;
+            }
+
+            try
+            {
+                var modDirectory = Path.Combine(modsPath, installedName);
+                if (!Directory.Exists(modDirectory))
+                {
+                    continue;
+                }
+
+                var sourcePath = Path.Combine(modDirectory, "svl-source.json");
+                var values = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(sourcePath))
+                {
+                    try
+                    {
+                        using var document = JsonDocument.Parse(ReadTextFileWithBom(sourcePath));
+                        if (document.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var property in document.RootElement.EnumerateObject())
+                            {
+                                values[property.Name] = property.Value.Clone();
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // 现有来源文件损坏时重建核心来源字段。
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(normalizedPlatform))
+                {
+                    values["platform"] = JsonSerializer.SerializeToElement(normalizedPlatform);
+                }
+
+                if (sourceProjectId is > 0)
+                {
+                    values["projectId"] = JsonSerializer.SerializeToElement(
+                        sourceProjectId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+
+                if (sourceFileId is > 0)
+                {
+                    values["fileId"] = JsonSerializer.SerializeToElement(
+                        sourceFileId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                else if (!values.ContainsKey("fileId") && !values.ContainsKey("file_id"))
+                {
+                    values["fileId"] = JsonSerializer.SerializeToElement(string.Empty);
+                }
+
+                if (!string.IsNullOrWhiteSpace(sourceDownloadUrl))
+                {
+                    values["downloadUrl"] = JsonSerializer.SerializeToElement(sourceDownloadUrl.Trim());
+                }
+
+                if (!string.IsNullOrWhiteSpace(sourceFileName))
+                {
+                    values["fileName"] = JsonSerializer.SerializeToElement(sourceFileName.Trim());
+                }
+
+                AtomicFileWriter.WriteUtf8(
+                    sourcePath,
+                    JsonSerializer.Serialize(values, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch
+            {
+                // 来源信息写入失败不应让已经完成的 Mod 安装变成失败。
+            }
+        }
     }
 
     private static string CreateSafeFolderName(string name)

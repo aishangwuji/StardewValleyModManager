@@ -1,11 +1,21 @@
 using SVL.Avalonia.Models;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SVL.Avalonia.Services;
 
 public sealed class DownloadTaskStateStore
 {
+    // 早期调试版本曾使用字符串枚举写入任务状态，当前版本默认写数字枚举。
+    // 读取时同时接受两种形态，避免一个旧任务字段就导致整份 Pending 队列被
+    // 当作损坏文件备份掉。
+    private static readonly JsonSerializerOptions LoadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     public void Save(string statePath, IReadOnlyList<DownloadTaskItem> tasks)
     {
         var records = tasks.Select(task => new DownloadTaskStateRecord
@@ -20,15 +30,26 @@ public sealed class DownloadTaskStateStore
             TaskAction = task.TaskAction,
             SourceModId = task.SourceModId,
             SourceFileId = task.SourceFileId,
+            SourcePlatform = task.SourcePlatform,
+            CollectionSlug = task.CollectionSlug,
+            CollectionRevision = task.CollectionRevision,
             SourceUrl = task.SourceUrl,
             OutputFilePath = task.OutputFilePath,
             InstalledPath = task.InstalledPath,
+            InstalledDirectory = task.InstalledDirectory,
             ReportPath = task.ReportPath,
             BackupPath = task.BackupPath,
             FailedDetails = task.FailedDetails,
             RetryReportPath = task.RetryReportPath,
             TargetGamePath = task.TargetGamePath,
             TargetInstanceName = task.TargetInstanceName,
+            CustomIconPath = task.CustomIconPath,
+            SpeedText = task.SpeedText,
+            EtaText = task.EtaText,
+            TotalSizeText = task.TotalSizeText,
+            DownloadedSizeText = task.DownloadedSizeText,
+            SubProgressText = task.SubProgressText,
+            SubProgress = task.SubProgress,
             DependencyUrls = task.DependencyUrls.ToList(),
             FailedDownloadUrls = task.FailedDownloadUrls.ToList(),
             ConflictPreviewItems = task.ConflictPreviewItems.ToList()
@@ -36,7 +57,7 @@ public sealed class DownloadTaskStateStore
 
         var envelope = new DownloadTaskStateEnvelope
         {
-            Version = 3,
+            Version = 4,
             Tasks = records
         };
 
@@ -49,21 +70,45 @@ public sealed class DownloadTaskStateStore
             Directory.CreateDirectory(parent);
         }
 
-        var tempPath = statePath + ".tmp";
-        using (var fileStream = File.Create(tempPath))
-        using (var gzip = new GZipStream(fileStream, CompressionLevel.SmallestSize))
+        var fullStatePath = Path.GetFullPath(statePath);
+        var tempPath = fullStatePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
         {
-            gzip.Write(bytes, 0, bytes.Length);
-            gzip.Flush();
-        }
+            using (var fileStream = new FileStream(
+                       tempPath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       bufferSize: 4096,
+                       options: FileOptions.WriteThrough))
+            {
+                using (var gzip = new GZipStream(
+                           fileStream,
+                           CompressionLevel.SmallestSize,
+                           leaveOpen: true))
+                {
+                    gzip.Write(bytes, 0, bytes.Length);
+                }
 
-        if (File.Exists(statePath))
-        {
-            File.Move(tempPath, statePath, true);
+                // GZipStream 关闭后再刷新底层流，确保压缩尾部已落盘。
+                fileStream.Flush(flushToDisk: true);
+            }
+
+            File.Move(tempPath, fullStatePath, overwrite: true);
         }
-        else
+        finally
         {
-            File.Move(tempPath, statePath);
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch
+            {
+                // 状态文件属于恢复辅助数据，临时文件清理失败不应阻塞任务队列。
+            }
         }
     }
 
@@ -85,13 +130,13 @@ public sealed class DownloadTaskStateStore
 
             try
             {
-                var envelope = JsonSerializer.Deserialize<DownloadTaskStateEnvelope>(json);
+                var envelope = JsonSerializer.Deserialize<DownloadTaskStateEnvelope>(json, LoadJsonOptions);
                 return envelope?.Tasks ?? [];
             }
             catch
             {
                 // Backward compatibility with pre-envelope persistence payload.
-                var records = JsonSerializer.Deserialize<List<DownloadTaskStateRecord>>(json);
+                var records = JsonSerializer.Deserialize<List<DownloadTaskStateRecord>>(json, LoadJsonOptions);
                 return records ?? [];
             }
         }
@@ -160,11 +205,20 @@ public sealed class DownloadTaskStateRecord
 
     public long? SourceFileId { get; set; }
 
+    public string SourcePlatform { get; set; } = string.Empty;
+
+    public string CollectionSlug { get; set; } = string.Empty;
+
+    public int CollectionRevision { get; set; } = -1;
+
     public string SourceUrl { get; set; } = string.Empty;
 
     public string OutputFilePath { get; set; } = string.Empty;
 
     public string InstalledPath { get; set; } = string.Empty;
+
+    /// <summary>安装版本根目录；与 InstalledPath（实际运行目录）分开保存，便于重启后打开目录和判断更新模式。</summary>
+    public string InstalledDirectory { get; set; } = string.Empty;
 
     public string ReportPath { get; set; } = string.Empty;
 
@@ -177,6 +231,21 @@ public sealed class DownloadTaskStateRecord
     public string TargetGamePath { get; set; } = string.Empty;
 
     public string TargetInstanceName { get; set; } = string.Empty;
+
+    public string CustomIconPath { get; set; } = string.Empty;
+
+    /// <summary>下载展示字段。旧状态文件没有这些属性时使用默认空值，不影响恢复。</summary>
+    public string SpeedText { get; set; } = string.Empty;
+
+    public string EtaText { get; set; } = string.Empty;
+
+    public string TotalSizeText { get; set; } = string.Empty;
+
+    public string DownloadedSizeText { get; set; } = string.Empty;
+
+    public string SubProgressText { get; set; } = string.Empty;
+
+    public int SubProgress { get; set; } = -1;
 
     public List<string> DependencyUrls { get; set; } = [];
 

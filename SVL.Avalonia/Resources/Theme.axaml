@@ -12,6 +12,12 @@
     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
   </Style>
 
+  <!-- 托管对话框没有自己的应用级样式树，统一设置窗口底色，避免
+       FluentTheme 在 Icon/本地 Mod 等弹窗周围注入浅色背景。 -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource WindowBackgroundBrush}" />
+  </Style>
+
   <Style Selector="TextBox">
     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
     <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
@@ -34,10 +40,68 @@
     <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
   </Style>
 
+  <!-- ContextMenu 位于独立 Popup 视觉树中，显式绑定主题资源，避免深色主题下仍显示系统浅色菜单。 -->
+  <Style Selector="ContextMenu">
+    <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+  <Style Selector="ContextMenu MenuItem">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+  <Style Selector="ContextMenu MenuItem:pointerover">
+    <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="ContextMenu Separator">
+    <Setter Property="Background" Value="{DynamicResource BorderBrush}" />
+  </Style>
+
+  <!-- ContextMenu 的 Presenter 位于独立 Popup 视觉树中，不能只依赖页面样式；
+       在应用级样式中覆盖 Fluent 默认浅色面板，保证右键菜单跟随夜间模式。 -->
+  <Style Selector="MenuFlyoutPresenter">
+    <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+  <Style Selector="MenuFlyoutPresenter MenuItem">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+  <Style Selector="MenuFlyoutPresenter MenuItem:pointerover">
+    <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="MenuFlyoutPresenter MenuItem:disabled">
+    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+  </Style>
+  <Style Selector="MenuFlyoutPresenter Separator">
+    <Setter Property="Background" Value="{DynamicResource BorderBrush}" />
+  </Style>
+
   <!-- ToolTip: 提示框背景/前景，使用 DynamicResource 跟随深色模式 -->
   <Style Selector="ToolTip">
     <Setter Property="Background" Value="{DynamicResource CardBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+
+  <!-- ConfirmDialog 是独立窗口，Fluent 默认 Button 资源不会稳定跟随应用手动
+       管理的暗色主题；显式覆盖按钮状态，保证删除版本等确认弹窗可读。 -->
+  <Style Selector="Window.confirmDialog Button">
+    <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="Window.confirmDialog Button:pointerover">
+    <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="Window.confirmDialog Button:pressed">
+    <Setter Property="Background" Value="{DynamicResource CategorySelectedBg}" />
     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
   </Style>
 
@@ -108,6 +172,18 @@
     <Setter Property="MinWidth" Value="32" />
   </Style>
 
+  <Style Selector="Button.iconPickerOption">
+    <Setter Property="Background" Value="{DynamicResource ColorBrushTransparent}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource ColorBrushTransparent}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+
+  <Style Selector="Button.iconPickerOption:pointerover">
+    <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource CardHighlightBorder}" />
+  </Style>
+
   <Style Selector="Button.settingsNav TextBlock">
     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
   </Style>
@@ -172,9 +248,18 @@
   </Style>
 
   <Style Selector="Button.winCtrl">
-    <Setter Property="Width" Value="32" />
-    <Setter Property="Height" Value="32" />
+    <!-- 占满标题栏单元格，避免 Fluent Button 默认最小高度让三个按钮
+         以不同的内容边界参与布局。图标本身固定在统一的 24×24 画布中心。 -->
+    <Setter Property="Width" Value="40" />
+    <Setter Property="Height" Value="48" />
+    <Setter Property="MinWidth" Value="40" />
+    <Setter Property="MinHeight" Value="48" />
+    <Setter Property="Margin" Value="0" />
     <Setter Property="Padding" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="VerticalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
     <Setter Property="CornerRadius" Value="16" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />

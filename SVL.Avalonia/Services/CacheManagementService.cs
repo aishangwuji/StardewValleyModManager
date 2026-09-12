@@ -46,6 +46,20 @@ public static class CacheManagementService
     /// <summary>获取指定类别的缓存统计。</summary>
     public static CacheStatistics GetStatistics(CacheCategory category)
     {
+        if (category == CacheCategory.Nexus)
+        {
+            return Add(
+                CalculateDirectoryStats(NexusDownloadCache.Root),
+                CalculateDirectoryStats(NexusDownloadCache.LegacyRoot));
+        }
+
+        if (category == CacheCategory.DownloadsCache)
+        {
+            return Add(
+                CalculateDirectoryStats(GetCachePath(category)),
+                CalculateDirectoryStats(CurseforgeDownloadCache.Root));
+        }
+
         var path = GetCachePath(category);
         return CalculateDirectoryStats(path);
     }
@@ -69,6 +83,19 @@ public static class CacheManagementService
     /// <summary>清理指定类别的缓存。</summary>
     public static void Clear(CacheCategory category)
     {
+        if (category == CacheCategory.Nexus)
+        {
+            NexusDownloadCache.Clear();
+            return;
+        }
+
+        if (category == CacheCategory.DownloadsCache)
+        {
+            DeleteDirectory(GetCachePath(category));
+            CurseforgeDownloadCache.Clear();
+            return;
+        }
+
         var path = GetCachePath(category);
         DeleteDirectory(path);
     }
@@ -80,6 +107,75 @@ public static class CacheManagementService
         {
             Clear(category);
         }
+    }
+
+    /// <summary>
+    /// 只清理超过保留时长的缓存文件，不删除仍在使用的目录或新近生成的文件。
+    /// 返回实际删除的文件数量；单个文件被占用时跳过，避免影响下载/安装任务。
+    /// </summary>
+    public static int ClearExpired(TimeSpan retention)
+    {
+        if (retention <= TimeSpan.Zero)
+        {
+            retention = TimeSpan.FromMinutes(60);
+        }
+
+        var cutoff = DateTime.UtcNow - retention;
+        var removed = 0;
+        foreach (var path in GetManagedCachePaths())
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            {
+                continue;
+            }
+
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(path, "*", SearchOption.AllDirectories);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var file in files)
+            {
+                try
+                {
+                    // 断点续传和原子缓存写入的中间文件不属于可清理缓存。
+                    // 即使当前没有持有文件锁，也不能让清理任务删掉它们，
+                    // 否则重试会丢失下载进度或留下半成品。
+                    if (IsTransientCacheFile(file))
+                    {
+                        continue;
+                    }
+
+                    if (File.GetLastWriteTimeUtc(file) >= cutoff)
+                    {
+                        continue;
+                    }
+
+                    File.Delete(file);
+                    removed++;
+                }
+                catch
+                {
+                    // 活跃下载、权限不足或被其他进程占用的文件留给下次清理。
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    private static bool IsTransientCacheFile(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        return fileName.EndsWith(".part", StringComparison.OrdinalIgnoreCase) ||
+               fileName.EndsWith(".part.json", StringComparison.OrdinalIgnoreCase) ||
+               fileName.Contains(".tmp-", StringComparison.OrdinalIgnoreCase) ||
+               fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>获取缓存类别的显示名称。</summary>
@@ -139,6 +235,36 @@ public static class CacheManagementService
         catch { }
 
         return stats;
+    }
+
+    private static CacheStatistics Add(CacheStatistics first, CacheStatistics second)
+    {
+        return new CacheStatistics
+        {
+            SizeBytes = first.SizeBytes + second.SizeBytes,
+            FileCount = first.FileCount + second.FileCount
+        };
+    }
+
+    private static IEnumerable<string> GetManagedCachePaths()
+    {
+        foreach (CacheCategory category in Enum.GetValues<CacheCategory>())
+        {
+            if (category == CacheCategory.Nexus)
+            {
+                yield return NexusDownloadCache.Root;
+                yield return NexusDownloadCache.LegacyRoot;
+            }
+            else if (category == CacheCategory.DownloadsCache)
+            {
+                yield return GetCachePath(category);
+                yield return CurseforgeDownloadCache.Root;
+            }
+            else
+            {
+                yield return GetCachePath(category);
+            }
+        }
     }
 
     private static void DeleteDirectory(string path)

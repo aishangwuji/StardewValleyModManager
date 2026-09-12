@@ -70,11 +70,19 @@ public partial class DownloadTaskItem : ObservableObject
     [ObservableProperty]
     private DownloadTaskAction _taskAction = DownloadTaskAction.InstallMod;
 
-    /// <summary>Nexus Mod ID（用于 Nexus 下载缓存键）。</summary>
+    /// <summary>外部平台项目 ID；Nexus 时也是 Mod ID（用于 Nexus 下载缓存键）。</summary>
     public long? SourceModId { get; set; }
 
-    /// <summary>Nexus File ID（用于 Nexus 下载缓存键）。</summary>
+    /// <summary>外部平台文件 ID；Nexus 时用于下载缓存键。</summary>
     public long? SourceFileId { get; set; }
+
+    /// <summary>下载来源平台（NexusMods / Curseforge）。</summary>
+    public string SourcePlatform { get; set; } = string.Empty;
+
+    /// <summary>Nexus Collection 的稳定缓存身份；revision 为 -1 时表示 latest。</summary>
+    public string CollectionSlug { get; set; } = string.Empty;
+
+    public int CollectionRevision { get; set; } = -1;
 
     /// <summary>任务状态机（权威状态来源）。Status 字符串仅用于显示。</summary>
     [ObservableProperty]
@@ -124,6 +132,10 @@ public partial class DownloadTaskItem : ObservableObject
     [ObservableProperty]
     private string _targetInstanceName = string.Empty;
 
+    /// <summary>本地整合包旁路图标路径。任务执行时优先使用该图标，文件不存在时再扫描压缩包内容。</summary>
+    [ObservableProperty]
+    private string _customIconPath = string.Empty;
+
     /// <summary>下载速度文本（如 "2.3 MB/s"），由下载进度回调填充。空表示无速度信息。</summary>
     [ObservableProperty]
     private string _speedText = string.Empty;
@@ -171,7 +183,7 @@ public partial class DownloadTaskItem : ObservableObject
             SegmentItems.Clear();
             for (var i = 0; i < segmentPercents.Length; i++)
             {
-                SegmentItems.Add(new DownloadSegmentItem { Index = i, Percent = segmentPercents[i] });
+                SegmentItems.Add(new DownloadSegmentItem { Index = i, Percent = ClampSegmentPercent(segmentPercents[i]) });
             }
             OnPropertyChanged(nameof(HasSegmentProgress));
         }
@@ -179,9 +191,14 @@ public partial class DownloadTaskItem : ObservableObject
         {
             for (var i = 0; i < segmentPercents.Length; i++)
             {
-                SegmentItems[i].Percent = segmentPercents[i];
+                SegmentItems[i].Percent = ClampSegmentPercent(segmentPercents[i]);
             }
         }
+    }
+
+    private static double ClampSegmentPercent(double percent)
+    {
+        return double.IsFinite(percent) ? Math.Clamp(percent, 0, 100) : 0;
     }
 
     /// <summary>清空分片进度。必须通过 Dispatcher.UIThread 调用。</summary>

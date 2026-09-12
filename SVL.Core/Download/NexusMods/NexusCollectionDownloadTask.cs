@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO.Compression;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -116,7 +118,31 @@ public class NexusCollectionDownloadTask : DownloadTask
             // 检查是否有下载链接（Premium 用户）
             if (string.IsNullOrEmpty(revisionDetail.DownloadLink))
             {
-                throw new NexusPremiumRequiredException(_gameId, 0, 0, "Collection 下载需要 Premium 权限");
+                // 新版 GraphQL 在非 Premium 情况下通常不返回 downloadLink，
+                // 但旧 REST Revision 接口仍可能返回可安装的 Mod 列表。先尝试
+                // 将该列表转换为标准清单；确实拿不到列表时才进入浏览器/Premium 回退。
+                var directMods = await GetCollectionModsAsync(accessToken, revisionDetail.RevisionNumber);
+                var directModFiles = directMods
+                    .Where(mod => mod.Mod?.Id > 0 &&
+                                  (mod.File?.FileId > 0 || mod.File?.Id > 0))
+                    .Select(mod => new NexusCollectionModFile
+                    {
+                        ModId = mod.Mod.Id,
+                        FileId = mod.File.FileId > 0 ? mod.File.FileId : mod.File.Id,
+                        Name = string.IsNullOrWhiteSpace(mod.File.Name)
+                            ? mod.Mod.Name ?? $"Mod_{mod.Mod.Id}"
+                            : mod.File.Name,
+                        Version = mod.File.Version ?? string.Empty,
+                        Optional = mod.Optional
+                    })
+                    .ToList();
+
+                if (!await TryCompleteFromModFilesAsync(revisionDetail, directModFiles))
+                {
+                    throw new NexusPremiumRequiredException(_gameId, 0, 0, "Collection 下载需要 Premium 权限或有效的 Mod 清单");
+                }
+
+                return;
             }
 
             Log.Info($"[CollectionDownload] 下载链接: {revisionDetail.DownloadLink}");
@@ -173,9 +199,22 @@ public class NexusCollectionDownloadTask : DownloadTask
             }
             else
             {
-                // 如果不是 download_links 格式，说明是直接下载的 Mod 列表（暂不支持）
-                Log.Warn("[CollectionDownload] Collection 格式不支持，请使用 Premium 账号");
-                throw new Exception("Collection 格式不支持，请使用 Premium 账号");
+                // 非 Premium/旧版接口可能返回可解析的 Mod 列表，而不是
+                // download_links 压缩包。把它转换为标准 collection.json ZIP，
+                // 这样旧 WPF 下载任务和后续安装任务仍能使用同一条安装链路。
+                var modFiles = ParseCollectionJson(collectionJson);
+                if (modFiles.Count == 0)
+                {
+                    Log.Warn("[CollectionDownload] Collection 响应既没有可用下载链接，也没有有效 Mod 列表");
+                    throw new Exception("Collection 响应不包含可安装的 Mod 清单，请确认 Nexus 账号权限或重新打开下载页面");
+                }
+
+                StatusMessage = $"正在整理 Collection 清单（{modFiles.Count} 个 Mod）...";
+                Progress = 20;
+                if (!await TryCompleteFromModFilesAsync(revisionDetail, modFiles))
+                {
+                    throw new Exception("Collection 响应不包含可安装的 Mod 清单，请确认 Nexus 账号权限或重新打开下载页面");
+                }
             }
         }
         catch (OperationCanceledException)
@@ -233,7 +272,9 @@ public class NexusCollectionDownloadTask : DownloadTask
     /// <summary>
     /// 获取集合中的 Mod 列表
     /// </summary>
-    private async Task<List<NexusCollectionMod>> GetCollectionModsAsync(string accessToken)
+    private async Task<List<NexusCollectionMod>> GetCollectionModsAsync(
+        string accessToken,
+        int? revisionOverride = null)
     {
         try
         {
@@ -243,7 +284,12 @@ public class NexusCollectionDownloadTask : DownloadTask
             client.Timeout = TimeSpan.FromSeconds(30);
 
             // 获取集合的链接
-            var revision = _revisionNumber > 0 ? _revisionNumber.ToString() : "latest";
+            var revisionNumber = revisionOverride.GetValueOrDefault();
+            if (revisionNumber <= 0)
+            {
+                revisionNumber = _revisionNumber;
+            }
+            var revision = revisionNumber > 0 ? revisionNumber.ToString() : "latest";
             var url = $"https://api.nexusmods.com/v1/games/{_gameId}/collections/{_collectionSlug}/revisions/{revision}";
 
             var response = await client.GetAsync(url);
@@ -322,7 +368,9 @@ public class NexusCollectionDownloadTask : DownloadTask
             using var doc = JsonDocument.Parse(json);
 
             // 检查是否有错误
-            if (doc.RootElement.TryGetProperty("errors", out var errorsElement) && errorsElement.ValueKind == JsonValueKind.Array && errorsElement.GetArrayLength() > 0)
+            if (TryGetPropertyIgnoreCase(doc.RootElement, "errors", out var errorsElement) &&
+                errorsElement.ValueKind == JsonValueKind.Array &&
+                errorsElement.GetArrayLength() > 0)
             {
                 Log.Warn($"[CollectionDownload] Collection JSON 包含错误: {errorsElement.ToString()}");
                 return new List<NexusCollectionModFile>();
@@ -333,9 +381,9 @@ public class NexusCollectionDownloadTask : DownloadTask
             bool found = false;
 
             // 路径 1: collection.mods（标准 Collection JSON 格式）
-            if (!found && doc.RootElement.TryGetProperty("collection", out var collectionElement))
+            if (!found && TryGetPropertyIgnoreCase(doc.RootElement, "collection", out var collectionElement))
             {
-                if (collectionElement.TryGetProperty("mods", out modsElement))
+                if (TryGetPropertyIgnoreCase(collectionElement, "mods", out modsElement))
                 {
                     found = true;
                     Log.Info("[CollectionDownload] 找到 mods 路径: collection.mods");
@@ -343,11 +391,11 @@ public class NexusCollectionDownloadTask : DownloadTask
             }
 
             // 路径 2: data.collectionRevision.mods（GraphQL 格式）
-            if (!found && doc.RootElement.TryGetProperty("data", out var dataElement))
+            if (!found && TryGetPropertyIgnoreCase(doc.RootElement, "data", out var dataElement))
             {
-                if (dataElement.TryGetProperty("collectionRevision", out var collectionRevisionElement))
+                if (TryGetPropertyIgnoreCase(dataElement, "collectionRevision", out var collectionRevisionElement))
                 {
-                    if (collectionRevisionElement.TryGetProperty("mods", out modsElement))
+                    if (TryGetPropertyIgnoreCase(collectionRevisionElement, "mods", out modsElement))
                     {
                         found = true;
                         Log.Info("[CollectionDownload] 找到 mods 路径: data.collectionRevision.mods");
@@ -356,11 +404,11 @@ public class NexusCollectionDownloadTask : DownloadTask
             }
 
             // 路径 3: data.collection.mods
-            if (!found && doc.RootElement.TryGetProperty("data", out dataElement))
+            if (!found && TryGetPropertyIgnoreCase(doc.RootElement, "data", out dataElement))
             {
-                if (dataElement.TryGetProperty("collection", out collectionElement))
+                if (TryGetPropertyIgnoreCase(dataElement, "collection", out collectionElement))
                 {
-                    if (collectionElement.TryGetProperty("mods", out modsElement))
+                    if (TryGetPropertyIgnoreCase(collectionElement, "mods", out modsElement))
                     {
                         found = true;
                         Log.Info("[CollectionDownload] 找到 mods 路径: data.collection.mods");
@@ -369,9 +417,9 @@ public class NexusCollectionDownloadTask : DownloadTask
             }
 
             // 路径 4: data.mods
-            if (!found && doc.RootElement.TryGetProperty("data", out dataElement))
+            if (!found && TryGetPropertyIgnoreCase(doc.RootElement, "data", out dataElement))
             {
-                if (dataElement.TryGetProperty("mods", out modsElement))
+                if (TryGetPropertyIgnoreCase(dataElement, "mods", out modsElement))
                 {
                     found = true;
                     Log.Info("[CollectionDownload] 找到 mods 路径: data.mods");
@@ -379,7 +427,7 @@ public class NexusCollectionDownloadTask : DownloadTask
             }
 
             // 路径 5: 直接的 mods 数组（根级别）
-            if (!found && doc.RootElement.TryGetProperty("mods", out modsElement))
+            if (!found && TryGetPropertyIgnoreCase(doc.RootElement, "mods", out modsElement))
             {
                 found = true;
                 Log.Info("[CollectionDownload] 找到 mods 路径: mods（根级别）");
@@ -402,28 +450,28 @@ public class NexusCollectionDownloadTask : DownloadTask
                 bool optional = false;
 
                 // 尝试从不同路径获取 Mod 信息
-                if (modElement.TryGetProperty("mod", out var modObj))
+                if (TryGetPropertyIgnoreCase(modElement, "mod", out var modObj))
                 {
-                    if (modObj.TryGetProperty("id", out var idElement)) modId = idElement.GetInt64();
-                    if (modObj.TryGetProperty("name", out var nameElement)) name = nameElement.GetString();
+                    modId = ReadLongProperty(modObj, "id", "modId");
+                    name = ReadStringProperty(modObj, "name", "modName");
                 }
 
-                if (modElement.TryGetProperty("file", out var fileObj))
+                if (TryGetPropertyIgnoreCase(modElement, "file", out var fileObj))
                 {
-                    if (fileObj.TryGetProperty("id", out var fidElement)) fileId = fidElement.GetInt64();
-                    if (fileObj.TryGetProperty("fileId", out var fileIdElement)) fileId = fileIdElement.GetInt64();
-                    if (fileObj.TryGetProperty("name", out var fNameElement)) name = fNameElement.GetString();
-                    if (fileObj.TryGetProperty("version", out var versionElement)) version = versionElement.GetString();
+                    fileId = ReadLongProperty(fileObj, "id", "fileId");
+                    name = ReadStringProperty(fileObj, "name", "fileName") ?? name;
+                    version = ReadStringProperty(fileObj, "version", "modVersion") ?? version;
                 }
 
                 // 如果还没有获取到 modId 和 fileId，尝试直接从根获取
-                if (modId == 0 && modElement.TryGetProperty("modId", out var midElement)) modId = midElement.GetInt64();
-                if (fileId == 0 && modElement.TryGetProperty("fileId", out var fElement)) fileId = fElement.GetInt64();
-                if (string.IsNullOrEmpty(name) && modElement.TryGetProperty("name", out var nElement)) name = nElement.GetString();
-                if (string.IsNullOrEmpty(version) && modElement.TryGetProperty("version", out var vElement)) version = vElement.GetString();
+                if (modId == 0) modId = ReadLongProperty(modElement, "modId", "projectId");
+                if (fileId == 0) fileId = ReadLongProperty(modElement, "fileId", "fileID");
+                name ??= ReadStringProperty(modElement, "name", "modName", "fileName");
+                version ??= ReadStringProperty(modElement, "version", "modVersion");
 
                 // 检查 optional 标志
-                if (modElement.TryGetProperty("optional", out var optElement) && optElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                if (TryGetPropertyIgnoreCase(modElement, "optional", out var optElement) &&
+                    optElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 {
                     optional = optElement.GetBoolean();
                 }
@@ -455,22 +503,283 @@ public class NexusCollectionDownloadTask : DownloadTask
         }
     }
 
+    private static long ReadLongProperty(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
+            {
+                continue;
+            }
+
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+            {
+                return number;
+            }
+
+            if (value.ValueKind == JsonValueKind.String &&
+                long.TryParse(value.GetString(), out var textNumber))
+            {
+                return textNumber;
+            }
+        }
+
+        return 0;
+    }
+
+    private static string? ReadStringProperty(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
+            {
+                continue;
+            }
+
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString();
+            }
+
+            if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+            {
+                return value.ToString();
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// 检查 JSON 是否为 download_links 格式
     /// </summary>
     private bool IsDownloadLinksFormat(string json)
     {
+        return TryGetFirstDownloadLink(json, out _, out _);
+    }
+
+    private static bool TryGetFirstDownloadLink(
+        string json,
+        out string downloadUrl,
+        out string linkName)
+    {
+        downloadUrl = string.Empty;
+        linkName = "Nexus CDN";
+
         try
         {
             using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty("download_links", out var linksElement)
-                && linksElement.ValueKind == JsonValueKind.Array
-                && linksElement.GetArrayLength() > 0;
+            if (!TryGetPropertyIgnoreCase(doc.RootElement, "download_links", out var links))
+            {
+                return false;
+            }
+
+            IEnumerable<JsonElement> candidates = links.ValueKind switch
+            {
+                JsonValueKind.Array => links.EnumerateArray(),
+                JsonValueKind.Object => links.EnumerateObject().Select(property => property.Value),
+                _ => Array.Empty<JsonElement>()
+            };
+
+            foreach (var candidate in candidates)
+            {
+                var url = candidate.ValueKind == JsonValueKind.String
+                    ? candidate.GetString()
+                    : GetStringPropertyIgnoreCase(candidate, "URI", "url", "downloadUrl", "download_url");
+                if (string.IsNullOrWhiteSpace(url) ||
+                    !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) ||
+                    (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                {
+                    continue;
+                }
+
+                downloadUrl = url.Trim();
+                if (candidate.ValueKind == JsonValueKind.Object)
+                {
+                    linkName = GetStringPropertyIgnoreCase(
+                                   candidate,
+                                   "short_name",
+                                   "shortName",
+                                   "name")
+                               ?? linkName;
+                }
+
+                return true;
+            }
         }
         catch
         {
+            // 交给上层按“没有有效下载链接/清单”处理，避免错误响应中断任务泵。
+        }
+
+        return false;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(
+        JsonElement element,
+        string propertyName,
+        out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string? GetStringPropertyIgnoreCase(
+        JsonElement element,
+        params string[] propertyNames)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!propertyNames.Any(name => string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            return property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString()
+                : property.Value.ToString();
+        }
+
+        return null;
+    }
+
+    private async Task<string> CreateManifestCollectionArchiveAsync(
+        NexusCollectionRevisionDetail revisionDetail,
+        IReadOnlyCollection<NexusCollectionModFile> modFiles)
+    {
+        Directory.CreateDirectory(_downloadDirectory);
+
+        var revision = revisionDetail.RevisionNumber > 0
+            ? revisionDetail.RevisionNumber
+            : _revisionNumber;
+        var safeSlug = new string(_collectionSlug
+            .Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character)
+            .ToArray());
+        if (string.IsNullOrWhiteSpace(safeSlug))
+        {
+            safeSlug = "collection";
+        }
+
+        var archivePath = Path.Combine(_downloadDirectory, $"collection_{safeSlug}_r{revision}.zip");
+        var tempPath = archivePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var manifest = new NexusCollectionJson
+        {
+            Info = new NexusCollectionJsonInfo
+            {
+                Name = string.IsNullOrWhiteSpace(revisionDetail.CollectionName)
+                    ? _collectionSlug
+                    : revisionDetail.CollectionName,
+                Author = revisionDetail.Author,
+                DomainName = _gameId,
+                GameVersions = Array.Empty<string>()
+            },
+            Mods = modFiles
+                .Where(mod => mod.ModId > 0 && mod.FileId > 0)
+                .Select(mod => new NexusCollectionJsonMod
+                {
+                    Name = mod.Name,
+                    Version = mod.Version,
+                    Optional = mod.Optional,
+                    DomainName = _gameId,
+                    Source = new NexusCollectionJsonModSource
+                    {
+                        Type = "nexus",
+                        ModId = mod.ModId,
+                        FileId = mod.FileId
+                    }
+                })
+                .ToArray()
+        };
+
+        try
+        {
+            using (var fileStream = new FileStream(
+                       tempPath,
+                       FileMode.CreateNew,
+                       FileAccess.ReadWrite,
+                       FileShare.None))
+            using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen: false))
+            using (var writer = new StreamWriter(
+                       archive.CreateEntry("collection.json", CompressionLevel.Fastest).Open(),
+                       new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            {
+                var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
+                await writer.WriteAsync(json);
+            }
+
+            if (File.Exists(archivePath))
+            {
+                File.Delete(archivePath);
+            }
+
+            File.Move(tempPath, archivePath);
+            return archivePath;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch
+            {
+                // best-effort cleanup
+            }
+        }
+    }
+
+    private async Task<bool> TryCompleteFromModFilesAsync(
+        NexusCollectionRevisionDetail revisionDetail,
+        IReadOnlyCollection<NexusCollectionModFile> modFiles)
+    {
+        var validModFiles = modFiles
+            .Where(mod => mod.ModId > 0 && mod.FileId > 0)
+            .ToList();
+        if (validModFiles.Count == 0)
+        {
             return false;
         }
+
+        var archivePath = await CreateManifestCollectionArchiveAsync(revisionDetail, validModFiles);
+        DownloadedArchivePath = archivePath;
+
+        if (!string.IsNullOrEmpty(_gameBasePath) &&
+            !string.IsNullOrEmpty(_instanceName) &&
+            !string.IsNullOrEmpty(_targetModsPath))
+        {
+            CanUsePremiumInstall = true;
+        }
+
+        Progress = 100;
+        Status = DownloadTaskStatus.Completed;
+        CompletedTime = DateTime.Now;
+        StatusMessage = $"✓ Collection 清单已整理: {Path.GetFileName(archivePath)}";
+        Log.Info($"[CollectionDownload] 已将 Mod 列表转换为兼容 Collection: {archivePath}");
+        return true;
     }
 
     /// <summary>
@@ -478,23 +787,10 @@ public class NexusCollectionDownloadTask : DownloadTask
     /// </summary>
     private async Task<string?> DownloadCollectionArchiveAsync(string downloadLinksJson, string accessToken)
     {
+        string? tempPath = null;
         try
         {
-            using var doc = JsonDocument.Parse(downloadLinksJson);
-            var downloadLinksElement = doc.RootElement.GetProperty("download_links");
-
-            // 获取第一个下载链接（通常是 Nexus CDN）
-            if (downloadLinksElement.GetArrayLength() == 0)
-            {
-                Log.Warn("[CollectionDownload] download_links 数组为空");
-                return null;
-            }
-
-            var firstLink = downloadLinksElement[0];
-            var downloadUrl = firstLink.GetProperty("URI").GetString();
-            var linkName = firstLink.GetProperty("short_name").GetString() ?? "Nexus CDN";
-
-            if (string.IsNullOrEmpty(downloadUrl))
+            if (!TryGetFirstDownloadLink(downloadLinksJson, out var downloadUrl, out var linkName))
             {
                 Log.Warn("[CollectionDownload] download_links 中没有有效的 URI");
                 return null;
@@ -505,12 +801,15 @@ public class NexusCollectionDownloadTask : DownloadTask
             // 从 URL 中提取文件名
             var uri = new Uri(downloadUrl);
             var fileName = Path.GetFileName(uri.LocalPath);
-            if (string.IsNullOrEmpty(fileName) || !fileName.EndsWith(".7z"))
+            if (string.IsNullOrEmpty(fileName) ||
+                (!fileName.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) &&
+                 !fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
             {
                 fileName = $"collection_{_collectionSlug}_r{_revisionNumber}.7z";
             }
 
             var savePath = Path.Combine(_downloadDirectory, fileName);
+            tempPath = savePath + "." + Guid.NewGuid().ToString("N") + ".part";
 
             // 确保目录存在
             if (!Directory.Exists(_downloadDirectory))
@@ -526,13 +825,10 @@ public class NexusCollectionDownloadTask : DownloadTask
                 client.Timeout = TimeSpan.FromMinutes(30);
 
                 // 创建进度报告
-                var progress = new Progress<long>(bytesReceived =>
-                {
-                    // 更新进度（10% 到 90%）
-                    Progress = 10 + (int)(Math.Min(100, bytesReceived / (1024.0 * 1024.0)) * 80);
-                });
-
-                var response = await client.GetAsync(downloadUrl);
+                using var response = await client.GetAsync(
+                    downloadUrl,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    _cts.Token);
                 if (!response.IsSuccessStatusCode)
                 {
                     Log.Warn($"[CollectionDownload] 下载 Collection 压缩包失败: {response.StatusCode}");
@@ -542,18 +838,62 @@ public class NexusCollectionDownloadTask : DownloadTask
                 var totalBytes = response.Content.Headers.ContentLength ?? 0;
                 Log.Info($"[CollectionDownload] 开始下载 Collection 压缩包，大小: {totalBytes} 字节");
 
-                var zipData = await response.Content.ReadAsByteArrayAsync();
-                File.WriteAllBytes(savePath, zipData);
+                using var contentStream = await response.Content.ReadAsStreamAsync();
+                using var outputStream = new FileStream(
+                    tempPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 128 * 1024,
+                    useAsync: true);
+                var buffer = new byte[128 * 1024];
+                long bytesReceived = 0;
+                int read;
+                while ((read = await contentStream.ReadAsync(buffer, 0, buffer.Length, _cts.Token)) > 0)
+                {
+                    await outputStream.WriteAsync(buffer, 0, read, _cts.Token);
+                    bytesReceived += read;
+                    Progress = totalBytes > 0
+                        ? 10 + Math.Clamp((int)Math.Floor(bytesReceived * 80.0 / totalBytes), 0, 80)
+                        : 10;
+                }
 
-                Log.Info($"[CollectionDownload] Collection 压缩包下载成功: {savePath}, 大小: {zipData.Length} 字节");
+                await outputStream.FlushAsync(_cts.Token);
+
+                if (File.Exists(savePath))
+                {
+                    File.Delete(savePath);
+                }
+
+                File.Move(tempPath, savePath);
+
+                Log.Info($"[CollectionDownload] Collection 压缩包下载成功: {savePath}, 大小: {bytesReceived} 字节");
             }
 
             return savePath;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             Log.Error(ex, "[CollectionDownload] 下载 Collection 压缩包异常");
             return null;
+        }
+        finally
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(tempPath) && File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch
+            {
+                // best-effort cleanup
+            }
         }
     }
 

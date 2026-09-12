@@ -255,11 +255,6 @@ public partial class InstancesPageViewModel : ObservableObject
 
         var addedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var candidate in DiscoverAutoPathCandidates())
-        {
-            AddPathEntryIfValid(candidate.Path, candidate.Source, null, addedPaths, favoriteKeys);
-        }
-
         var manualInstances = _instanceRegistryStore.LoadManualInstances();
         foreach (var manual in manualInstances)
         {
@@ -274,6 +269,13 @@ public partial class InstancesPageViewModel : ObservableObject
                 manual.Name,
                 addedPaths,
                 favoriteKeys);
+        }
+
+        // 已保存的本地路径优先于自动探测路径：这样旧 WPF 实例迁移后的自定义名称
+        // 不会被 Steam/GOG 自动探测结果先占位，随后因去重而丢失。
+        foreach (var candidate in DiscoverAutoPathCandidates())
+        {
+            AddPathEntryIfValid(candidate.Path, candidate.Source, null, addedPaths, favoriteKeys);
         }
 
         HasPathEntries = PathEntries.Count > 0;
@@ -646,12 +648,19 @@ public partial class InstancesPageViewModel : ObservableObject
             return;
         }
 
+        // 删除版本遇到进程锁时会先移入 .svl-delete-* 临时目录；刷新/启动时
+        // 再尝试清理，避免应用退出后临时目录永久残留。
+        DeferredVersionDirectoryCleanup.TryCleanup(resolvedPath);
+
         if (!addedPaths.Add(resolvedPath))
         {
             return;
         }
 
-        var instances = CreateInstancesForPath(resolvedPath, source, manualName, favoriteKeys);
+        // 整合包/Collection 注册的是 versions 下的运行目录，manualName 是实例名，
+        // 不能把它误用为 Base 路径名称；Base 名称应继续从实际游戏目录推导。
+        var baseCustomName = IsVersionScopedPath(candidatePath) ? null : manualName;
+        var instances = CreateInstancesForPath(resolvedPath, source, baseCustomName, favoriteKeys);
         if (instances.Count == 0)
         {
             return;
@@ -756,6 +765,12 @@ public partial class InstancesPageViewModel : ObservableObject
                 continue;
             }
 
+            // 删除遇到短暂文件锁时，版本目录会先移入后台清理队列；它不是用户实例。
+            if (versionName.StartsWith(".svl-delete-", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var runtimePath = ResolveVersionRuntimePath(versionDir);
             if (string.IsNullOrWhiteSpace(runtimePath))
             {
@@ -797,6 +812,7 @@ public partial class InstancesPageViewModel : ObservableObject
     {
         var steamSource = L("Instances.Source.Steam", "Steam");
         var gogSource = L("Instances.Source.Gog", "GOG");
+        var xboxSource = L("Instances.Source.Xbox", "Xbox / Microsoft Store");
 
         var steam = _gameInstallPathLocator.TryLocateSteamStardewPath();
         if (!string.IsNullOrWhiteSpace(steam))
@@ -810,6 +826,12 @@ public partial class InstancesPageViewModel : ObservableObject
             yield return (gog, gogSource);
         }
 
+        var xbox = _gameInstallPathLocator.TryLocateXboxStardewPath();
+        if (!string.IsNullOrWhiteSpace(xbox))
+        {
+            yield return (xbox, xboxSource);
+        }
+
         foreach (var path in GetSteamFallbackCandidates())
         {
             yield return (path, steamSource);
@@ -818,6 +840,37 @@ public partial class InstancesPageViewModel : ObservableObject
         foreach (var path in GetGogFallbackCandidates())
         {
             yield return (path, gogSource);
+        }
+
+        foreach (var path in GetXboxFallbackCandidates())
+        {
+            yield return (path, xboxSource);
+        }
+    }
+
+    private static IEnumerable<string> GetXboxFallbackCandidates()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            yield break;
+        }
+
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roots = new[]
+        {
+            Path.Combine(programFilesX86, "ModifiableWindowsApps", "StardewValley"),
+            Path.Combine(programFiles, "ModifiableWindowsApps", "StardewValley"),
+            Path.Combine(localAppData, "Microsoft", "WindowsApps", "StardewValley"),
+            Path.Combine(programFilesX86, "XboxGames", "Stardew Valley"),
+            Path.Combine(programFiles, "XboxGames", "Stardew Valley")
+        };
+
+        foreach (var root in roots)
+        {
+            yield return Path.Combine(root, "Content");
+            yield return root;
         }
     }
 
@@ -890,6 +943,15 @@ public partial class InstancesPageViewModel : ObservableObject
         }
 
         var normalized = candidatePath.Trim().Trim('"');
+        try
+        {
+            normalized = Path.GetFullPath(normalized)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            normalized = normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
 
         var possiblePaths = new List<string>
         {
@@ -907,11 +969,72 @@ public partial class InstancesPageViewModel : ObservableObject
         {
             if (Directory.Exists(path) && IsValidGamePath(path))
             {
-                return path;
+                // Modpack/Collection 安装完成后，注册表保存的是
+                // versions/<instance>（或 versions/<instance>/game）运行目录。
+                // 这里必须把它归并回所属 Base，否则刷新时会把运行目录再次
+                // 当成一个新的游戏 Base 路径显示出来。
+                return ResolveOwningBasePath(path);
             }
         }
 
         return null;
+    }
+
+    private static bool IsVersionScopedPath(string candidatePath)
+    {
+        try
+        {
+            var current = new DirectoryInfo(candidatePath.Trim().Trim('"'));
+            while (current.Parent != null)
+            {
+                if (string.Equals(current.Parent.Name, "versions", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                current = current.Parent;
+            }
+        }
+        catch
+        {
+            // 非标准路径交给常规解析流程处理。
+        }
+
+        return false;
+    }
+
+    private static string ResolveOwningBasePath(string validGamePath)
+    {
+        try
+        {
+            var current = new DirectoryInfo(validGamePath);
+            while (current.Parent != null)
+            {
+                if (string.Equals(current.Parent.Name, "versions", StringComparison.OrdinalIgnoreCase) &&
+                    current.Parent.Parent != null)
+                {
+                    var basePath = current.Parent.Parent.FullName
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                    // 仅在父目录确实是一个可识别的游戏 Base 时归并，避免把
+                    // 普通目录中恰好名为 versions 的内容误判为游戏路径。
+                    if (IsValidGamePath(basePath) ||
+                        IsValidGamePath(Path.Combine(basePath, "Content")) ||
+                        Directory.Exists(Path.Combine(basePath, "versions")))
+                    {
+                        return basePath;
+                    }
+                }
+
+                current = current.Parent;
+            }
+        }
+        catch
+        {
+            // 路径格式异常时保留已验证的运行目录，避免刷新流程整体失败。
+        }
+
+        return validGamePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private static bool IsValidGamePath(string path)

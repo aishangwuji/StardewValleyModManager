@@ -2,8 +2,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SVL.Avalonia.Services;
 using SVL.Core.Platform.Abstractions;
+using SVL.Core.Platform.Services;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 
 namespace SVL.Avalonia.ViewModels;
@@ -281,11 +283,15 @@ public partial class LaunchPageViewModel : ObservableObject
                 : settings.InstanceName;
             GameVersion = Text("Launch.Instance.SelectedLoaded");
 
-            var preferredSmapiWin = Path.Combine(preferredPath, "StardewModdingAPI.exe");
-            var preferredSmapiLinux = Path.Combine(preferredPath, "StardewModdingAPI");
-            var preferredHasSmapi = File.Exists(preferredSmapiWin) || File.Exists(preferredSmapiLinux);
+            var preferredHasSmapi = InstanceIconResolver.IsSmapiRuntime(preferredPath);
             var selectedModeToken = NormalizeLaunchModeToken(settings.PreferredLaunchMode);
-            var selectedIsSmapi = string.Equals(selectedModeToken, "smapi", StringComparison.OrdinalIgnoreCase);
+            // Auto 模式与 ResolveLaunchTarget 保持同一优先级：存在 SMAPI 运行时就启动 SMAPI。
+            // 隔离实例没有 Base 的双变体语义，必须按实际运行时判定；实例名不能决定图标。
+            var isIsolatedInstance = InstanceIconResolver.IsVersionIsolatedInstance(preferredPath);
+            var selectedIsSmapi = preferredHasSmapi &&
+                                  (isIsolatedInstance ||
+                                   string.Equals(selectedModeToken, "smapi", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(selectedModeToken, "auto", StringComparison.OrdinalIgnoreCase));
             var gameVersion = DetectGameVersion(preferredPath);
             var smapiVersion = preferredHasSmapi ? DetectSmapiVersion(preferredPath) : "未安装";
 
@@ -298,7 +304,8 @@ public partial class LaunchPageViewModel : ObservableObject
 
         var steamPath = _gameInstallPathLocator.TryLocateSteamStardewPath();
         var gogPath = _gameInstallPathLocator.TryLocateGogStardewPath();
-        var gamePath = steamPath ?? gogPath;
+        var xboxPath = _gameInstallPathLocator.TryLocateXboxStardewPath();
+        var gamePath = steamPath ?? gogPath ?? xboxPath;
 
         if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
         {
@@ -318,9 +325,7 @@ public partial class LaunchPageViewModel : ObservableObject
         InstanceName = Path.GetFileName(gamePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         GameVersion = Text("Launch.Instance.DetectedLocal");
 
-        var smapiWin = Path.Combine(gamePath, "StardewModdingAPI.exe");
-        var smapiLinux = Path.Combine(gamePath, "StardewModdingAPI");
-        var hasSmapi = File.Exists(smapiWin) || File.Exists(smapiLinux);
+        var hasSmapi = InstanceIconResolver.IsSmapiRuntime(gamePath);
         var detectedGameVersion = DetectGameVersion(gamePath);
         var detectedSmapiVersion = hasSmapi ? DetectSmapiVersion(gamePath) : "未安装";
 
@@ -521,8 +526,13 @@ public partial class LaunchPageViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void LaunchGame()
+    private async Task LaunchGame()
     {
+        if (IsLaunching)
+        {
+            return;
+        }
+
         RefreshLaunchPreferencesFromSettings();
         var settings = _settingsStore.Load();
 
@@ -551,15 +561,34 @@ public partial class LaunchPageViewModel : ObservableObject
         var launchArguments = BuildLaunchArguments(settings);
         var hasArguments = !string.IsNullOrWhiteSpace(launchArguments);
 
-        var launched = hasArguments && !Directory.Exists(launchTarget)
-            ? _externalProcessService.TryLaunchProcess(
-                launchTarget,
-                launchArguments,
-                Path.GetDirectoryName(launchTarget))
-            : _externalProcessService.TryOpenPath(launchTarget);
-
-        if (launched)
+        Process? gameProcess = null;
+        try
         {
+            var launched = false;
+            if (File.Exists(launchTarget) && _externalProcessService is IProcessStartService processStarter)
+            {
+                gameProcess = processStarter.TryStartProcess(
+                    launchTarget,
+                    launchArguments,
+                    Path.GetDirectoryName(launchTarget));
+                launched = gameProcess != null;
+            }
+            else
+            {
+                launched = hasArguments && !Directory.Exists(launchTarget)
+                    ? _externalProcessService.TryLaunchProcess(
+                        launchTarget,
+                        launchArguments,
+                        Path.GetDirectoryName(launchTarget))
+                    : _externalProcessService.TryOpenPath(launchTarget);
+            }
+
+            if (!launched)
+            {
+                ActionStatus = Text("Launch.Action.LaunchFailed");
+                return;
+            }
+
             var safeText = EnableSafeLaunch ? Text("Launch.Action.SafeTag") : string.Empty;
             var argsText = hasArguments ? Format("Launch.Action.ArgsTag", launchArguments) : string.Empty;
             ActionStatus = Format(
@@ -569,14 +598,41 @@ public partial class LaunchPageViewModel : ObservableObject
                 PreferredLaunchMode,
                 safeText,
                 argsText);
-        }
-        else
-        {
-            ActionStatus = Text("Launch.Action.LaunchFailed");
-        }
 
-        IsLaunching = false;
-        LaunchButtonText = Text("Launch.Button.Launch");
+            // 只有拿到真实进程句柄且配置了自定义标题时才等待窗口并设置标题；
+            // 启动器不应等待游戏退出，否则“启动中”会持续整个游戏生命周期。
+            if (gameProcess != null && OperatingSystem.IsWindows())
+            {
+                var titleTemplate = ResolveGameWindowTitle(settings.GameWindowTitle);
+                if (!string.IsNullOrWhiteSpace(titleTemplate))
+                {
+                    await WindowTitleService.SetWindowTitleAsync(
+                        gameProcess,
+                        titleTemplate,
+                        InstanceName,
+                        _currentGamePath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ActionStatus = Format("Launch.Action.LaunchFailed") + $"：{ex.Message}";
+        }
+        finally
+        {
+            gameProcess?.Dispose();
+            IsLaunching = false;
+            LaunchButtonText = Text("Launch.Button.Launch");
+        }
+    }
+
+    private static string ResolveGameWindowTitle(string? configuredTitle)
+    {
+        var normalized = configuredTitle?.Trim() ?? string.Empty;
+        return string.IsNullOrWhiteSpace(normalized) ||
+               string.Equals(normalized, "<default>", StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : normalized;
     }
 
     [RelayCommand]

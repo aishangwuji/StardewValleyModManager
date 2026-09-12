@@ -29,8 +29,7 @@
         <!-- 空状态 -->
         <Border Grid.Row="1" Classes="hintCard" IsVisible="{Binding IsEmptyState}">
           <StackPanel Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
-            <Path Data="{StaticResource Icon.Inbox}" Width="40" Height="40" Stretch="Uniform"
-                  Fill="{DynamicResource DefaultTextForeground}" HorizontalAlignment="Center" Opacity="0.4" />
+            <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Inbox.png" Width="40" Height="40" Stretch="Uniform" HorizontalAlignment="Center" Opacity="0.4" />
             <TextBlock Text="当前没有任务" FontWeight="SemiBold" HorizontalAlignment="Center" />
             <TextBlock Text="去下载页发起任务后，这里会实时显示进度。" Opacity="0.72" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="240" />
             <Button Content="前往下载" Command="{Binding GoToDownloadCommand}" HorizontalAlignment="Center" MinWidth="120" Height="34" Margin="0,8,0,0" />
@@ -47,7 +46,7 @@
                         CommandParameter="{Binding}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                         Padding="8" Margin="0,0,0,6">
-                  <Grid RowDefinitions="Auto,Auto,Auto" Margin="2,0">
+                  <Grid RowDefinitions="Auto,Auto,Auto,Auto" Margin="2,0">
                     <!-- 任务名 + 状态文本 -->
                     <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                       <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="SemiBold"
@@ -84,7 +83,7 @@
                       </TextBlock>
                       <TextBlock Grid.Column="1" Text="{Binding EtaText}" FontSize="11" Opacity="0.65" Margin="8,0,0,0" />
                     </Grid>
-                    <TextBlock Grid.Row="2" FontSize="11" Opacity="0.65" Text="{Binding SubProgressText}"
+                    <TextBlock Grid.Row="3" FontSize="11" Opacity="0.65" Text="{Binding SubProgressText}"
                                IsVisible="{Binding HasSubProgress}" Margin="0,2,0,0" />
                   </Grid>
                 </Button>
@@ -115,6 +114,14 @@
             <StackPanel Spacing="8">
               <TextBlock Text="{Binding CurrentTaskName}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
               <TextBlock Text="{Binding CurrentTaskStatus}" Opacity="0.8" TextWrapping="Wrap" />
+              <StackPanel Spacing="2" IsVisible="{Binding SelectedTaskHasTargetGamePath}">
+                <TextBlock Text="目标 Base 路径" FontSize="11" Opacity="0.65" />
+                <TextBlock Text="{Binding SelectedTaskTargetGamePath}" FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="2" IsVisible="{Binding SelectedTaskHasInstalledPath}">
+                <TextBlock Text="实际安装目录" FontSize="11" Opacity="0.65" />
+                <TextBlock Text="{Binding SelectedTaskInstalledPath}" FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
             </StackPanel>
           </Border>
 
@@ -205,6 +212,14 @@
                         CommandParameter="{Binding SelectedTask}"
                         IsEnabled="{Binding SelectedTaskHasInstalledDirectory}"
                         MinWidth="92" Margin="0,0,8,8" />
+                <Button Content="打开报告" Command="{Binding OpenReportCommand}"
+                        CommandParameter="{Binding SelectedTask}"
+                        IsVisible="{Binding SelectedTaskHasReportPath}"
+                        MinWidth="92" Margin="0,0,8,8" />
+                <Button Content="打开重试报告" Command="{Binding OpenRetryReportForTaskCommand}"
+                        CommandParameter="{Binding SelectedTask}"
+                        IsVisible="{Binding SelectedTaskHasRetryReportPath}"
+                        MinWidth="108" Margin="0,0,8,8" />
               </WrapPanel>
             </StackPanel>
           </Border>

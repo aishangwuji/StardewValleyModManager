@@ -7,7 +7,9 @@ using SVL.Avalonia.Converters;
 using SVL.Avalonia.Models;
 using SVL.Avalonia.Services;
 using SVL.Core.Platform.Abstractions;
+using SVL.Core.Platform.Modpack;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
@@ -20,7 +22,46 @@ using System.Text.RegularExpressions;
 namespace SVL.Avalonia.ViewModels;
 
 /// <summary>可用于安装 Mod 的 SMAPI 实例目标。</summary>
-public sealed record ModInstallTarget(string Name, string Path, string BasePath, bool IsBaseInstance);
+public sealed record ModInstallTarget(
+    string Name,
+    string Path,
+    string BasePath,
+    bool IsBaseInstance,
+    string SmapiVersion = "");
+
+/// <summary>
+/// 在线 Mod 安装目标的显示项构造器。
+/// 将实例列表转换为弹窗需要的“名称 + 完整路径”文本，并按路径去重，
+/// 避免同一个 SMAPI 实例从多个探测来源出现多次。
+/// </summary>
+public static class ModInstallTargetOptions
+{
+    public static IReadOnlyList<(string DisplayName, string TargetPath)> Build(
+        IEnumerable<ModInstallTarget>? targets)
+    {
+        return (targets ?? [])
+            .Where(target => !string.IsNullOrWhiteSpace(target.Path))
+            .Select(target =>
+            {
+                var displayName = string.IsNullOrWhiteSpace(target.Name)
+                    ? "SMAPI 版本"
+                    : target.Name.Trim();
+                var smapiVersion = target.SmapiVersion?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(smapiVersion) &&
+                    !displayName.Contains(smapiVersion, StringComparison.OrdinalIgnoreCase))
+                {
+                    displayName = $"{displayName} · SMAPI {smapiVersion}";
+                }
+
+                return (
+                    DisplayName: displayName,
+                    TargetPath: target.Path.Trim());
+            })
+            .GroupBy(target => target.TargetPath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+}
 
 public partial class DownloadPageViewModel : ObservableObject
 {
@@ -35,6 +76,9 @@ public partial class DownloadPageViewModel : ObservableObject
     private const int ModpackPageSize = 10;
     private static readonly TimeSpan ModSearchCacheTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NexusAuthReminderCooldown = TimeSpan.FromSeconds(30);
+    // Nexus 协议回调可能在浏览器/系统协议层重复投递。保留一个很短的已处理窗口，
+    // 让专用 SMAPI 流程结束后的迟到回调仍被吞掉，而不会再次进入通用导入并弹实例名。
+    private static readonly TimeSpan SmapiExternalCallbackDedupTtl = TimeSpan.FromMinutes(2);
 
     private readonly LocalizationService _localizationService;
     private readonly ImageResourceService _imageResourceService;
@@ -56,9 +100,25 @@ public partial class DownloadPageViewModel : ObservableObject
     private readonly string _taskStatePath;
     private readonly string _smapiIconCachePath;
     private readonly Dictionary<string, string> _smapiIconDiskCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<DownloadTaskItem, CancellationTokenSource> _runningTaskCancellationSources = [];
-    private readonly SemaphoreSlim _concurrencyGate = new(3, 3);
+    // 取消按钮运行在 UI 线程，任务完成/失败清理运行在后台线程；使用线程安全字典
+    // 避免取消与 finally 清理交错时对普通 Dictionary 的并发读写。
+    private readonly ConcurrentDictionary<DownloadTaskItem, CancellationTokenSource> _runningTaskCancellationSources = new();
+    // 下载回调来自分片线程，并通过 Dispatcher 排队；下载完成后进入安装阶段时，
+    // 旧回调仍可能晚到。为每次下载阶段分配单调递增的代号，防止旧进度把安装/完成状态覆盖。
+    private readonly ConcurrentDictionary<DownloadTaskItem, long> _downloadProgressEpochs = new();
+    private long _downloadProgressEpochSeed;
+    private readonly Dictionary<DownloadTaskItem, PropertyChangedEventHandler> _externalTaskPersistenceHandlers = [];
+    // 详情页触发的 SMAPI 浏览器回退可能同时收到协议回调和单实例管道回调。
+    // 回调被专用等待器消费后，重复事件不能再落入通用 NXM 导入流程，否则会
+    // 创建第二个任务并再次询问实例名称。
+    private readonly ConcurrentDictionary<string, byte> _activeSmapiExternalWorkflows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentSmapiExternalCallbacks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _dispatchLock = new();
+    private readonly object _taskStateSaveLock = new();
+    private long _taskStateSaveSequence;
+    private long _lastSavedTaskStateSequence;
     private readonly HashSet<DownloadTaskItem> _dispatchedTasks = [];
+    private bool _pendingTasksResumeStarted;
     private int _catalogLoadToken;
     private bool _forceHotModsLoad;
     private readonly List<string> _modAllResults = [];
@@ -88,6 +148,9 @@ public partial class DownloadPageViewModel : ObservableObject
     public event Action? NavigateToSettingsRequested;
 
     public event Action<string>? OpenDetailsRequested;
+
+    /// <summary>目录卡片使用结构化身份打开详情，避免展示文本变化后丢失来源 ID。</summary>
+    public event Action<CatalogResourceIdentity>? OpenStructuredDetailsRequested;
 
     /// <summary>
     /// 实例上下文变更通知：SMAPI/Modpack/Collection 安装成功后触发，
@@ -628,6 +691,8 @@ public partial class DownloadPageViewModel : ObservableObject
                 foreach (var oldItem in args.OldItems.OfType<DownloadTaskItem>())
                 {
                     oldItem.PropertyChanged -= OnTaskPropertyChanged;
+                    UntrackExternalTask(oldItem);
+                    _downloadProgressEpochs.TryRemove(oldItem, out var removedEpoch);
                 }
             }
 
@@ -659,11 +724,6 @@ public partial class DownloadPageViewModel : ObservableObject
         RefreshGamePathState();
 
         HasNoTasks = DownloadTasks.Count == 0;
-        foreach (var task in DownloadTasks)
-        {
-            task.PropertyChanged += OnTaskPropertyChanged;
-        }
-
         RefreshTaskBuckets();
         RefreshTaskStatusIcons();
         if (HasNoTasks)
@@ -676,6 +736,9 @@ public partial class DownloadPageViewModel : ObservableObject
 
         SelectedGameVersion = GameVersionOptions.FirstOrDefault();
         RefreshSteamCmdState();
+
+        // Pending 任务由 App 在主窗口 Show 完成后恢复。恢复流程可能需要
+        // Nexus/文件选择等交互，必须等真实主窗口成为对话框宿主后再启动。
     }
 
     /// <summary>刷新 SteamCMD 安装状态文案。</summary>
@@ -1086,6 +1149,14 @@ public partial class DownloadPageViewModel : ObservableObject
     private void OnTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender is not DownloadTaskItem task) return;
+
+        // 安装流程可能在队列后台线程结束并修改任务状态；任务桶和状态图标
+        // 会触碰 Avalonia 绑定集合，必须统一回到 UI 线程，避免跨线程重绘。
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnTaskPropertyChanged(sender, e));
+            return;
+        }
 
         // 进度变化只需刷新图标，不需要重建列表（Progress 是 ObservableProperty，UI 自动更新进度条）
         if (e.PropertyName == nameof(DownloadTaskItem.Progress))
@@ -1579,7 +1650,14 @@ public partial class DownloadPageViewModel : ObservableObject
 
         await PromoteCatalogItemIconToFullAsync(item);
 
-        OpenDetailsRequested?.Invoke(item.DisplayText);
+        if (HasUsableCatalogIdentity(item.Identity))
+        {
+            OpenStructuredDetailsRequested?.Invoke(item.Identity);
+        }
+        else
+        {
+            OpenDetailsRequested?.Invoke(item.DisplayText);
+        }
     }
 
     private async Task PromoteCatalogItemIconToFullAsync(DownloadCatalogItem item)
@@ -1606,7 +1684,15 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
-        OpenDetailsRequested?.Invoke(item);
+        var parsedItem = ParseCatalogItem(item);
+        if (HasUsableCatalogIdentity(parsedItem.Identity))
+        {
+            OpenStructuredDetailsRequested?.Invoke(parsedItem.Identity);
+        }
+        else
+        {
+            OpenDetailsRequested?.Invoke(item);
+        }
     }
 
     [RelayCommand]
@@ -1626,7 +1712,9 @@ public partial class DownloadPageViewModel : ObservableObject
         item.IsLoadingDetails = true;
         try
         {
-            var details = await _remoteCatalogService.GetResourceDetailsAsync(item.DisplayText);
+            var details = HasUsableCatalogIdentity(item.Identity)
+                ? await _remoteCatalogService.GetResourceDetailsAsync(item.Identity)
+                : await _remoteCatalogService.GetResourceDetailsAsync(item.DisplayText);
             if (!string.IsNullOrWhiteSpace(details.Source))
             {
                 item.SourceTag = details.Source;
@@ -1714,6 +1802,7 @@ public partial class DownloadPageViewModel : ObservableObject
             Status = "已加入队列（Modpack URL）",
             Progress = 0,
             TaskKind = DownloadTaskKind.Generic,
+            TaskAction = DownloadTaskAction.InstallModpack,
             SourceUrl = uri.ToString(),
             OutputFilePath = targetFilePath,
             CanCancel = false,
@@ -1740,7 +1829,15 @@ public partial class DownloadPageViewModel : ObservableObject
 
         var selected = SearchResults[0];
         Status = $"已选择: {selected}";
-        OpenDetailsRequested?.Invoke(selected);
+        var parsedItem = ParseCatalogItem(selected);
+        if (HasUsableCatalogIdentity(parsedItem.Identity))
+        {
+            OpenStructuredDetailsRequested?.Invoke(parsedItem.Identity);
+        }
+        else
+        {
+            OpenDetailsRequested?.Invoke(selected);
+        }
     }
 
     [RelayCommand]
@@ -1765,19 +1862,47 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
-        var settings = _settingsStore.Load();
-        if (string.IsNullOrWhiteSpace(settings.NexusApiKey) && string.IsNullOrWhiteSpace(settings.NexusOAuthAccessToken))
-        {
-            NxmImportStatus = "请先在设置页完成 Nexus 登录，再导入 NXM 链接";
-            Status = "导入失败：Nexus 未登录";
-            return;
-        }
-
         if (!_nxmLinkParser.TryParse(NxmLinkInput, out var parsed, out var errorMessage))
         {
             NxmImportStatus = errorMessage;
             Status = "导入失败：链接格式不正确";
             return;
+        }
+
+        var settings = _settingsStore.Load();
+        string cachedNexusPath = string.Empty;
+        var hasCachedNexus = parsed.ResourceType == NxmResourceType.ModFile &&
+                             NexusDownloadCache.TryGet(
+                                 parsed.ModId,
+                                 parsed.FileId,
+                                 out cachedNexusPath,
+                                 ModpackInstallService.IsValidModArchiveFile);
+        if (parsed.ResourceType == NxmResourceType.ModFile &&
+            !hasCachedNexus &&
+            string.IsNullOrWhiteSpace(settings.NexusApiKey) &&
+            string.IsNullOrWhiteSpace(settings.NexusOAuthAccessToken) &&
+            string.IsNullOrWhiteSpace(parsed.Key))
+        {
+            NxmImportStatus = "请先在设置页完成 Nexus 登录，或使用带 key 的 NXM 链接";
+            Status = "导入失败：Nexus 未登录且 NXM 链接缺少 key";
+            return;
+        }
+
+        // SMAPI 的 NXM 回调必须沿用本次安装已经确认的目标实例。
+        // 否则回调会落入通用 NXM 导入流程，任务下载完成后又会失去实例名并再次弹窗。
+        var isSmapiNxm = IsSmapiNxmResource(parsed);
+        string? smapiTargetGamePath = null;
+        string? smapiTargetInstanceName = null;
+        if (isSmapiNxm)
+        {
+            (smapiTargetGamePath, smapiTargetInstanceName) = await SelectSmapiInstallTargetAsync("SMAPI");
+            if (string.IsNullOrWhiteSpace(smapiTargetGamePath) ||
+                string.IsNullOrWhiteSpace(smapiTargetInstanceName))
+            {
+                Status = "已取消 SMAPI 安装";
+                NxmImportStatus = "已取消 SMAPI 安装";
+                return;
+            }
         }
 
         var taskName = parsed.ResourceType == NxmResourceType.Collection
@@ -1792,7 +1917,22 @@ public partial class DownloadPageViewModel : ObservableObject
         string outputFilePath = string.Empty;
         List<string> dependencyUrls = [];
 
-        if (parsed.ResourceType == NxmResourceType.ModFile)
+        if (parsed.ResourceType == NxmResourceType.ModFile && hasCachedNexus)
+        {
+            var cachedFileName = CreateSafeFileName(Path.GetFileName(cachedNexusPath));
+            if (string.IsNullOrWhiteSpace(cachedFileName))
+            {
+                cachedFileName = $"nexus-{parsed.ModId}_{parsed.FileId}.zip";
+            }
+
+            sourceUrl = BuildNexusCacheSourceUrl(parsed.ModId, parsed.FileId);
+            outputFilePath = Path.Combine(_downloadRootPath, cachedFileName);
+            taskName = cachedFileName;
+            taskStatus = "已命中 Nexus 缓存（跳过浏览器与下载）";
+            NxmImportStatus = $"已命中 Nexus 缓存：{cachedFileName}";
+            EmitLog($"NXM Mod 命中 Nexus 缓存，跳过 API/浏览器解析: {cachedNexusPath}");
+        }
+        else if (parsed.ResourceType == NxmResourceType.ModFile)
         {
             NxmImportStatus = "正在通过 Nexus API 解析真实下载地址...";
             var resolved = await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
@@ -1855,6 +1995,22 @@ public partial class DownloadPageViewModel : ObservableObject
         }
         else
         {
+            if (NexusCollectionDownloadCache.TryGet(
+                    "stardewvalley",
+                    parsed.CollectionSlug,
+                    parsed.RevisionNumber,
+                    out var cachedCollectionPath,
+                    IsValidCollectionArchive))
+            {
+                sourceUrl = string.Empty;
+                outputFilePath = cachedCollectionPath;
+                taskName = CreateSafeFileName(Path.GetFileName(cachedCollectionPath));
+                taskStatus = "已命中 Collection 缓存（跳过浏览器与下载）";
+                NxmImportStatus = $"已命中 Collection 缓存：{taskName}";
+                EmitLog($"NXM Collection 命中稳定缓存，跳过 API/浏览器解析: {cachedCollectionPath}");
+            }
+            else
+            {
             NxmImportStatus = "正在通过 Nexus API 解析 Collection 下载地址...";
             var resolved = await _nexusModDownloadResolverService.ResolveCollectionDownloadUrlAsync(
                 parsed,
@@ -1908,6 +2064,13 @@ public partial class DownloadPageViewModel : ObservableObject
             dependencyUrls = resolved.DownloadUrls
                 .Where(url => !string.Equals(url, sourceUrl, StringComparison.OrdinalIgnoreCase))
                 .ToList();
+            }
+        }
+
+        if (isSmapiNxm)
+        {
+            taskName = $"SMAPI 安装 - {smapiTargetInstanceName}";
+            taskStatus = "已加入队列（SMAPI 安装）";
         }
 
         DownloadTasks.Insert(0, new DownloadTaskItem
@@ -1918,15 +2081,33 @@ public partial class DownloadPageViewModel : ObservableObject
             TaskKind = parsed.ResourceType == NxmResourceType.Collection
                 ? DownloadTaskKind.NxmCollection
                 : DownloadTaskKind.NxmMod,
+            TaskAction = isSmapiNxm
+                ? DownloadTaskAction.InstallSmapi
+                : parsed.ResourceType == NxmResourceType.Collection
+                    ? DownloadTaskAction.InstallCollection
+                    : DownloadTaskAction.InstallMod,
             SourceUrl = sourceUrl,
             OutputFilePath = outputFilePath,
+            SourceModId = parsed.ResourceType == NxmResourceType.ModFile ? parsed.ModId : null,
+            SourceFileId = parsed.ResourceType == NxmResourceType.ModFile ? parsed.FileId : null,
+            SourcePlatform = parsed.ResourceType == NxmResourceType.ModFile ? "NexusMods" : string.Empty,
+            CollectionSlug = parsed.ResourceType == NxmResourceType.Collection
+                ? parsed.CollectionSlug
+                : string.Empty,
+            CollectionRevision = parsed.ResourceType == NxmResourceType.Collection
+                ? parsed.RevisionNumber
+                : -1,
+            TargetGamePath = smapiTargetGamePath ?? string.Empty,
+            TargetInstanceName = smapiTargetInstanceName ?? string.Empty,
             DependencyUrls = dependencyUrls,
             CanCancel = false,
             CanRetry = false
         });
         DownloadTasks[0].StatusIconSource = ResolveTaskStatusIcon(DownloadTasks[0]);
 
-        NxmImportStatus = $"已解析并入队：{parsed}";
+        NxmImportStatus = hasCachedNexus
+            ? $"已从缓存入队：{parsed}"
+            : $"已解析并入队：{parsed}";
         Status = "NXM 链接已加入下载队列";
         SaveTaskState();
         _ = ProcessQueueAsync();
@@ -1999,7 +2180,7 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
-        if (task.TaskKind == DownloadTaskKind.NxmCollection && task.FailedDownloadUrls.Count > 0)
+        if (HasFailedCollectionDownloads(task))
         {
             var retryUrls = task.FailedDownloadUrls
                 .Where(url => !string.IsNullOrWhiteSpace(url))
@@ -2161,7 +2342,7 @@ public partial class DownloadPageViewModel : ObservableObject
         if (task.CanCancel && _runningTaskCancellationSources.TryGetValue(task, out var cts))
         {
             cts.Cancel();
-            _runningTaskCancellationSources.Remove(task);
+            _runningTaskCancellationSources.TryRemove(task, out _);
         }
 
         DownloadTasks.Remove(task);
@@ -2298,26 +2479,48 @@ public partial class DownloadPageViewModel : ObservableObject
                         continue;
                     }
 
-                    var resolved = await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
-                        parsed,
-                        settings.NexusApiKey,
-                        settings.NexusOAuthAccessToken);
-
-                    if (!resolved.IsSuccess)
+                    string sourceUrl;
+                    string resolvedFileName;
+                    if (NexusDownloadCache.TryGet(
+                            parsed.ModId,
+                            parsed.FileId,
+                            out var cachedPath,
+                            ModpackInstallService.IsValidModArchiveFile))
                     {
-                        EmitLog($"批量更新跳过 {entry.DisplayName}: NXM 地址解析失败 - {resolved.Message}（可手动单个更新以走浏览器回退）");
-                        skipped++;
-                        continue;
+                        sourceUrl = BuildNexusCacheSourceUrl(parsed.ModId, parsed.FileId);
+                        resolvedFileName = CreateSafeFileName(Path.GetFileName(cachedPath));
+                        if (string.IsNullOrWhiteSpace(resolvedFileName))
+                        {
+                            resolvedFileName = $"nexus-{parsed.ModId}_{parsed.FileId}.zip";
+                        }
+
+                        EmitLog($"批量更新命中 Nexus 缓存，跳过 API/浏览器解析: {cachedPath}");
+                    }
+                    else
+                    {
+                        var resolved = await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
+                            parsed,
+                            settings.NexusApiKey,
+                            settings.NexusOAuthAccessToken);
+
+                        if (!resolved.IsSuccess)
+                        {
+                            EmitLog($"批量更新跳过 {entry.DisplayName}: NXM 地址解析失败 - {resolved.Message}（可手动单个更新以走浏览器回退）");
+                            skipped++;
+                            continue;
+                        }
+
+                        sourceUrl = resolved.DownloadUrl;
+                        resolvedFileName = ResolveDownloadFileName(new Uri(resolved.DownloadUrl), resolved.FileName);
                     }
 
-                    var resolvedFileName = ResolveDownloadFileName(new Uri(resolved.DownloadUrl), resolved.FileName);
                     var outputPath = Path.Combine(_downloadRootPath, resolvedFileName);
                     var task = new DownloadTaskItem
                     {
                         Name = resolvedFileName,
                         TaskKind = DownloadTaskKind.NxmMod,
                         TaskAction = DownloadTaskAction.InstallMod,
-                        SourceUrl = resolved.DownloadUrl,
+                        SourceUrl = sourceUrl,
                         OutputFilePath = outputPath,
                         SourceModId = parsed.ModId,
                         SourceFileId = parsed.FileId,
@@ -2330,10 +2533,57 @@ public partial class DownloadPageViewModel : ObservableObject
                     EmitLog($"批量更新入队: {entry.DisplayName} -> {resolvedFileName}");
                     queued++;
                 }
+                else if (string.Equals(entry.UpdateSource, "Curseforge", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(entry.UpdateSource, "Curse", StringComparison.OrdinalIgnoreCase))
+                {
+                    var updateUrl = entry.UpdateUrl;
+                    var hasCurseforgeProjectId = TryParsePositiveLong(entry.ProjectId, out var curseforgeProjectId);
+                    var hasCurseforgeFileId = TryParsePositiveLong(entry.FileId, out var curseforgeFileId);
+                    var isDirectCurseforgeUrl = IsLikelyCurseforgeDirectDownloadUrl(updateUrl);
+                    if (hasCurseforgeProjectId && !isDirectCurseforgeUrl)
+                    {
+                        updateUrl = await _remoteCatalogService.ResolveCurseforgeFileDownloadUrlAsync(
+                            curseforgeProjectId,
+                            hasCurseforgeFileId ? curseforgeFileId : 0,
+                            updateUrl,
+                            CancellationToken.None);
+                    }
+
+                    if (!Uri.TryCreate(updateUrl, UriKind.Absolute, out var curseUri) ||
+                        !IsLikelyCurseforgeDirectDownloadUrl(updateUrl))
+                    {
+                        EmitLog($"批量更新跳过 {entry.DisplayName}: CurseForge 下载地址解析失败");
+                        skipped++;
+                        continue;
+                    }
+
+                    // CurseForge 更新任务必须保留 projectId/fileId，否则安装完成后
+                    // DownloadInstallService 无法写回 svl-source.json，导出会丢失来源。
+                    var fileName = ResolveDownloadFileName(curseUri, $"{entry.DisplayName}.zip");
+                    var outputPath = Path.Combine(_downloadRootPath, fileName);
+                    var task = new DownloadTaskItem
+                    {
+                        Name = fileName,
+                        TaskKind = DownloadTaskKind.Generic,
+                        TaskAction = DownloadTaskAction.InstallMod,
+                        SourceUrl = curseUri.ToString(),
+                        OutputFilePath = outputPath,
+                        SourcePlatform = "Curseforge",
+                        SourceModId = TryParsePositiveLong(entry.ProjectId, out var projectId) ? projectId : null,
+                        SourceFileId = TryParsePositiveLong(entry.FileId, out var fileId) ? fileId : null,
+                        CanCancel = false,
+                        CanRetry = false
+                    };
+                    task.SetState(DownloadTaskState.Pending, "已加入队列（批量更新）");
+                    DownloadTasks.Insert(0, task);
+                    DownloadTasks[0].StatusIconSource = ResolveTaskStatusIcon(DownloadTasks[0]);
+                    EmitLog($"批量更新入队: {entry.DisplayName} -> {fileName}");
+                    queued++;
+                }
                 else if (Uri.TryCreate(entry.UpdateUrl, UriKind.Absolute, out var uri) &&
                          (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
                 {
-                    // Curseforge HTTP 直链：直接入队
+                    // 无平台标记的普通 HTTP 更新仍保留原有安装行为。
                     var fileName = ResolveDownloadFileName(uri, $"{entry.DisplayName}.zip");
                     var outputPath = Path.Combine(_downloadRootPath, fileName);
                     var task = new DownloadTaskItem
@@ -2379,7 +2629,7 @@ public partial class DownloadPageViewModel : ObservableObject
     private async Task<bool> QueueGenericInstallTaskFromExternalAsync(ExternalDownloadRequest request)
     {
         // 安全网：若请求实为 SMAPI（名称/ID/下载选项含 smapi 或 2400/898372），
-        // 强制路由到 SMAPI 安装流程，避免被当成普通 MOD 装进 Mods 文件夹。
+        // 强制路由到 SMAPI 安装流程，避免被当成普通 Mod 装进 Mods 文件夹。
         // 用直接字段检查（不依赖 IsSmapiExternalRequest，因为调用方已判定过）。
         var looksSmapi =
             (request.ResourceName?.Contains("smapi", StringComparison.OrdinalIgnoreCase) ?? false) ||
@@ -2393,12 +2643,47 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         // 检查当前实例是否已选择（参考旧架构 GetCurrentSelectedInstance）。
-        // 如果没有当前实例，或者当前实例是原版（无 SMAPI），只能从 SMAPI 实例中选择，
-        // 不能复用 Base 路径列表，否则会把 Mod 错装到原版目录。
+        // GamePathHint 只是自动探测到的 Base 路径，不代表主页已经选中了一个版本。
+        // 没有首选实例时使用专用三按钮弹窗，允许用户直接选择任意已安装 SMAPI
+        // 版本，或把当前资源另存为文件。
+        var settings = _settingsStore.Load();
+        var hasSelectedGameVersion = !string.IsNullOrWhiteSpace(settings.PreferredInstancePath) &&
+                                     Directory.Exists(settings.PreferredInstancePath);
         var currentModsPath = ResolveCurrentInstanceModsPath();
         var needInstanceSelection = string.IsNullOrWhiteSpace(currentModsPath) || IsCurrentInstanceVanilla();
 
-        if (needInstanceSelection)
+        if (!hasSelectedGameVersion)
+        {
+            var availableTargets = AvailableModInstancesProvider?.Invoke() ?? [];
+            var targetOptions = ModInstallTargetOptions.Build(availableTargets);
+
+            var targetChoice = await _dialogService.ShowModInstallTargetDialogAsync(targetOptions);
+            if (targetChoice.Action == ModInstallTargetDialogAction.SaveAs)
+            {
+                return await QueueSaveOnlyTaskFromExternalAsync(request);
+            }
+
+            if (targetChoice.Action != ModInstallTargetDialogAction.Confirm ||
+                string.IsNullOrWhiteSpace(targetChoice.SelectedPath))
+            {
+                Status = "已取消 Mod 安装（未选择游戏版本）";
+                return false;
+            }
+
+            var selectedTarget = availableTargets.FirstOrDefault(target =>
+                string.Equals(target.Path, targetChoice.SelectedPath, StringComparison.OrdinalIgnoreCase));
+            if (selectedTarget == null)
+            {
+                Status = "所选 SMAPI 版本已失效，请刷新实例列表后重试";
+                return false;
+            }
+
+            settings.PreferredInstancePath = selectedTarget.Path;
+            settings.InstanceName = selectedTarget.IsBaseInstance ? string.Empty : selectedTarget.Name;
+            settings.PreferredLaunchMode = "SMAPI";
+            _settingsStore.Save(settings);
+        }
+        else if (needInstanceSelection)
         {
             var availableTargets = AvailableModInstancesProvider?.Invoke() ?? [];
             if (availableTargets.Count == 0)
@@ -2436,7 +2721,7 @@ public partial class DownloadPageViewModel : ObservableObject
             }
 
             // 临时切换到用户选择的 SMAPI 实例，并同步实例名，保证隔离实例的 Mods 路径正确。
-            var settings = _settingsStore.Load();
+            settings = _settingsStore.Load();
             settings.PreferredInstancePath = selectedTarget.Path;
             settings.InstanceName = selectedTarget.IsBaseInstance ? string.Empty : selectedTarget.Name;
             settings.PreferredLaunchMode = "SMAPI";
@@ -2444,7 +2729,7 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         // 普通 Mod 也必须先解析真实下载地址。没有 URL 的 Nexus 文件不能直接入队，
-        // 否则 ExecuteTaskAsync 会把它误判为无源任务并走“模拟完成”分支。
+        // 否则 ExecuteTaskAsync 会把它误判为无源任务并直接失败。
         var resolved = await ResolveExternalDownloadTargetAsync(request);
         if (!resolved.IsSuccess)
         {
@@ -2469,11 +2754,12 @@ public partial class DownloadPageViewModel : ObservableObject
         var taskName = fileName;
 
         var sourceToken = NormalizeSourceToken(request);
-        long? sourceModId = sourceToken == "nexusmods" &&
+        var hasTrackedSource = sourceToken == "nexusmods" || sourceToken == "curseforge";
+        long? sourceModId = hasTrackedSource &&
                             TryExtractPositiveLong(request.ResourceId, out var smodId)
             ? smodId
             : (long?)null;
-        long? sourceFileId = sourceToken == "nexusmods" &&
+        long? sourceFileId = hasTrackedSource &&
                              TryExtractFileIdFromOption(request.SelectedDownloadOption, out var sfileId)
             ? sfileId
             : (long?)null;
@@ -2489,6 +2775,9 @@ public partial class DownloadPageViewModel : ObservableObject
             OutputFilePath = outputPath,
             SourceModId = sourceModId,
             SourceFileId = sourceFileId,
+            SourcePlatform = hasTrackedSource
+                ? (sourceToken == "curseforge" ? "Curseforge" : "NexusMods")
+                : string.Empty,
             CanCancel = false,
             CanRetry = false
         };
@@ -2541,15 +2830,18 @@ public partial class DownloadPageViewModel : ObservableObject
             }
         }
 
+        var isNexusResource = TryGetNexusResourceIds(request, out var sourceModId, out var sourceFileId);
         var task = new DownloadTaskItem
         {
             Name = Path.GetFileName(savePath),
             Status = "已加入队列（另存为）",
             Progress = 0,
-            TaskKind = DownloadTaskKind.Generic,
+            TaskKind = isNexusResource ? DownloadTaskKind.NxmMod : DownloadTaskKind.Generic,
             TaskAction = DownloadTaskAction.SaveOnly,
             SourceUrl = resolved.DownloadUrl,
             OutputFilePath = savePath,
+            SourceModId = isNexusResource ? sourceModId : null,
+            SourceFileId = isNexusResource ? sourceFileId : null,
             CanCancel = false,
             CanRetry = false
         };
@@ -2558,23 +2850,24 @@ public partial class DownloadPageViewModel : ObservableObject
         return true;
     }
 
-    private async Task<bool> QueueSmapiInstallTaskFromExternalAsync(ExternalDownloadRequest request)
+    private async Task<(string? BasePath, string? InstanceName)> SelectSmapiInstallTargetAsync(string defaultName)
     {
         // 获取可用的 Base 路径列表（与整合包/Collection 安装流程一致）
         var availablePaths = AvailableGamePathsProvider?.Invoke();
         if (availablePaths == null || availablePaths.Count == 0)
         {
             var currentPath = ResolveCurrentGamePath();
+            currentPath = ResolveCurrentBasePath(currentPath);
             if (string.IsNullOrWhiteSpace(currentPath))
             {
                 Status = "SMAPI 安装失败：未检测到可用 Base 路径，请先在实例页面添加游戏路径";
-                return false;
+                return (null, null);
             }
             availablePaths = new List<string> { currentPath };
         }
 
         // 默认选中当前首选路径（主页选中实例对应的 Base 路径）
-        var defaultPath = ResolveCurrentGamePath();
+        var defaultPath = ResolveCurrentBasePath(ResolveCurrentGamePath());
         if (string.IsNullOrWhiteSpace(defaultPath) && availablePaths.Count > 0)
         {
             defaultPath = availablePaths[0];
@@ -2589,78 +2882,115 @@ public partial class DownloadPageViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(gameBasePath))
         {
             Status = "已取消 SMAPI 安装";
-            return false;
+            return (null, null);
         }
 
-        var defaultName = BuildSmapiDefaultInstanceName(request);
         var existingNames = GetExistingInstanceNames(gameBasePath);
         var rawInstanceName = await _dialogService.ShowInstanceNameDialogAsync("输入 SMAPI 实例名称", defaultName, existingNames);
         if (string.IsNullOrWhiteSpace(rawInstanceName))
         {
             Status = "已取消 SMAPI 安装";
-            return false;
+            return (null, null);
         }
 
         var instanceName = CreateSafeFileName(rawInstanceName);
         if (string.IsNullOrWhiteSpace(instanceName))
         {
             Status = "实例名称无效";
-            return false;
+            return (null, null);
         }
 
         var versionRoot = Path.Combine(gameBasePath, "versions", instanceName);
         if (Directory.Exists(versionRoot))
         {
             Status = $"实例名称已存在: {instanceName}";
+            return (null, null);
+        }
+
+        return (gameBasePath, instanceName);
+    }
+
+    private async Task<bool> QueueSmapiInstallTaskFromExternalAsync(ExternalDownloadRequest request)
+    {
+        var workflowKey = TryGetNexusResourceIds(request, out var requestedModId, out var requestedFileId)
+            ? BuildSmapiWorkflowKey(requestedModId, requestedFileId)
+            : string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(workflowKey) &&
+            !_activeSmapiExternalWorkflows.TryAdd(workflowKey, 0))
+        {
+            Status = "该 SMAPI 下载已在处理中，请勿重复点击安装";
             return false;
         }
 
-        var resolved = await ResolveExternalDownloadTargetAsync(request);
-        if (!resolved.IsSuccess)
+        try
         {
-            Status = resolved.Message;
-            if (!string.IsNullOrWhiteSpace(resolved.BrowserGuideUrl))
+            var (gameBasePath, instanceName) = await SelectSmapiInstallTargetAsync(
+                BuildSmapiDefaultInstanceName(request));
+            if (string.IsNullOrWhiteSpace(gameBasePath) || string.IsNullOrWhiteSpace(instanceName))
             {
-                await _dialogService.ShowBrowserDownloadGuideDialogAsync(
-                    resolved.BrowserGuideUrl,
-                    "浏览器下载指引",
-                    "请在打开的文件页面点击『Slow Download』完成下载（非 Premium 账号使用慢速下载），下载完成后返回。"
-                );
+                return false;
             }
 
-            return false;
+            var resolved = await ResolveSmapiExternalDownloadTargetAsync(request);
+            if (!resolved.IsSuccess)
+            {
+                Status = resolved.Message;
+                if (!string.IsNullOrWhiteSpace(resolved.BrowserGuideUrl))
+                {
+                    await _dialogService.ShowBrowserDownloadGuideDialogAsync(
+                        resolved.BrowserGuideUrl,
+                        "浏览器下载指引",
+                        "请在打开的文件页面点击『Slow Download』完成下载（非 Premium 账号使用慢速下载），下载完成后返回。"
+                    );
+                }
+
+                return false;
+            }
+
+            var safeResolvedFileName = CreateSafeFileName(resolved.FileName);
+            var outputPath = Path.Combine(_downloadRootPath, safeResolvedFileName);
+            var sourceToken = NormalizeSourceToken(request);
+            var smapiModId = sourceToken == "nexusmods" &&
+                             TryExtractPositiveLong(request.ResourceId, out var smapiModIdV)
+                ? smapiModIdV
+                : (long?)null;
+            var smapiFileId = sourceToken == "nexusmods" &&
+                              TryExtractFileIdFromOption(request.SelectedDownloadOption, out var smapiFileIdV)
+                ? smapiFileIdV
+                : (long?)null;
+            var task = new DownloadTaskItem
+            {
+                Name = $"SMAPI 安装 - {instanceName}",
+                Status = "已加入队列（SMAPI 安装）",
+                Progress = 0,
+                TaskKind = sourceToken == "nexusmods" ? DownloadTaskKind.NxmMod : DownloadTaskKind.Generic,
+                TaskAction = DownloadTaskAction.InstallSmapi,
+                SourceUrl = resolved.DownloadUrl,
+                OutputFilePath = outputPath,
+                SourceModId = smapiModId,
+                SourceFileId = smapiFileId,
+                TargetGamePath = gameBasePath,
+                TargetInstanceName = instanceName,
+                CanCancel = false,
+                CanRetry = false
+            };
+
+            EnqueueExternalTask(task, $"已加入 SMAPI 安装队列: {instanceName}");
+            if (!string.IsNullOrWhiteSpace(workflowKey))
+            {
+                RememberSmapiExternalCallback(workflowKey);
+            }
+
+            return true;
         }
-
-        var safeResolvedFileName = CreateSafeFileName(resolved.FileName);
-        var outputPath = Path.Combine(_downloadRootPath, safeResolvedFileName);
-        var sourceToken = NormalizeSourceToken(request);
-        var smapiModId = sourceToken == "nexusmods" &&
-                         TryExtractPositiveLong(request.ResourceId, out var smapiModIdV)
-            ? smapiModIdV
-            : (long?)null;
-        var smapiFileId = sourceToken == "nexusmods" &&
-                          TryExtractFileIdFromOption(request.SelectedDownloadOption, out var smapiFileIdV)
-            ? smapiFileIdV
-            : (long?)null;
-        var task = new DownloadTaskItem
+        finally
         {
-            Name = $"SMAPI 安装 - {instanceName}",
-            Status = "已加入队列（SMAPI 安装）",
-            Progress = 0,
-            TaskKind = sourceToken == "nexusmods" ? DownloadTaskKind.NxmMod : DownloadTaskKind.Generic,
-            TaskAction = DownloadTaskAction.InstallSmapi,
-            SourceUrl = resolved.DownloadUrl,
-            OutputFilePath = outputPath,
-            SourceModId = smapiModId,
-            SourceFileId = smapiFileId,
-            TargetGamePath = gameBasePath,
-            TargetInstanceName = instanceName,
-            CanCancel = false,
-            CanRetry = false
-        };
-
-        EnqueueExternalTask(task, $"已加入 SMAPI 安装队列: {instanceName}");
-        return true;
+            if (!string.IsNullOrWhiteSpace(workflowKey))
+            {
+                _activeSmapiExternalWorkflows.TryRemove(workflowKey, out _);
+            }
+        }
     }
 
     /// <summary>
@@ -2676,6 +3006,7 @@ public partial class DownloadPageViewModel : ObservableObject
         {
             // 后备：使用当前游戏路径
             var currentPath = ResolveCurrentGamePath();
+            currentPath = ResolveCurrentBasePath(currentPath);
             if (string.IsNullOrWhiteSpace(currentPath))
             {
                 Status = "Collection 安装失败：未检测到可用 Base 路径，请先在实例页面添加游戏路径";
@@ -2685,7 +3016,7 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         // 默认选中当前首选路径
-        var defaultPath = ResolveCurrentGamePath();
+        var defaultPath = ResolveCurrentBasePath(ResolveCurrentGamePath());
         if (string.IsNullOrWhiteSpace(defaultPath) && availablePaths.Count > 0)
         {
             defaultPath = availablePaths[0];
@@ -2732,6 +3063,40 @@ public partial class DownloadPageViewModel : ObservableObject
         {
             Status = $"版本名称已存在: {instanceName}";
             return false;
+        }
+
+        // Collection 下载地址通常是带签名的短期 URL。稳定缓存命中时不再
+        // 解析 API 或打开浏览器，直接把已校验的 Collection 归档交给安装队列。
+        var collectionSlug = request.CollectionSlug.Trim();
+        var collectionRevision = request.CollectionRevision;
+        if (!string.IsNullOrWhiteSpace(collectionSlug) &&
+            NexusCollectionDownloadCache.TryGet(
+                "stardewvalley",
+                collectionSlug,
+                collectionRevision,
+                out var cachedCollectionPath,
+                IsValidCollectionArchive))
+        {
+            var cachedTask = new DownloadTaskItem
+            {
+                Name = $"Collection 安装 - {instanceName}",
+                Status = "已加入队列（命中 Collection 缓存）",
+                Progress = 0,
+                TaskKind = DownloadTaskKind.NexusCollection,
+                TaskAction = DownloadTaskAction.InstallCollection,
+                SourceUrl = string.Empty,
+                OutputFilePath = cachedCollectionPath,
+                CollectionSlug = collectionSlug,
+                CollectionRevision = collectionRevision,
+                TargetGamePath = selectedPath,
+                TargetInstanceName = instanceName,
+                CanCancel = false,
+                CanRetry = false
+            };
+
+            EnqueueExternalTask(cachedTask, $"已从 Collection 缓存入队: {instanceName}");
+            EmitLog($"Collection 命中稳定缓存，跳过 API/浏览器下载: {cachedCollectionPath}");
+            return true;
         }
 
         // 解析 Collection 下载地址：直接使用 Nexus Collection API，不走通用的 ResolveExternalDownloadTargetAsync
@@ -2799,10 +3164,14 @@ public partial class DownloadPageViewModel : ObservableObject
             Name = $"Collection 安装 - {instanceName}",
             Status = "已加入队列（Collection 安装）",
             Progress = 0,
-            TaskKind = DownloadTaskKind.Generic,
+            // Collection 下载完成后必须进入 CollectionInstallService，不能保留
+            // Generic，否则会绕过安装分支并把 .7z 当成普通 Mod 处理。
+            TaskKind = DownloadTaskKind.NexusCollection,
             TaskAction = DownloadTaskAction.InstallCollection,
             SourceUrl = resolved.DownloadUrl,
             OutputFilePath = outputPath,
+            CollectionSlug = collectionSlug,
+            CollectionRevision = collectionRevision,
             TargetGamePath = selectedPath,
             TargetInstanceName = instanceName,
             CanCancel = false,
@@ -2844,6 +3213,7 @@ public partial class DownloadPageViewModel : ObservableObject
         if (availablePaths == null || availablePaths.Count == 0)
         {
             var currentPath = ResolveCurrentGamePath();
+            currentPath = ResolveCurrentBasePath(currentPath);
             if (string.IsNullOrWhiteSpace(currentPath))
             {
                 Status = "整合包安装失败：未检测到可用 Base 路径，请先在实例页面添加游戏路径";
@@ -2852,7 +3222,7 @@ public partial class DownloadPageViewModel : ObservableObject
             availablePaths = new List<string> { currentPath };
         }
 
-        var defaultPath = ResolveCurrentGamePath();
+        var defaultPath = ResolveCurrentBasePath(ResolveCurrentGamePath());
         if (string.IsNullOrWhiteSpace(defaultPath) && availablePaths.Count > 0)
         {
             defaultPath = availablePaths[0];
@@ -2898,28 +3268,58 @@ public partial class DownloadPageViewModel : ObservableObject
             return false;
         }
 
-        // 解析下载地址
-        var resolved = await ResolveExternalDownloadTargetAsync(request);
-        if (!resolved.IsSuccess)
+        // 根据来源判断整合包类型
+        var isSvlModpack = request.SourceToken?.Contains("SVL", StringComparison.OrdinalIgnoreCase) ?? false;
+        var taskKind = isSvlModpack ? DownloadTaskKind.SvlModpack : DownloadTaskKind.CurseforgeModpack;
+        var sourceToken = NormalizeSourceToken(request);
+        var hasCurseforgeIdentity = !isSvlModpack && sourceToken == "curseforge";
+        long? sourceProjectId = hasCurseforgeIdentity &&
+                                TryExtractPositiveLong(request.ResourceId, out var parsedProjectId)
+            ? parsedProjectId
+            : null;
+        long? sourceFileId = hasCurseforgeIdentity &&
+                             TryExtractFileIdFromOption(request.SelectedDownloadOption, out var parsedFileId)
+            ? parsedFileId
+            : null;
+
+        // CurseForge 整合包本体也使用稳定的 ProjectID/FileID 缓存。缓存命中时
+        // 不应先请求可能已经失效的 CDN 地址；任务仍保留稳定 ID，若缓存后来被
+        // 清理，执行阶段会按 ID 刷新地址。
+        ResolvedExternalDownloadTarget resolved;
+        if (sourceProjectId is long cachedProjectId && cachedProjectId > 0 &&
+            sourceFileId is long cachedFileId && cachedFileId > 0 &&
+            CurseforgeDownloadCache.TryGet(
+                cachedProjectId,
+                cachedFileId,
+                out var cachedPackagePath,
+                path => IsValidLocalPackageArchive(path, taskKind)))
         {
-            Status = resolved.Message;
-            if (!string.IsNullOrWhiteSpace(resolved.BrowserGuideUrl))
+            resolved = ResolvedExternalDownloadTarget.Success(
+                BuildCurseforgeCacheSourceUrl(cachedProjectId, cachedFileId),
+                Path.GetFileName(cachedPackagePath));
+            EmitLog($"CurseForge 整合包命中稳定缓存，跳过 CDN 解析: {cachedPackagePath}");
+        }
+        else
+        {
+            // 解析下载地址
+            resolved = await ResolveExternalDownloadTargetAsync(request);
+            if (!resolved.IsSuccess)
             {
-                await _dialogService.ShowBrowserDownloadGuideDialogAsync(
-                    resolved.BrowserGuideUrl,
-                    "浏览器下载指引",
-                    "该整合包资源需要在浏览器完成下载授权，请完成后重试。"
-                );
+                Status = resolved.Message;
+                if (!string.IsNullOrWhiteSpace(resolved.BrowserGuideUrl))
+                {
+                    await _dialogService.ShowBrowserDownloadGuideDialogAsync(
+                        resolved.BrowserGuideUrl,
+                        "浏览器下载指引",
+                        "该整合包资源需要在浏览器完成下载授权，请完成后重试。"
+                    );
+                }
+                return false;
             }
-            return false;
         }
 
         var safeResolvedFileName = CreateSafeFileName(resolved.FileName);
         var outputPath = Path.Combine(_downloadRootPath, safeResolvedFileName);
-
-        // 根据来源判断整合包类型
-        var isSvlModpack = request.SourceToken?.Contains("SVL", StringComparison.OrdinalIgnoreCase) ?? false;
-        var taskKind = isSvlModpack ? DownloadTaskKind.SvlModpack : DownloadTaskKind.CurseforgeModpack;
 
         var task = new DownloadTaskItem
         {
@@ -2930,6 +3330,9 @@ public partial class DownloadPageViewModel : ObservableObject
             TaskAction = DownloadTaskAction.InstallModpack,
             SourceUrl = resolved.DownloadUrl,
             OutputFilePath = outputPath,
+            SourceModId = sourceProjectId,
+            SourceFileId = sourceFileId,
+            SourcePlatform = hasCurseforgeIdentity ? "Curseforge" : string.Empty,
             TargetGamePath = selectedPath,
             TargetInstanceName = instanceName,
             CanCancel = false,
@@ -2940,7 +3343,11 @@ public partial class DownloadPageViewModel : ObservableObject
         return true;
     }
 
-    private void EnqueueExternalTask(DownloadTaskItem task, string statusText)
+    /// <summary>
+    /// 将外部创建的任务统一加入下载队列并启动调度器。
+    /// 本地整合包/Collection 也必须经过这里，否则只会出现在列表中而不会执行。
+    /// </summary>
+    public void EnqueueTask(DownloadTaskItem task, string statusText)
     {
         DownloadTasks.Insert(0, task);
         DownloadTasks[0].StatusIconSource = ResolveTaskStatusIcon(DownloadTasks[0]);
@@ -2948,6 +3355,70 @@ public partial class DownloadPageViewModel : ObservableObject
         SaveTaskState();
         _ = ProcessQueueAsync();
         NavigateToTaskStatusRequested?.Invoke();
+    }
+
+    /// <summary>
+    /// 注册一个已经由其他 ViewModel 执行的外部任务。
+    ///
+    /// SMAPI 版本设置流程需要在版本选择对话框返回后立即执行安装，不能再次交给
+    /// DownloadPage 队列，否则会重复下载/安装；但任务仍必须进入统一持久化状态，
+    /// 这样应用重启时至少能恢复到可重试的失败记录，而不是直接从任务页消失。
+    /// </summary>
+    public void RegisterExternalTask(DownloadTaskItem task, string statusText)
+    {
+        if (task == null)
+        {
+            return;
+        }
+
+        if (!DownloadTasks.Contains(task))
+        {
+            DownloadTasks.Insert(0, task);
+        }
+
+        task.StatusIconSource = ResolveTaskStatusIcon(task);
+        TrackExternalTask(task);
+        Status = statusText;
+        SaveTaskState();
+    }
+
+    private void TrackExternalTask(DownloadTaskItem task)
+    {
+        if (_externalTaskPersistenceHandlers.ContainsKey(task))
+        {
+            return;
+        }
+
+        PropertyChangedEventHandler handler = (_, args) =>
+        {
+            // 外部 SMAPI 流程的进度回调可能非常频繁，避免每个 Progress 都触发
+            // 同步磁盘写入；状态/文案变化已覆盖排队、下载、安装、完成和失败节点。
+            if (args.PropertyName == nameof(DownloadTaskItem.TaskState) ||
+                args.PropertyName == nameof(DownloadTaskItem.Status) ||
+                args.PropertyName == nameof(DownloadTaskItem.CanRetry) ||
+                args.PropertyName == nameof(DownloadTaskItem.CanCancel) ||
+                args.PropertyName == nameof(DownloadTaskItem.FailedDetails) ||
+                args.PropertyName == nameof(DownloadTaskItem.InstalledPath))
+            {
+                SaveTaskState();
+            }
+        };
+
+        _externalTaskPersistenceHandlers[task] = handler;
+        task.PropertyChanged += handler;
+    }
+
+    private void UntrackExternalTask(DownloadTaskItem task)
+    {
+        if (_externalTaskPersistenceHandlers.Remove(task, out var handler))
+        {
+            task.PropertyChanged -= handler;
+        }
+    }
+
+    private void EnqueueExternalTask(DownloadTaskItem task, string statusText)
+    {
+        EnqueueTask(task, statusText);
     }
 
     /// <summary>
@@ -2976,14 +3447,51 @@ public partial class DownloadPageViewModel : ObservableObject
         var directUrl = TryResolveDirectDownloadUrl(request.SelectedDownloadOption);
         var fallbackGuideUrl = BuildFallbackGuideUrl(request);
 
-        if (sourceToken == "nexusmods" &&
-            TryExtractPositiveLong(request.ResourceId, out var modId) &&
-            TryExtractFileIdFromOption(request.SelectedDownloadOption, out var fileId))
+        if (TryGetNexusResourceIds(request, out var modId, out var fileId))
         {
-            var settings = _settingsStore.Load();
-            if (string.IsNullOrWhiteSpace(settings.NexusApiKey) && string.IsNullOrWhiteSpace(settings.NexusOAuthAccessToken))
+            // Nexus 的 CDN 地址通常是短期签名 URL，不能作为稳定缓存键。
+            // 先按 Mod/File ID 查稳定缓存，命中时无需登录、API 解析或打开浏览器。
+            if (NexusDownloadCache.TryGet(
+                    modId,
+                    fileId,
+                    out var cachedPath,
+                    ModpackInstallService.IsValidModArchiveFile))
             {
-                return ResolvedExternalDownloadTarget.Fail("请先在设置页完成 Nexus 登录后再下载", fallbackGuideUrl);
+                var cachedFileName = CreateSafeFileName(Path.GetFileName(cachedPath));
+                if (string.IsNullOrWhiteSpace(cachedFileName))
+                {
+                    cachedFileName = $"nexus-{modId}_{fileId}.zip";
+                }
+
+                EmitLog($"Nexus 资源命中缓存，跳过 API/浏览器解析: {cachedPath}");
+                return ResolvedExternalDownloadTarget.Success(
+                    BuildNexusCacheSourceUrl(modId, fileId),
+                    cachedFileName);
+            }
+
+            // 详情页有时已经给出短期 CDN/归档直链。此时即使没有本地 Nexus
+            // 凭据也可以直接入队，不应先打开网页并等待另一个 NXM 回调。
+            // 这里必须拒绝 nexusmods.com 的文件页，避免把 HTML 页面当压缩包。
+            if (Uri.TryCreate(directUrl, UriKind.Absolute, out var knownDirectUri) &&
+                IsLikelyNexusDirectDownloadUrl(knownDirectUri))
+            {
+                var directFileName = ResolveDownloadFileName(knownDirectUri, request.ResolveSuggestedFileName());
+                return ResolvedExternalDownloadTarget.Success(directUrl, directFileName);
+            }
+
+            var settings = _settingsStore.Load();
+            var hasNexusCredentials = !string.IsNullOrWhiteSpace(settings.NexusApiKey) ||
+                                      !string.IsNullOrWhiteSpace(settings.NexusOAuthAccessToken);
+            if (!hasNexusCredentials)
+            {
+                // 在线详情页的 Nexus 下载项只有 Mod/File ID 时，不能只弹一个
+                // “请手动下载”的说明就结束：非 Premium 用户需要在浏览器点击
+                // Manual Download，随后由 NXM 回调携带一次性 key 完成解析。
+                return await ResolveNexusFileViaBrowserAsync(
+                    modId,
+                    fileId,
+                    fallbackGuideUrl,
+                    "Nexus 未登录，已切换到浏览器下载回退");
             }
 
             var info = new NxmLinkInfo
@@ -3006,15 +3514,20 @@ public partial class DownloadPageViewModel : ObservableObject
                 return ResolvedExternalDownloadTarget.Success(resolved.DownloadUrl, fileName);
             }
 
-            if (!string.IsNullOrWhiteSpace(directUrl) &&
-                Uri.TryCreate(directUrl, UriKind.Absolute, out var directUri) &&
-                IsHttpUri(directUri))
+            // API/令牌解析失败时同样走浏览器回退。此前这里返回失败后只显示
+            // 指引窗口，却没有注册 NXM 等待器，用户点击 Manual Download 后
+            // 回调会被丢弃，表现为“下载页一直无法安装”。
+            var browserResolved = await ResolveNexusFileViaBrowserAsync(
+                modId,
+                fileId,
+                fallbackGuideUrl,
+                "Nexus API 解析失败，已切换到浏览器下载回退");
+            if (browserResolved.IsSuccess)
             {
-                var fallbackName = ResolveDownloadFileName(directUri, request.ResolveSuggestedFileName());
-                return ResolvedExternalDownloadTarget.Success(directUrl, fallbackName);
+                return browserResolved;
             }
 
-            return ResolvedExternalDownloadTarget.Fail(resolved.Message, fallbackGuideUrl);
+            return browserResolved;
         }
 
         if (sourceToken == "curseforge" &&
@@ -3027,7 +3540,8 @@ public partial class DownloadPageViewModel : ObservableObject
                 directUrl);
             if (!string.IsNullOrWhiteSpace(resolvedUrl) &&
                 Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var curseUri) &&
-                IsHttpUri(curseUri))
+                IsHttpUri(curseUri) &&
+                IsLikelyCurseforgeDirectDownloadUrl(resolvedUrl))
             {
                 var fileName = ResolveDownloadFileName(curseUri, request.ResolveSuggestedFileName());
                 return ResolvedExternalDownloadTarget.Success(resolvedUrl, fileName);
@@ -3036,13 +3550,113 @@ public partial class DownloadPageViewModel : ObservableObject
 
         if (!string.IsNullOrWhiteSpace(directUrl) &&
             Uri.TryCreate(directUrl, UriKind.Absolute, out var uri) &&
-            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+            (sourceToken != "curseforge" || IsLikelyCurseforgeDirectDownloadUrl(directUrl)))
         {
             var fileName = ResolveDownloadFileName(uri, request.ResolveSuggestedFileName());
             return ResolvedExternalDownloadTarget.Success(directUrl, fileName);
         }
 
-        return ResolvedExternalDownloadTarget.Fail("未解析到可用下载地址", fallbackGuideUrl);
+        var message = sourceToken == "curseforge"
+            ? "CurseForge 文件地址不是可下载压缩包，无法安全安装"
+            : "未解析到可用下载地址";
+        return ResolvedExternalDownloadTarget.Fail(message, fallbackGuideUrl);
+    }
+
+    /// <summary>
+    /// 解析 SMAPI 外部下载地址。Nexus API 失败时由当前 SMAPI 流程等待浏览器 NXM 回调，
+    /// 确保回调不会落入通用 NXM 导入流程而丢失已确认的实例名。
+    /// </summary>
+    private async Task<ResolvedExternalDownloadTarget> ResolveSmapiExternalDownloadTargetAsync(
+        ExternalDownloadRequest request)
+    {
+        var resolved = await ResolveExternalDownloadTargetAsync(request);
+        if (resolved.IsSuccess ||
+            !TryGetNexusResourceIds(request, out var modId, out var fileId) ||
+            string.IsNullOrWhiteSpace(resolved.BrowserGuideUrl))
+        {
+            return resolved;
+        }
+
+        var fallbackNxmLink = await TryBrowserDownloadFallbackAsync(
+            modId,
+            fileId,
+            resolved.BrowserGuideUrl);
+        if (string.IsNullOrWhiteSpace(fallbackNxmLink) ||
+            !_nxmLinkParser.TryParse(fallbackNxmLink, out var fallbackInfo, out _))
+        {
+            return ResolvedExternalDownloadTarget.Fail(
+                "SMAPI 浏览器下载回退超时或取消",
+                string.Empty);
+        }
+
+        var settings = _settingsStore.Load();
+        var fallbackResolved = await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
+            fallbackInfo,
+            settings.NexusApiKey,
+            settings.NexusOAuthAccessToken);
+        if (fallbackResolved.IsSuccess &&
+            Uri.TryCreate(fallbackResolved.DownloadUrl, UriKind.Absolute, out var fallbackUri) &&
+            IsHttpUri(fallbackUri))
+        {
+            var fileName = ResolveDownloadFileName(fallbackUri, fallbackResolved.FileName);
+            EmitLog($"SMAPI 浏览器回退解析成功: {fileName}");
+            return ResolvedExternalDownloadTarget.Success(fallbackResolved.DownloadUrl, fileName);
+        }
+
+        return ResolvedExternalDownloadTarget.Fail(
+            $"SMAPI 浏览器回退解析失败: {fallbackResolved.Message}",
+            string.Empty);
+    }
+
+    /// <summary>
+    /// 详情页 Nexus 文件没有可用 API 凭据时的浏览器回退。
+    /// 浏览器服务负责打开带 file_id/nmm=1 的页面并等待匹配 NXM 回调；
+    /// 回调中的 key 交给同一解析器换取短期 CDN 地址。
+    /// </summary>
+    private async Task<ResolvedExternalDownloadTarget> ResolveNexusFileViaBrowserAsync(
+        long modId,
+        long fileId,
+        string browserUrl,
+        string statusText)
+    {
+        if (modId <= 0 || fileId <= 0)
+        {
+            return ResolvedExternalDownloadTarget.Fail(
+                "Nexus 下载项缺少有效的 Mod/File ID",
+                string.Empty);
+        }
+
+        EmitLog(statusText);
+        var fallbackNxmLink = await TryBrowserDownloadFallbackAsync(modId, fileId, browserUrl);
+        var parseError = string.Empty;
+        if (string.IsNullOrWhiteSpace(fallbackNxmLink) ||
+            !_nxmLinkParser.TryParse(fallbackNxmLink, out var fallbackInfo, out parseError))
+        {
+            return ResolvedExternalDownloadTarget.Fail(
+                string.IsNullOrWhiteSpace(parseError)
+                    ? "浏览器下载回退超时或未收到 NXM 回调"
+                    : $"浏览器回退链接无效: {parseError}",
+                string.Empty);
+        }
+
+        var settings = _settingsStore.Load();
+        var fallbackResolved = await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
+            fallbackInfo,
+            settings.NexusApiKey,
+            settings.NexusOAuthAccessToken);
+        if (!fallbackResolved.IsSuccess ||
+            !Uri.TryCreate(fallbackResolved.DownloadUrl, UriKind.Absolute, out var fallbackUri) ||
+            !IsHttpUri(fallbackUri))
+        {
+            return ResolvedExternalDownloadTarget.Fail(
+                $"浏览器回退解析失败: {fallbackResolved.Message}",
+                string.Empty);
+        }
+
+        var fileName = ResolveDownloadFileName(fallbackUri, fallbackResolved.FileName);
+        EmitLog($"Nexus 浏览器回退解析成功: {fileName}");
+        return ResolvedExternalDownloadTarget.Success(fallbackResolved.DownloadUrl, fileName);
     }
 
     private string ResolveCurrentGamePath()
@@ -3059,6 +3673,23 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         return string.Empty;
+    }
+
+    /// <summary>
+    /// 将当前选中实例归一化为所属 Base 路径。
+    /// 下载页的 SMAPI/Collection/整合包选择框只展示 Base；主页若选中
+    /// versions/&lt;实例&gt; 或旧布局 versions/&lt;实例&gt;/game，不能把运行目录直接
+    /// 当成 Base，否则后续安装会出现嵌套 versions 目录。
+    /// </summary>
+    private static string ResolveCurrentBasePath(string? currentPath)
+    {
+        if (string.IsNullOrWhiteSpace(currentPath) || !Directory.Exists(currentPath))
+        {
+            return string.Empty;
+        }
+
+        var basePath = InstanceRuntimePathResolver.ResolveBasePath(currentPath);
+        return Directory.Exists(basePath) ? basePath : string.Empty;
     }
 
     /// <summary>
@@ -3179,20 +3810,122 @@ public partial class DownloadPageViewModel : ObservableObject
         return text.Contains("smapi", StringComparison.OrdinalIgnoreCase) ||
                text.Contains("mods/2400", StringComparison.OrdinalIgnoreCase) ||
                text.Contains("/2400/", StringComparison.Ordinal) ||
-               text.Contains("898372", StringComparison.Ordinal);
+               text.Contains("898372", StringComparison.Ordinal) ||
+               task.SourceModId == SmapiDownloadService.SmapiModId ||
+               task.SourceFileId == 898372;
     }
 
-    /// <summary>解析 SMAPI 安装的 Base 路径与实例名：优先复用设置里已选的 Base（不再次弹 Base 框），
-    /// 但实例名始终弹"输入SMAPI实例名称"对话框（默认取 SMAPI 版本）；仅当没有可用 Base 时才连 Base 一起弹。</summary>
+    private static string BuildSmapiWorkflowKey(long modId, long fileId)
+    {
+        return $"{modId}:{fileId}";
+    }
+
+    /// <summary>
+    /// 判断外部 SMAPI 回调是否属于已经打开或刚刚完成的专用安装流程。
+    /// 专用等待器和通用浏览器回退都未消费时，主窗口仍不能把重复回调导入为
+    /// 新的普通 NXM 任务，否则会再次弹出实例名称对话框。协议层可能在专用流程
+    /// 刚结束后追加投递一次相同回调，因此还要检查短时已处理记录。
+    /// </summary>
+    public bool IsActiveSmapiExternalCallback(string nxmLink)
+    {
+        if (!_nxmLinkParser.TryParse(nxmLink, out var info, out _) ||
+            !IsSmapiNxmResource(info))
+        {
+            return false;
+        }
+
+        var workflowKey = BuildSmapiWorkflowKey(info.ModId, info.FileId);
+        if (_activeSmapiExternalWorkflows.ContainsKey(workflowKey))
+        {
+            return true;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var entry in _recentSmapiExternalCallbacks)
+        {
+            if (now - entry.Value > SmapiExternalCallbackDedupTtl)
+            {
+                _recentSmapiExternalCallbacks.TryRemove(entry.Key, out _);
+            }
+        }
+
+        return _recentSmapiExternalCallbacks.TryGetValue(workflowKey, out var handledAt) &&
+               now - handledAt <= SmapiExternalCallbackDedupTtl;
+    }
+
+    private void RememberSmapiExternalCallback(string workflowKey)
+    {
+        _recentSmapiExternalCallbacks[workflowKey] = DateTimeOffset.UtcNow;
+    }
+
+    private static bool IsSmapiNxmResource(NxmLinkInfo link)
+    {
+        return link.ResourceType == NxmResourceType.ModFile &&
+               (link.ModId == SmapiDownloadService.SmapiModId || link.FileId == 898372);
+    }
+
+    /// <summary>
+    /// 在 SMAPI 任务开始前恢复并固定安装目标。
+    ///
+    /// 旧版任务可能只保存了任务名、版本目录或普通 Mod 动作；如果把动作先
+    /// 归一化为 InstallSmapi 后才解析目标，任务就会跳过原先的补问逻辑，最终
+    /// 以空实例名进入安装器。目标解析前置后，已保存的实例名只会被复用一次，
+    /// 真正缺失上下文时才会弹出一次对话框。
+    /// </summary>
+    private async Task<bool> EnsureSmapiTaskTargetAsync(DownloadTaskItem task)
+    {
+        var basePath = InstanceRuntimePathResolver.ResolveBasePath(task.TargetGamePath);
+        var instanceName = ResolveExistingSmapiInstanceName(task);
+
+        var hasUsableBase = !string.IsNullOrWhiteSpace(basePath) && Directory.Exists(basePath);
+        if (!hasUsableBase || string.IsNullOrWhiteSpace(instanceName))
+        {
+            (basePath, instanceName) = await AskSmapiBasePathAndInstanceName(task);
+        }
+
+        if (string.IsNullOrWhiteSpace(basePath) ||
+            !Directory.Exists(basePath) ||
+            string.IsNullOrWhiteSpace(instanceName))
+        {
+            return false;
+        }
+
+        task.TargetGamePath = basePath;
+        task.TargetInstanceName = CreateSafeFileName(instanceName);
+        if (string.IsNullOrWhiteSpace(task.TargetInstanceName))
+        {
+            return false;
+        }
+
+        // 旧任务恢复出的目标也要立即落盘。若后续网络下载或进程退出，重启时
+        // 可以直接复用这个实例名，不会再次弹出同一个对话框。
+        SaveTaskState();
+        EmitLog($"[SMAPI路由] 已固定安装目标: Base={task.TargetGamePath}, 实例={task.TargetInstanceName}");
+        return true;
+    }
+
+    /// <summary>解析 SMAPI 安装的 Base 路径与实例名：优先复用任务中已保存的实例名，避免下载完成后重复弹窗。</summary>
     private async Task<(string? BasePath, string? InstanceName)> AskSmapiBasePathAndInstanceName(DownloadTaskItem task)
     {
         var settings = _settingsStore.Load();
-        var preferredBase = settings.PreferredInstancePath;
+        var taskTargetBase = InstanceRuntimePathResolver.ResolveBasePath(task.TargetGamePath);
+        var settingsPreferredBase = InstanceRuntimePathResolver.ResolveBasePath(
+            settings.PreferredInstancePath);
+        var preferredBase = !string.IsNullOrWhiteSpace(taskTargetBase) &&
+                            Directory.Exists(taskTargetBase)
+            ? taskTargetBase
+            : settingsPreferredBase;
+        var existingInstanceName = ResolveExistingSmapiInstanceName(task);
         var defaultName = BuildSmapiInstanceNameFromTask(task);
 
-        // 复用已选 Base：不再次弹 Base 选择框，但仍弹"输入SMAPI实例名称"
+        // 复用已选 Base；如果任务创建阶段已经收集过实例名，这里直接复用。
         if (!string.IsNullOrWhiteSpace(preferredBase) && Directory.Exists(preferredBase))
         {
+            if (!string.IsNullOrWhiteSpace(existingInstanceName))
+            {
+                return (preferredBase, existingInstanceName);
+            }
+
             var rawName = await _dialogService.ShowInstanceNameDialogAsync(
                 "输入SMAPI实例名称",
                 defaultName,
@@ -3234,6 +3967,11 @@ public partial class DownloadPageViewModel : ObservableObject
             return (null, null);
         }
 
+        if (!string.IsNullOrWhiteSpace(existingInstanceName))
+        {
+            return (basePath, existingInstanceName);
+        }
+
         var rawInstanceName = await _dialogService.ShowInstanceNameDialogAsync(
             "输入SMAPI实例名称",
             defaultName,
@@ -3246,6 +3984,84 @@ public partial class DownloadPageViewModel : ObservableObject
         var name = CreateSafeFileName(rawInstanceName);
         return (string.IsNullOrWhiteSpace(name) ? null : basePath,
                 string.IsNullOrWhiteSpace(name) ? null : name);
+    }
+
+    private static string ResolveExistingSmapiInstanceName(DownloadTaskItem task)
+    {
+        var rawTargetName = task.TargetInstanceName?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(rawTargetName))
+        {
+            return CreateSafeFileName(rawTargetName);
+        }
+
+        // 兼容早期任务记录：旧记录可能只保留了“SMAPI 安装 - xxx”任务名。
+        const string taskPrefix = "SMAPI 安装 - ";
+        if (task.Name.StartsWith(taskPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var nameFromTask = task.Name[taskPrefix.Length..].Trim();
+            if (!string.IsNullOrWhiteSpace(nameFromTask))
+            {
+                return CreateSafeFileName(nameFromTask);
+            }
+        }
+
+        // 版本设置页早期创建的任务名称是“SMAPI <版本> - <实例名>”，
+        // 但当时没有持久化 TargetInstanceName。优先取分隔符后的实例名，
+        // 这样下载结束进入安装阶段不会再次弹出相同的输入框。
+        if (task.Name.StartsWith("SMAPI ", StringComparison.OrdinalIgnoreCase))
+        {
+            var separatorIndex = task.Name.IndexOf(" - ", StringComparison.Ordinal);
+            if (separatorIndex >= 0 && separatorIndex + 3 < task.Name.Length)
+            {
+                var nameFromTask = task.Name[(separatorIndex + 3)..].Trim();
+                if (!string.IsNullOrWhiteSpace(nameFromTask))
+                {
+                    return CreateSafeFileName(nameFromTask);
+                }
+            }
+        }
+
+        // 更早的状态文件可能只保存了版本隔离目录/旧布局运行目录。
+        // TargetGamePath 的语义曾经在 Base、versions/<name> 和
+        // versions/<name>/game 之间变化，读取时从路径恢复实例名即可避免再次询问。
+        var pathInstanceName = TryGetInstanceNameFromVersionPath(task.TargetGamePath);
+        if (!string.IsNullOrWhiteSpace(pathInstanceName))
+        {
+            return CreateSafeFileName(pathInstanceName);
+        }
+
+        return string.Empty;
+    }
+
+    private static string TryGetInstanceNameFromVersionPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var current = new DirectoryInfo(path.Trim().Trim('"'));
+            if (string.Equals(current.Name, "game", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(current.Name, "Mods", StringComparison.OrdinalIgnoreCase))
+            {
+                current = current.Parent ?? current;
+                if (string.Equals(current.Name, "game", StringComparison.OrdinalIgnoreCase))
+                {
+                    current = current.Parent ?? current;
+                }
+            }
+
+            return current.Parent != null &&
+                   string.Equals(current.Parent.Name, "versions", StringComparison.OrdinalIgnoreCase)
+                ? current.Name
+                : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>从任务名（如 "SMAPI 4.5.2-2400-..."）提取 SMAPI 版本，生成默认实例名。</summary>
@@ -3325,23 +4141,7 @@ public partial class DownloadPageViewModel : ObservableObject
 
     private static bool TryExtractFileIdFromOption(string? option, out long fileId)
     {
-        fileId = 0;
-        if (string.IsNullOrWhiteSpace(option))
-        {
-            return false;
-        }
-
-        // URL 形式先匹配 /files/{id}，避免把 /mods/{modId} 误当成 File ID。
-        var match = Regex.Match(
-            option,
-            @"(?:[/\\]files[/\\]|\bfile(?:\s+id)?\s*[:#]?\s*)(?<id>\d+)",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (!match.Success)
-        {
-            return false;
-        }
-
-        return long.TryParse(match.Groups["id"].Value, out fileId) && fileId > 0;
+        return DownloadOptionIdentityParser.TryExtractFileId(option, out fileId);
     }
 
     private static bool TryExtractPositiveLong(string? raw, out long value)
@@ -3365,6 +4165,45 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         return long.TryParse(match.Groups["id"].Value, out value) && value > 0;
+    }
+
+    private static bool TryGetNexusResourceIds(
+        ExternalDownloadRequest request,
+        out long modId,
+        out long fileId)
+    {
+        modId = 0;
+        fileId = 0;
+        return NormalizeSourceToken(request) == "nexusmods" &&
+               TryExtractPositiveLong(request.ResourceId, out modId) &&
+               TryExtractFileIdFromOption(request.SelectedDownloadOption, out fileId);
+    }
+
+    private static string BuildNexusCacheSourceUrl(long modId, long fileId)
+    {
+        return $"svl-nexus-cache://{modId}/{fileId}";
+    }
+
+    private static bool IsNexusCacheSource(string? sourceUrl)
+    {
+        return Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri) &&
+               string.Equals(uri.Scheme, "svl-nexus-cache", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildCurseforgeCacheSourceUrl(long projectId, long fileId)
+    {
+        return $"svl-curseforge-cache://{projectId}/{fileId}";
+    }
+
+    private static bool IsCurseforgeCacheSource(string? sourceUrl)
+    {
+        return Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri) &&
+               string.Equals(uri.Scheme, "svl-curseforge-cache", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCurseforgeTask(DownloadTaskItem task)
+    {
+        return string.Equals(task.SourcePlatform, "Curseforge", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildFallbackGuideUrl(ExternalDownloadRequest request)
@@ -3959,6 +4798,12 @@ public partial class DownloadPageViewModel : ObservableObject
         var displayText = $"[{sourceLabel}#{sourceId}] {SmapiDefaultName} | metric= | time= | icon=avares://SVL.Avalonia/Assets/Icons/Modded.png | {SmapiDefaultSummary}";
         return new DownloadCatalogItem
         {
+            Identity = new CatalogResourceIdentity(
+                long.TryParse(sourceId, out var parsedSourceId) ? parsedSourceId : 0,
+                SmapiDefaultName,
+                ResolveCatalogSource(sourceKey),
+                false,
+                string.Empty),
             DisplayText = displayText,
             Name = SmapiDefaultName,
             SourceTag = sourceLabel,
@@ -4452,9 +5297,28 @@ public partial class DownloadPageViewModel : ObservableObject
 
         var sourceKey = ResolveSourceKey(sourceHead);
         var sourceLabel = ResolveSourceLabel(sourceKey, sourceHead);
+        var sourceId = 0L;
+        if (sourceSplitIndex > 0)
+        {
+            long.TryParse(sourceTag[(sourceSplitIndex + 1)..].Trim(), out sourceId);
+        }
+
+        var collectionSlug = parts
+            .Skip(1)
+            .Select(part => part.Trim())
+            .Where(part => part.StartsWith("slug=", StringComparison.OrdinalIgnoreCase))
+            .Select(part => part[5..].Trim())
+            .FirstOrDefault() ?? string.Empty;
 
         return new DownloadCatalogItem
         {
+            Identity = new CatalogResourceIdentity(
+                sourceId,
+                string.IsNullOrWhiteSpace(name) ? result : name,
+                ResolveCatalogSource(sourceKey),
+                sourceHead.Contains("pack", StringComparison.OrdinalIgnoreCase) ||
+                sourceHead.Contains("collection", StringComparison.OrdinalIgnoreCase),
+                collectionSlug),
             DisplayText = result,
             Name = string.IsNullOrWhiteSpace(name) ? result : name,
             SourceTag = sourceLabel,
@@ -4471,6 +5335,22 @@ public partial class DownloadPageViewModel : ObservableObject
             LocalizedSummary = localizedSummary,
             ModTypeTag = modTypeTag,
             GameVersionTag = gameVersionTag
+        };
+    }
+
+    private static bool HasUsableCatalogIdentity(CatalogResourceIdentity identity)
+    {
+        return identity.ResourceId > 0 && identity.Source != CatalogSource.Unknown;
+    }
+
+    private static CatalogSource ResolveCatalogSource(string sourceKey)
+    {
+        return sourceKey switch
+        {
+            "github" => CatalogSource.GitHub,
+            "nexusmods" => CatalogSource.NexusMods,
+            "curseforge" => CatalogSource.Curseforge,
+            _ => CatalogSource.Unknown
         };
     }
 
@@ -4521,33 +5401,269 @@ public partial class DownloadPageViewModel : ObservableObject
 
     private async Task ProcessQueueAsync()
     {
-        // 并发模型：收集所有待调度任务，受 _concurrencyGate(3) 限流并行执行。
-        // _dispatchedTasks 防止同一任务被重复调度。
-        var pending = DownloadTasks
-            .Where(t => IsPendingTask(t) && !_dispatchedTasks.Contains(t))
-            .ToList();
+        // 并发模型：只把当前可用槽位的任务派发出去；任务完成后会再次泵队列。
+        // 这样设置页的并发上限能覆盖所有下载/安装任务，而不是固定为 3。
+        // ProcessQueueAsync 也会从后台任务的 finally 回调触发，不能直接在后台线程
+        // 枚举 Avalonia ObservableCollection；先取得 UI 线程快照，再在锁内计算槽位。
+        var taskSnapshot = Dispatcher.UIThread.CheckAccess()
+            ? DownloadTasks.ToList()
+            : await Dispatcher.UIThread.InvokeAsync(() => DownloadTasks.ToList());
 
-        foreach (var task in pending)
+        List<DownloadTaskItem> toDispatch;
+        lock (_dispatchLock)
         {
-            _dispatchedTasks.Add(task);
-            _ = ExecuteTaskWithConcurrencyAsync(task);
+            var parallelism = GetConfiguredQueueParallelism();
+            var slots = Math.Max(0, parallelism - _dispatchedTasks.Count);
+            toDispatch = taskSnapshot
+                .Where(t => IsPendingTask(t) && !_dispatchedTasks.Contains(t))
+                .Take(slots)
+                .ToList();
+
+            foreach (var task in toDispatch)
+            {
+                _dispatchedTasks.Add(task);
+            }
         }
 
-        await Task.CompletedTask;
+        foreach (var task in toDispatch)
+        {
+            _ = ExecuteTaskWithConcurrencyAsync(task);
+        }
     }
 
     private async Task ExecuteTaskWithConcurrencyAsync(DownloadTaskItem task)
     {
-        await _concurrencyGate.WaitAsync();
         try
         {
             await ExecuteTaskAsync(task);
         }
+        catch (Exception ex)
+        {
+            // 防止某个未预料的异常让队列槽位永久占用，且让任务保持可重试。
+            var errorMessage = ex.Message;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                task.SetState(DownloadTaskState.Failed, $"任务异常（可重试）: {errorMessage}");
+                task.CanRetry = true;
+                task.CanCancel = false;
+                Status = $"任务失败: {task.Name}";
+                TaskStateChanged?.Invoke(task);
+                EmitLog($"任务异常，可重试: {task.Name}, 错误: {errorMessage}");
+                SaveTaskState();
+            });
+        }
         finally
         {
-            _concurrencyGate.Release();
-            _dispatchedTasks.Remove(task);
+            lock (_dispatchLock)
+            {
+                _dispatchedTasks.Remove(task);
+            }
+
+            // 当前任务结束后继续填充空出的并发槽位。
+            _ = ProcessQueueAsync();
         }
+    }
+
+    private int GetConfiguredQueueParallelism()
+    {
+        try
+        {
+            return Math.Clamp(_settingsStore.Load().CollectionDownloadParallelism, 1, 8);
+        }
+        catch
+        {
+            return 3;
+        }
+    }
+
+    /// <summary>
+    /// 下载任务遇到 Nexus CDN 临时地址失效时，使用稳定的 Mod/File ID 重新解析一次。
+    /// Nexus 返回的 CDN 地址带有短期签名，应用重启或任务长时间排队后再直接复用该
+    /// 地址很容易得到 403；恢复任务必须回到 API/NXM 浏览器回退，而不是永久失败。
+    /// </summary>
+    private async Task DownloadTaskArtifactWithNexusRefreshAsync(
+        DownloadTaskItem task,
+        Func<string, bool> cacheValidator,
+        Action<DownloadProgressSnapshot>? onProgress,
+        CancellationToken cancellationToken,
+        Action<string>? log)
+    {
+        // 稳定缓存来源不是 HTTP 地址。它通常只在入队时作为“已命中缓存”的
+        // 任务来源写入；如果缓存随后被清理，仍应跳过一次必然失败的伪 URL 请求，
+        // 直接按 ProjectID/FileID 刷新真实地址。
+        var requiresTrackedSourceRefresh = IsCurseforgeCacheSource(task.SourceUrl);
+        try
+        {
+            if (!requiresTrackedSourceRefresh)
+            {
+                await _httpDownloadService.DownloadAsync(
+                    task.SourceUrl,
+                    task.OutputFilePath,
+                    onProgress,
+                    cancellationToken,
+                    log,
+                    cacheValidator);
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception firstError) when (CanRefreshTrackedTaskSource(task))
+        {
+            log?.Invoke($"平台临时下载地址失效，按稳定来源 ID 重新解析: {firstError.Message}");
+        }
+
+        if (requiresTrackedSourceRefresh && !CanRefreshTrackedTaskSource(task))
+        {
+            throw new InvalidDataException("缓存来源缺少可恢复的项目/文件 ID");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var refreshed = await ResolveTrackedTaskSourceAsync(task, cancellationToken);
+        if (!refreshed.IsSuccess ||
+            !Uri.TryCreate(refreshed.DownloadUrl, UriKind.Absolute, out var refreshedUri) ||
+            !IsHttpUri(refreshedUri))
+        {
+            throw new InvalidDataException(
+                string.IsNullOrWhiteSpace(refreshed.Message)
+                    ? "Nexus 下载地址刷新失败"
+                    : refreshed.Message);
+        }
+
+        task.SourceUrl = refreshed.DownloadUrl;
+        log?.Invoke($"Nexus 下载地址已刷新，继续下载: {refreshed.FileName}");
+        await _httpDownloadService.DownloadAsync(
+            task.SourceUrl,
+            task.OutputFilePath,
+            onProgress,
+            cancellationToken,
+            log,
+            cacheValidator);
+    }
+
+    private static bool CanRefreshTrackedTaskSource(DownloadTaskItem task)
+    {
+        return task.SourceModId is > 0 &&
+               task.SourceFileId is > 0 &&
+               (task.TaskKind == DownloadTaskKind.NxmMod ||
+                string.Equals(task.SourcePlatform, "NexusMods", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(task.SourcePlatform, "Curseforge", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsNexusTrackedTask(DownloadTaskItem task)
+    {
+        return task.TaskKind == DownloadTaskKind.NxmMod ||
+               string.Equals(task.SourcePlatform, "NexusMods", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCurseforgeTrackedTask(DownloadTaskItem task)
+    {
+        return string.Equals(task.SourcePlatform, "Curseforge", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<ResolvedExternalDownloadTarget> ResolveTrackedTaskSourceAsync(
+        DownloadTaskItem task,
+        CancellationToken cancellationToken)
+    {
+        if (IsNexusTrackedTask(task))
+        {
+            var nexusResolved = await ResolveNexusTaskSourceAsync(task, cancellationToken);
+            return nexusResolved.IsSuccess &&
+                   Uri.TryCreate(nexusResolved.DownloadUrl, UriKind.Absolute, out var nexusUri) &&
+                   IsHttpUri(nexusUri)
+                ? ResolvedExternalDownloadTarget.Success(
+                    nexusResolved.DownloadUrl,
+                    ResolveDownloadFileName(nexusUri, nexusResolved.FileName))
+                : ResolvedExternalDownloadTarget.Fail(nexusResolved.Message, string.Empty);
+        }
+
+        if (IsCurseforgeTrackedTask(task) &&
+            task.SourceModId is long projectId && projectId > 0 &&
+            task.SourceFileId is long fileId && fileId > 0)
+        {
+            var resolvedUrl = await _remoteCatalogService.ResolveCurseforgeFileDownloadUrlAsync(
+                projectId,
+                fileId,
+                string.Empty,
+                cancellationToken);
+            if (Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var curseUri) &&
+                IsHttpUri(curseUri) &&
+                IsLikelyCurseforgeDirectDownloadUrl(resolvedUrl))
+            {
+                return ResolvedExternalDownloadTarget.Success(
+                    resolvedUrl,
+                    ResolveDownloadFileName(curseUri, task.Name));
+            }
+
+            return ResolvedExternalDownloadTarget.Fail(
+                "CurseForge 下载地址刷新失败",
+                string.Empty);
+        }
+
+        return ResolvedExternalDownloadTarget.Fail("下载来源缺少可恢复的项目/文件 ID", string.Empty);
+    }
+
+    private async Task<NexusResolveResult> ResolveNexusTaskSourceAsync(
+        DownloadTaskItem task,
+        CancellationToken cancellationToken)
+    {
+        if (task.SourceModId is not long modId || modId <= 0 ||
+            task.SourceFileId is not long fileId || fileId <= 0)
+        {
+            return NexusResolveResult.Failed("Nexus 下载任务缺少有效的 Mod/File ID");
+        }
+
+        var settings = _settingsStore.Load();
+        var info = new NxmLinkInfo
+        {
+            ResourceType = NxmResourceType.ModFile,
+            GameDomain = "stardewvalley",
+            ModId = modId,
+            FileId = fileId
+        };
+
+        NexusResolveResult resolved;
+        if (!string.IsNullOrWhiteSpace(settings.NexusApiKey) ||
+            !string.IsNullOrWhiteSpace(settings.NexusOAuthAccessToken))
+        {
+            resolved = await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
+                info,
+                settings.NexusApiKey,
+                settings.NexusOAuthAccessToken,
+                cancellationToken);
+            if (resolved.IsSuccess)
+            {
+                return resolved;
+            }
+        }
+
+        var browserUrl = BuildNexusWebUrl(info);
+        var fallbackNxmLink = await TryBrowserDownloadFallbackAsync(
+            modId,
+            fileId,
+            browserUrl,
+            cancellationToken);
+        if (string.IsNullOrWhiteSpace(fallbackNxmLink))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return NexusResolveResult.Failed("Nexus 下载地址刷新失败，未收到浏览器 NXM 回调");
+        }
+
+        if (!_nxmLinkParser.TryParse(fallbackNxmLink, out var fallbackInfo, out var parseError))
+        {
+            return NexusResolveResult.Failed(
+                string.IsNullOrWhiteSpace(parseError)
+                    ? "Nexus 下载地址刷新失败，浏览器回退链接无效"
+                    : $"Nexus 浏览器回退链接无效: {parseError}");
+        }
+
+        return await _nexusModDownloadResolverService.ResolveDownloadUrlAsync(
+            fallbackInfo,
+            settings.NexusApiKey,
+            settings.NexusOAuthAccessToken,
+            cancellationToken);
     }
 
     private static bool IsPendingTask(DownloadTaskItem task)
@@ -4555,8 +5671,120 @@ public partial class DownloadPageViewModel : ObservableObject
         return task.TaskState == DownloadTaskState.Pending;
     }
 
+    private long BeginDownloadProgressEpoch(DownloadTaskItem task)
+    {
+        var epoch = Interlocked.Increment(ref _downloadProgressEpochSeed);
+        _downloadProgressEpochs[task] = epoch;
+        return epoch;
+    }
+
+    private void EndDownloadProgressEpoch(DownloadTaskItem task, long epoch)
+    {
+        // 不删除条目，避免旧回调与重试新阶段出现 ABA；下一个阶段会写入新的
+        // 全局唯一 epoch。任务从列表移除时再清理字典。
+        _downloadProgressEpochs.TryUpdate(task, Interlocked.Increment(ref _downloadProgressEpochSeed), epoch);
+    }
+
+    private bool IsCurrentDownloadProgressEpoch(DownloadTaskItem task, long epoch)
+    {
+        return _downloadProgressEpochs.TryGetValue(task, out var current) && current == epoch;
+    }
+
+    private static async Task ClearTaskSegmentProgressAsync(DownloadTaskItem task)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            task.ClearSegmentProgress();
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(task.ClearSegmentProgress);
+    }
+
+    /// <summary>
+    /// 应用重启后恢复持久化的 Pending 任务。
+    /// 上次运行中已经进入 Resolving/Downloading/Installing 的任务会在读取时
+    /// 标记为可重试失败；只有明确保持 Pending 的任务才在这里重新进入队列。
+    /// </summary>
+    public void ResumePendingTasks()
+    {
+        if (_pendingTasksResumeStarted)
+        {
+            return;
+        }
+
+        _pendingTasksResumeStarted = true;
+        var pendingCount = DownloadTasks.Count(IsPendingTask);
+        if (pendingCount == 0)
+        {
+            return;
+        }
+
+        Status = $"正在恢复 {pendingCount} 个待处理下载任务";
+        EmitLog($"应用启动：恢复 {pendingCount} 个 Pending 下载任务");
+        _ = ProcessQueueAsync();
+    }
+
     private async Task ExecuteTaskAsync(DownloadTaskItem task)
     {
+        // 兼容早期状态/外部入队记录：SMAPI 曾经可能以普通 Mod 动作落盘。
+        // 必须在下载前纠正动作，避免下载完成后才进入 SMAPI 分支并临时询问
+        // 实例名称；已有 TargetGamePath/TargetInstanceName 会被完整复用。
+        NormalizeSmapiTaskAction(task);
+
+        // SMAPI 的安装目标是任务上下文的一部分，必须在进入下载/安装队列前
+        // 完整恢复。旧状态文件可能没有 TaskAction、TargetGamePath 或
+        // TargetInstanceName；此时只允许在这里补问一次，不能等下载完成后再
+        // 进入另一条安全网重复弹出实例名对话框。
+        if (task.TaskAction == DownloadTaskAction.InstallSmapi &&
+            !await EnsureSmapiTaskTargetAsync(task))
+        {
+            task.SetState(DownloadTaskState.Cancelled, "已取消 SMAPI 安装（未选择实例）");
+            task.CanRetry = false;
+            task.CanCancel = false;
+            Status = $"已取消任务: {task.Name}";
+            TaskStateChanged?.Invoke(task);
+            SaveTaskState();
+            return;
+        }
+
+        // 手动 URL 导入在下载前使用 Generic 任务。若应用在归档已经落盘、
+        // 但尚未完成类型识别时退出，恢复任务时必须重新识别本地包，
+        // 否则它会错过本地安装路由并被当成缺少来源的普通任务。
+        TryResolveLocalPackageTaskKind(task);
+
+        // 兼容旧版已经保存 CurseForge ProjectID/FileID、但没有保存 CDN 地址的
+        // 整合包任务。稳定 ID 本身就是可恢复来源，先转成内部缓存来源标识，
+        // 让后续执行分支优先命中缓存，缓存不存在时再刷新 CDN。
+        if (task.TaskAction == DownloadTaskAction.InstallModpack &&
+            task.TaskKind == DownloadTaskKind.CurseforgeModpack &&
+            !HasRealDownloadSource(task) &&
+            IsCurseforgeTask(task) &&
+            task.SourceModId is long recoverableProjectId && recoverableProjectId > 0 &&
+            task.SourceFileId is long recoverableFileId && recoverableFileId > 0)
+        {
+            task.SourceUrl = BuildCurseforgeCacheSourceUrl(
+                recoverableProjectId,
+                recoverableFileId);
+        }
+
+        // 整合包/Collection 的下载和安装是两个阶段。若归档已经完整落盘、
+        // 但安装阶段失败或应用重启后中断，重试应直接复用本地归档；SourceUrl
+        // 仍保留远程地址，只有本地归档不存在时才重新进入下载流程。
+        if (ShouldReuseLocalPackageArchive(task))
+        {
+            if (task.TaskAction == DownloadTaskAction.InstallCollection)
+            {
+                await ExecuteCollectionInstallTaskAsync(task, task.OutputFilePath);
+            }
+            else
+            {
+                await ExecuteModpackInstallTaskAsync(task, task.OutputFilePath);
+            }
+
+            return;
+        }
+
         // 整合包安装任务：本地文件路径（无 HTTP 下载源），直接交给 ModpackInstallService
         if (task.TaskAction == DownloadTaskAction.InstallModpack &&
             (task.TaskKind == DownloadTaskKind.SvlModpack ||
@@ -4576,7 +5804,9 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
-        if (task.TaskKind == DownloadTaskKind.NxmCollection && HasRealDownloadSource(task))
+        if (task.TaskAction == DownloadTaskAction.InstallCollection &&
+            task.TaskKind is DownloadTaskKind.NxmCollection or DownloadTaskKind.NexusCollection &&
+            HasRealDownloadSource(task))
         {
             await ExecuteCollectionRealDownloadTaskAsync(task);
             return;
@@ -4595,46 +5825,30 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
+        // 所有可执行任务都必须有真实的下载或安装路由；缺少来源时明确失败，
+        // 避免把未执行的任务误报为成功。
         task.CanRetry = false;
         task.CanCancel = false;
-        task.SetState(DownloadTaskState.Downloading, "下载中");
-        task.Progress = 0;
-        Status = $"正在执行任务: {task.Name}";
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"开始执行任务: {task.Name}");
-
-        for (var progress = 0; progress <= 100; progress += 20)
-        {
-            task.Progress = progress;
-            TaskStateChanged?.Invoke(task);
-            await Task.Delay(250);
-        }
-
-        if (task.Name.Contains("fail", StringComparison.OrdinalIgnoreCase))
-        {
-            task.SetState(DownloadTaskState.Failed, "下载失败（可重试）");
-            task.CanRetry = true;
-            Status = $"任务失败: {task.Name}";
-            TaskStateChanged?.Invoke(task);
-            SaveTaskState();
-            EmitLog($"任务失败，可重试: {task.Name}");
-            return;
-        }
-
-        task.SetState(DownloadTaskState.Installing, "安装中");
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"开始安装任务: {task.Name}");
-        await Task.Delay(300);
-        task.SetState(DownloadTaskState.Completed, "已完成");
-        task.Progress = 100;
-        Status = $"任务完成: {task.Name}";
+        task.SetState(DownloadTaskState.Failed, "缺少真实下载地址，无法执行");
+        Status = $"任务失败: {task.Name}";
         TaskStateChanged?.Invoke(task);
         SaveTaskState();
-        EmitLog($"任务完成: {task.Name}");
+        EmitLog($"任务失败，缺少真实下载地址: {task.Name}");
     }
 
     /// <summary>整合包安装任务执行：按 TaskKind 路由到 ModpackInstallService 的 SVL 或 Curseforge 流程。</summary>
-    private async Task ExecuteModpackInstallTaskAsync(DownloadTaskItem task)
+    private Task ExecuteModpackInstallTaskAsync(DownloadTaskItem task)
+    {
+        return ExecuteModpackInstallTaskAsync(task, task.SourceUrl);
+    }
+
+    /// <summary>
+    /// 从指定本地归档安装整合包。在线整合包在下载完成后，SourceUrl 仍是远端地址，
+    /// 因此必须显式传入 OutputFilePath，不能让安装器再次把远端 URL 当成本地文件。
+    /// </summary>
+    private async Task ExecuteModpackInstallTaskAsync(
+        DownloadTaskItem task,
+        string archivePath)
     {
         task.CanRetry = false;
         task.CanCancel = true;
@@ -4649,54 +5863,58 @@ public partial class DownloadPageViewModel : ObservableObject
 
         try
         {
-            var zipPath = task.SourceUrl;
+            var zipPath = archivePath;
+            if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
+            {
+                throw new FileNotFoundException("整合包归档不存在", zipPath);
+            }
+
             var instanceName = string.IsNullOrWhiteSpace(task.TargetInstanceName)
                 ? Path.GetFileNameWithoutExtension(zipPath)
                 : task.TargetInstanceName;
+            // 部分安装会保留已成功的 Mods，并把运行目录写入任务状态；重试时
+            // 必须让 SMAPI 安装器走更新分支，否则 versions/<实例> 已存在会被拒绝。
+            var updateExisting = HasPreviouslyInstalledModpackRuntime(task);
 
             ModpackInstallResult result;
             if (task.TaskKind == DownloadTaskKind.SvlModpack)
             {
                 result = await _modpackInstallService.InstallSvlModpackAsync(
                     zipPath, instanceName, task.TargetGamePath,
-                    progress =>
-                    {
-                        task.Progress = progress.Percent;
-                        task.SetState(DownloadTaskState.Installing, progress.StepText);
-                        task.SubProgressText = progress.SubProgressText;
-                        task.SubProgress = progress.SubProgress;
-                        EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
-                        TaskStateChanged?.Invoke(task);
-                    },
-                    cts.Token);
+                    progress => ApplyModpackInstallProgress(task, progress),
+                    cts.Token,
+                    customIconPath: task.CustomIconPath,
+                    updateExisting: updateExisting);
             }
             else
             {
                 result = await _modpackInstallService.InstallCurseforgeModpackAsync(
                     zipPath, instanceName, task.TargetGamePath,
-                    progress =>
-                    {
-                        task.Progress = progress.Percent;
-                        task.SetState(DownloadTaskState.Installing, progress.StepText);
-                        task.SubProgressText = progress.SubProgressText;
-                        task.SubProgress = progress.SubProgress;
-                        EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
-                        TaskStateChanged?.Invoke(task);
-                    },
-                    cts.Token);
+                    progress => ApplyModpackInstallProgress(task, progress),
+                    cts.Token,
+                    customIconPath: task.CustomIconPath,
+                    updateExisting: updateExisting);
             }
 
             if (result.IsSuccess)
             {
-                task.Progress = 100;
                 task.InstalledPath = result.RuntimePath;
                 task.InstalledDirectory = result.VersionRootPath;
-                var failText = result.FailedMods.Count > 0
-                    ? $"（{result.FailedMods.Count} 个 Mod 下载失败）"
+                var hasFailedMods = result.FailedMods.Count > 0;
+                // 部分完成仍有失败项，不能把任务条渲染成满格；只有所有 Mod
+                // 都安装成功时才显示 100%。
+                task.Progress = hasFailedMods ? 99 : 100;
+                var failText = hasFailedMods
+                    ? $"（{result.FailedMods.Count} 个 Mod 下载失败，可重试）"
                     : string.Empty;
-                task.SetState(DownloadTaskState.Completed, $"已完成{failText}");
-                Status = $"整合包安装完成: {task.Name}";
-                EmitLog($"整合包安装完成: {task.Name}, 运行目录: {result.RuntimePath}, 安装 {result.InstalledMods.Count} 个, 失败 {result.FailedMods.Count} 个");
+                task.SetState(
+                    hasFailedMods ? DownloadTaskState.Failed : DownloadTaskState.Completed,
+                    hasFailedMods ? $"部分完成{failText}" : "已完成");
+                task.CanRetry = hasFailedMods;
+                Status = hasFailedMods
+                    ? $"整合包安装部分完成: {task.Name}"
+                    : $"整合包安装完成: {task.Name}";
+                EmitLog($"整合包安装{(hasFailedMods ? "部分完成" : "完成")}: {task.Name}, 运行目录: {result.RuntimePath}, 安装 {result.InstalledMods.Count} 个, 失败 {result.FailedMods.Count} 个");
                 if (result.FailedMods.Count > 0)
                 {
                     task.FailedDetails = string.Join("\n", result.FailedMods);
@@ -4714,6 +5932,7 @@ public partial class DownloadPageViewModel : ObservableObject
             else
             {
                 task.SetState(DownloadTaskState.Failed, $"安装失败（可重试）: {result.Message}");
+                task.FailedDetails = result.Message;
                 task.CanRetry = true;
                 Status = $"整合包安装失败: {task.Name}";
                 EmitLog($"整合包安装失败: {task.Name}, 错误: {result.Message}");
@@ -4727,6 +5946,7 @@ public partial class DownloadPageViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            task.FailedDetails = ex.Message;
             task.SetState(DownloadTaskState.Failed, $"安装失败（可重试）: {ex.Message}");
             task.CanRetry = true;
             Status = $"整合包安装失败: {task.Name}";
@@ -4735,7 +5955,7 @@ public partial class DownloadPageViewModel : ObservableObject
         finally
         {
             cts.Dispose();
-            _runningTaskCancellationSources.Remove(task);
+            _runningTaskCancellationSources.TryRemove(task, out _);
             task.CanCancel = false;
             TaskStateChanged?.Invoke(task);
             SaveTaskState();
@@ -4743,7 +5963,18 @@ public partial class DownloadPageViewModel : ObservableObject
     }
 
     /// <summary>Collection 安装任务执行：调用 CollectionInstallService 从本地 7z 文件按 Phase 分阶段安装。</summary>
-    private async Task ExecuteCollectionInstallTaskAsync(DownloadTaskItem task)
+    private Task ExecuteCollectionInstallTaskAsync(DownloadTaskItem task)
+    {
+        return ExecuteCollectionInstallTaskAsync(task, task.SourceUrl);
+    }
+
+    /// <summary>
+    /// 从指定本地归档安装 Collection。在线 URL 任务下载完成后，SourceUrl 仍保留
+    /// 远端地址，因此安装阶段必须使用已落盘的 OutputFilePath。
+    /// </summary>
+    private async Task ExecuteCollectionInstallTaskAsync(
+        DownloadTaskItem task,
+        string archivePath)
     {
         task.CanRetry = false;
         task.CanCancel = true;
@@ -4758,36 +5989,41 @@ public partial class DownloadPageViewModel : ObservableObject
 
         try
         {
-            var archivePath = task.SourceUrl;
+            if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+            {
+                throw new FileNotFoundException("Collection 归档不存在", archivePath);
+            }
+
             var instanceName = string.IsNullOrWhiteSpace(task.TargetInstanceName)
                 ? Path.GetFileNameWithoutExtension(archivePath)
                 : task.TargetInstanceName;
+            var updateExisting = HasPreviouslyInstalledPackageRuntime(task);
 
             var result = await _collectionInstallService.InstallCollectionFromArchiveAsync(
                 archivePath, instanceName,
-                progress =>
-                {
-                    task.Progress = progress.Percent;
-                    task.SetState(DownloadTaskState.Installing, progress.StepText);
-                    task.SubProgressText = progress.SubProgressText;
-                    task.SubProgress = progress.SubProgress;
-                    EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
-                    TaskStateChanged?.Invoke(task);
-                },
+                progress => ApplyCollectionInstallProgress(task, progress),
                 cts.Token,
-                gameBasePath: task.TargetGamePath);
+                gameBasePath: task.TargetGamePath,
+                customIconPath: task.CustomIconPath,
+                updateExisting: updateExisting);
 
             if (result.IsSuccess)
             {
-                task.Progress = 100;
                 task.InstalledPath = result.RuntimePath;
                 task.InstalledDirectory = result.VersionRootPath;
-                var failText = result.FailedMods.Count > 0
-                    ? $"（{result.FailedMods.Count} 个 Mod 下载失败）"
+                var hasFailedMods = result.FailedMods.Count > 0;
+                task.Progress = hasFailedMods ? 99 : 100;
+                var failText = hasFailedMods
+                    ? $"（{result.FailedMods.Count} 个 Mod 下载失败，可重试）"
                     : string.Empty;
-                task.SetState(DownloadTaskState.Completed, $"已完成{failText}");
-                Status = $"Collection 安装完成: {task.Name}";
-                EmitLog($"Collection 安装完成: {task.Name}, 运行目录: {result.RuntimePath}, 安装 {result.InstalledMods.Count} 个, 失败 {result.FailedMods.Count} 个");
+                task.SetState(
+                    hasFailedMods ? DownloadTaskState.Failed : DownloadTaskState.Completed,
+                    hasFailedMods ? $"部分完成{failText}" : "已完成");
+                task.CanRetry = hasFailedMods;
+                Status = hasFailedMods
+                    ? $"Collection 安装部分完成: {task.Name}"
+                    : $"Collection 安装完成: {task.Name}";
+                EmitLog($"Collection 安装{(hasFailedMods ? "部分完成" : "完成")}: {task.Name}, 运行目录: {result.RuntimePath}, 安装 {result.InstalledMods.Count} 个, 失败 {result.FailedMods.Count} 个");
                 if (result.FailedMods.Count > 0)
                 {
                     task.FailedDetails = string.Join("\n", result.FailedMods);
@@ -4805,6 +6041,7 @@ public partial class DownloadPageViewModel : ObservableObject
             else
             {
                 task.SetState(DownloadTaskState.Failed, $"安装失败（可重试）: {result.Message}");
+                task.FailedDetails = result.Message;
                 task.CanRetry = true;
                 Status = $"Collection 安装失败: {task.Name}";
                 EmitLog($"Collection 安装失败: {task.Name}, 错误: {result.Message}");
@@ -4818,6 +6055,7 @@ public partial class DownloadPageViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            task.FailedDetails = ex.Message;
             task.SetState(DownloadTaskState.Failed, $"安装失败（可重试）: {ex.Message}");
             task.CanRetry = true;
             Status = $"Collection 安装失败: {task.Name}";
@@ -4826,7 +6064,7 @@ public partial class DownloadPageViewModel : ObservableObject
         finally
         {
             cts.Dispose();
-            _runningTaskCancellationSources.Remove(task);
+            _runningTaskCancellationSources.TryRemove(task, out _);
             task.CanCancel = false;
             TaskStateChanged?.Invoke(task);
             SaveTaskState();
@@ -4846,14 +6084,47 @@ public partial class DownloadPageViewModel : ObservableObject
 
         var cts = new CancellationTokenSource();
         _runningTaskCancellationSources[task] = cts;
+        var downloadProgressEpoch = BeginDownloadProgressEpoch(task);
 
         try
         {
             // Nexus 下载缓存命中：直接用缓存文件，免重复下载/浏览器指引
             var fromCache = false;
+            Func<string, bool> sourceCacheValidator = task.TaskAction switch
+            {
+                DownloadTaskAction.InstallSmapi => ModpackInstallService.TryNormalizeSmapiArchive,
+                DownloadTaskAction.InstallModpack => path => IsValidLocalPackageArchive(path, task.TaskKind),
+                DownloadTaskAction.InstallCollection => IsValidCollectionArchive,
+                _ => ModpackInstallService.IsValidModArchiveFile
+            };
+
+            if (TryReuseExistingDownloadedArtifact(task))
+            {
+                task.Progress = 100;
+                try
+                {
+                    var localSize = new FileInfo(task.OutputFilePath).Length;
+                    task.TotalSizeText = FormatSize(localSize);
+                    task.DownloadedSizeText = FormatSize(localSize);
+                    task.SpeedText = "本地归档";
+                    task.EtaText = string.Empty;
+                }
+                catch
+                {
+                    // 展示字段是增强信息，不能影响本地归档复用。
+                }
+
+                EmitLog($"命中任务已有完整归档，跳过网络下载: {task.OutputFilePath}");
+                fromCache = true;
+            }
+
             if (task.TaskKind == DownloadTaskKind.NxmMod &&
                 task.SourceModId is long modId && task.SourceFileId is long fileId &&
-                NexusDownloadCache.TryGet(modId, fileId, out var cachedNexus))
+                NexusDownloadCache.TryGet(
+                    modId,
+                    fileId,
+                    out var cachedNexus,
+                    sourceCacheValidator))
             {
                 try
                 {
@@ -4863,36 +6134,82 @@ public partial class DownloadPageViewModel : ObservableObject
                     EmitLog($"命中 Nexus 缓存，直接复制: {cachedNexus}");
                     fromCache = true;
                 }
-                catch
+                catch (Exception) when (!IsNexusCacheSource(task.SourceUrl))
                 {
                     fromCache = false;
                 }
             }
 
+            // CurseForge CDN 是短期/可变化的地址，稳定的 ProjectID/FileID
+            // 缓存优先级高于重新请求 CDN。Generic 任务也要走这里，因为下载页
+            // 与批量更新为了保留来源凭证并不使用 NxmMod TaskKind。
+            if (!fromCache &&
+                IsCurseforgeTask(task) &&
+                task.SourceModId is long curseforgeProjectId &&
+                task.SourceFileId is long curseforgeFileId &&
+                CurseforgeDownloadCache.TryGet(
+                    curseforgeProjectId,
+                    curseforgeFileId,
+                    out var cachedCurseforge,
+                    sourceCacheValidator))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(task.OutputFilePath) ?? string.Empty);
+                File.Copy(cachedCurseforge, task.OutputFilePath, true);
+                task.Progress = 100;
+                EmitLog($"命中 CurseForge 缓存，直接复制: {cachedCurseforge}");
+                fromCache = true;
+            }
+
             if (!fromCache)
             {
-                await _httpDownloadService.DownloadAsync(
-                    task.SourceUrl,
-                    task.OutputFilePath,
+                if (IsNexusCacheSource(task.SourceUrl))
+                {
+                    throw new FileNotFoundException("Nexus 缓存文件已失效，无法完成下载", task.SourceUrl);
+                }
+
+                // 通用 URL 缓存默认只按文件存在判断，旧版本可能已经把 HTML
+                // 错误页写进缓存。已知任务类型在下载层直接提供归档校验，
+                // 这样坏缓存会被淘汰，新的错误响应也不会再次污染缓存。
+                await DownloadTaskArtifactWithNexusRefreshAsync(
+                    task,
+                    sourceCacheValidator,
                     snapshot =>
                     {
-                        task.Progress = (int)Math.Round(snapshot.Percent);
+                        var displayPercent = DownloadProgressCalculator.ToDisplayPercent(snapshot);
                         var downloadedMb = snapshot.DownloadedBytes / 1024d / 1024d;
                         var totalMb = snapshot.TotalBytes / 1024d / 1024d;
                         var speedMb = snapshot.BytesPerSecond / 1024d / 1024d;
+                        // Percent 是观测值，不代表 DownloadAsync 已经完成；多线程分片
+                        // 可能先把累计字节写满，再等待其它响应释放。状态文案也必须
+                        // 与进度条遵守同一规则，不能出现“下载中 100.0%”。
+                        var statusPercent = snapshot.IsComplete
+                            ? 100d
+                            : Math.Min(99.9d, Math.Max(0d, snapshot.Percent));
+                        var statusText = snapshot.TotalBytes > 0
+                            ? $"下载中 {statusPercent:F1}% ({downloadedMb:F1}/{totalMb:F1} MB, {speedMb:F1} MB/s)"
+                            : $"下载中 ({downloadedMb:F1} MB, {speedMb:F1} MB/s)";
+                        var segmentPercents = snapshot.SegmentPercents is { Length: > 1 } percents
+                            ? percents.ToArray()
+                            : null;
 
-                        task.SetState(DownloadTaskState.Downloading,
-                            snapshot.TotalBytes > 0
-                                ? $"下载中 {snapshot.Percent:F1}% ({downloadedMb:F1}/{totalMb:F1} MB, {speedMb:F1} MB/s)"
-                                : $"下载中 ({downloadedMb:F1} MB, {speedMb:F1} MB/s)");
-
-                        // 多线程分片进度（UI 线程同步集合变更）
-                        if (snapshot.SegmentPercents is { Length: > 1 } percents)
+                        // HttpDownloadService 的回调来自分片线程；所有绑定属性、分片集合和
+                        // 状态事件统一排到 UI 线程，避免进度条与列表同时重绘时发生竞争。
+                        Dispatcher.UIThread.Post(() =>
                         {
-                            Dispatcher.UIThread.Post(() => task.SyncSegmentProgress(percents));
-                        }
+                            if (!IsCurrentDownloadProgressEpoch(task, downloadProgressEpoch))
+                            {
+                                return;
+                            }
 
-                        TaskStateChanged?.Invoke(task);
+                            task.Progress = displayPercent;
+                            task.SetState(DownloadTaskState.Downloading, statusText);
+                            if (segmentPercents is { Length: > 1 })
+                            {
+                                task.SyncSegmentProgress(segmentPercents);
+                            }
+
+                            TaskStateChanged?.Invoke(task);
+                        });
                     },
                     cts.Token,
                     log: msg => Dispatcher.UIThread.Post(() => EmitLog(msg)));
@@ -4901,7 +6218,22 @@ public partial class DownloadPageViewModel : ObservableObject
                 if (task.TaskKind == DownloadTaskKind.NxmMod &&
                     task.SourceModId is long saveModId && task.SourceFileId is long saveFileId)
                 {
-                    NexusDownloadCache.Save(saveModId, saveFileId, task.OutputFilePath);
+                    NexusDownloadCache.Save(
+                        saveModId,
+                        saveFileId,
+                        task.OutputFilePath,
+                        sourceCacheValidator);
+                }
+
+                if (IsCurseforgeTask(task) &&
+                    task.SourceModId is long saveCurseforgeProjectId &&
+                    task.SourceFileId is long saveCurseforgeFileId)
+                {
+                    CurseforgeDownloadCache.Save(
+                        saveCurseforgeProjectId,
+                        saveCurseforgeFileId,
+                        task.OutputFilePath,
+                        sourceCacheValidator);
                 }
             }
         }
@@ -4929,13 +6261,14 @@ public partial class DownloadPageViewModel : ObservableObject
         }
         finally
         {
+            EndDownloadProgressEpoch(task, downloadProgressEpoch);
+            await ClearTaskSegmentProgressAsync(task);
             cts.Dispose();
-            _runningTaskCancellationSources.Remove(task);
+            _runningTaskCancellationSources.TryRemove(task, out _);
         }
 
         task.Progress = 100;
         task.CanCancel = false;
-        Dispatcher.UIThread.Post(task.ClearSegmentProgress);
 
         if (task.TaskAction == DownloadTaskAction.SaveOnly)
         {
@@ -4948,25 +6281,73 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
-        // 最终安全网：通用 MOD 任务实为 SMAPI（文件名/来源含 smapi 或 2400）时，
-        // 转成 SMAPI 安装（需弹 Base 路径 + 实例名）。兜住未走 AddTaskFromExternalAsync 的路由遗漏。
-        if (task.TaskAction == DownloadTaskAction.InstallMod &&
-            LooksLikeSmapiTask(task) &&
-            string.IsNullOrWhiteSpace(task.TargetGamePath))
+        // 手动 URL 导入在下载前不知道归档类型。下载完成后用清单识别真实类型，
+        // 再转入对应安装器；否则 Generic 任务会错误地按普通 Mod 解压。
+        if (task.TaskAction == DownloadTaskAction.InstallModpack &&
+            task.TaskKind == DownloadTaskKind.Generic)
         {
-            var (basePath, instanceName) = await AskSmapiBasePathAndInstanceName(task);
-            if (!string.IsNullOrWhiteSpace(basePath) && !string.IsNullOrWhiteSpace(instanceName))
+            var detectedType = ModpackType.Unknown;
+            string? detectionError = null;
+            try
             {
-                task.TargetGamePath = basePath;
-                task.TargetInstanceName = instanceName;
-                task.TaskAction = DownloadTaskAction.InstallSmapi;
-                task.Name = $"SMAPI 安装 - {instanceName}";
-                EmitLog($"[SMAPI路由] 通用任务识别为 SMAPI，已转 SMAPI 安装，Base={basePath}, 实例={instanceName}");
+                var detection = ModpackTypeDetector.Detect(task.OutputFilePath);
+                detectedType = detection.Type;
+                detectionError = detection.ErrorMessage;
+                if (!string.IsNullOrWhiteSpace(detection.TempExtractPath))
+                {
+                    ModpackTypeDetector.CleanupTempDirectory(detection.TempExtractPath);
+                }
             }
+            catch (Exception ex)
+            {
+                detectionError = ex.Message;
+            }
+
+            if (detectedType == ModpackType.SVL || detectedType == ModpackType.Curseforge)
+            {
+                task.TaskKind = detectedType == ModpackType.SVL
+                    ? DownloadTaskKind.SvlModpack
+                    : DownloadTaskKind.CurseforgeModpack;
+            }
+            else if (detectedType == ModpackType.NexusCollection)
+            {
+                task.TaskKind = DownloadTaskKind.NexusCollection;
+                task.TaskAction = DownloadTaskAction.InstallCollection;
+                await ExecuteCollectionInstallTaskAsync(task, task.OutputFilePath);
+                return;
+            }
+            else
+            {
+                var reason = string.IsNullOrWhiteSpace(detectionError)
+                    ? "归档中未找到可识别的 modpack.json、manifest.json 或 collection.json"
+                    : detectionError;
+                task.SetState(DownloadTaskState.Failed, "无法识别整合包（可重试）");
+                task.FailedDetails = reason;
+                task.CanRetry = true;
+                task.CanCancel = false;
+                Status = $"整合包任务失败: {task.Name}";
+                TaskStateChanged?.Invoke(task);
+                SaveTaskState();
+                EmitLog($"整合包识别失败: {task.Name}, 错误: {reason}");
+                return;
+            }
+        }
+
+        // 在线整合包已经下载到 OutputFilePath；此处不能继续落入普通 Mod 安装，
+        // 否则会把 modpack.json/manifest.json 当成单个 Mod，表现为整合包安装失败。
+        if (task.TaskAction == DownloadTaskAction.InstallModpack &&
+            (task.TaskKind == DownloadTaskKind.SvlModpack ||
+             task.TaskKind == DownloadTaskKind.CurseforgeModpack))
+        {
+            await ExecuteModpackInstallTaskAsync(task, task.OutputFilePath);
+            return;
         }
 
         if (task.TaskAction == DownloadTaskAction.InstallSmapi)
         {
+            // 下载阶段的 100% 只代表安装包已经落盘；SMAPI 安装仍未完成，
+            // 不能让任务页在安装开始前继续显示满格。
+            task.Progress = 0;
             task.SetState(DownloadTaskState.Installing, "安装中（SMAPI）");
             TaskStateChanged?.Invoke(task);
             EmitLog($"下载完成，开始安装 SMAPI: {task.OutputFilePath}");
@@ -4977,12 +6358,23 @@ public partial class DownloadPageViewModel : ObservableObject
             SmapiInstallResult smapiResult;
             try
             {
+                // 兼容旧任务状态：TargetGamePath 可能保存的是
+                // versions/<实例> 或 versions/<实例>/game。SMAPI 安装器接收的
+                // 必须是 Base 路径，否则重启后会再次创建嵌套的 versions 目录。
+                var smapiBasePath = InstanceRuntimePathResolver.ResolveBasePath(task.TargetGamePath);
+                if (string.IsNullOrWhiteSpace(smapiBasePath))
+                {
+                    smapiBasePath = task.TargetGamePath;
+                }
+
+                task.TargetGamePath = smapiBasePath;
                 smapiResult = await _smapiInstallService.InstallFromZipAsync(
                     task.OutputFilePath,
-                    task.TargetGamePath,
+                    smapiBasePath,
                     task.TargetInstanceName,
                     cancellationToken: smapiCts.Token,
-                    logger: msg => EmitLog($"[SMAPI] {msg}"));
+                    logger: msg => EmitLog($"[SMAPI] {msg}"),
+                    updateExisting: HasPreviouslyInstalledSmapiRuntime(task));
             }
             catch (Exception ex)
             {
@@ -4991,7 +6383,7 @@ public partial class DownloadPageViewModel : ObservableObject
             finally
             {
                 smapiCts.Dispose();
-                _runningTaskCancellationSources.Remove(task);
+                _runningTaskCancellationSources.TryRemove(task, out _);
             }
 
             if (!smapiResult.IsSuccess)
@@ -5011,11 +6403,16 @@ public partial class DownloadPageViewModel : ObservableObject
             TaskStateChanged?.Invoke(task);
             Status = $"SMAPI 安装完成: {task.TargetInstanceName}";
 
-            // 写入 SMAPI 预设图标（Modded.png），与 VersionSettingsPageViewModel.ChangeSmapiVersionAsync 一致
+            // 写入 SMAPI 预设图标（Modded.png），与 VersionSettingsPageViewModel.ChangeSmapiVersionAsync 一致。
+            // SMAPI 图标使用独立命名空间，不能复用 Base 原版的通用图标。
             var iconWritten = Services.InstanceIconResolver.TryWriteDefaultSmapiIcon(smapiResult.RuntimePath);
-            var iconFilePath = System.IO.Path.Combine(smapiResult.RuntimePath, ".svl-instance-icon.png");
-            var iconFileExists = System.IO.File.Exists(iconFilePath);
-            EmitLog($"SMAPI 图标写入: {(iconWritten ? "成功" : "失败/已存在")}, 路径={smapiResult.RuntimePath}, 文件存在={iconFileExists}, 预期位置={iconFilePath}");
+            var iconStorageDir = Services.InstanceIconResolver.ResolveStorageDirectory(smapiResult.RuntimePath);
+            var iconFilePath = string.IsNullOrWhiteSpace(iconStorageDir)
+                ? string.Empty
+                : System.IO.Path.Combine(iconStorageDir, ".svl-instance-icon-smapi.png");
+            var resolvedIconPath = Services.InstanceIconResolver.ResolveIconPath(smapiResult.RuntimePath, isSmapiInstance: true);
+            var iconFileExists = !string.IsNullOrWhiteSpace(resolvedIconPath) && System.IO.File.Exists(resolvedIconPath);
+            EmitLog($"SMAPI 图标写入: {(iconWritten ? "成功" : "失败/已存在")}, 路径={smapiResult.RuntimePath}, 文件存在={iconFileExists}, 实际位置={resolvedIconPath}, 预期位置={iconFilePath}");
 
             var settings = _settingsStore.Load();
             settings.PreferredInstancePath = smapiResult.RuntimePath;
@@ -5028,7 +6425,7 @@ public partial class DownloadPageViewModel : ObservableObject
             EmitLog($"SMAPI 安装完成: 实例={task.TargetInstanceName}, 路径={task.InstalledPath}");
 
             // 通知 MainWindowViewModel 刷新 LaunchPage/InstancesPage 的实例图标与状态
-            // 解决：SMAPI 安装后图标仍显示 Vanilla.png 的问题（页面未刷新读取新写入的 .svl-instance-icon.png）
+            // 解决：SMAPI 安装后图标仍显示 Vanilla.png 的问题（页面未刷新读取新写入的 .svl-instance-icon-smapi.png）
             // 必须 Dispatcher.UIThread.Post：安装流程经 SemaphoreSlim+Task.Run 后延续在线程池线程，
             // 非 UI 线程触发 PropertyChanged 不会传播到控件
             Dispatcher.UIThread.Post(() => InstanceContextChanged?.Invoke());
@@ -5038,6 +6435,9 @@ public partial class DownloadPageViewModel : ObservableObject
         // Collection 安装：下载完成后，使用 CollectionInstallService 从本地压缩包按 Phase 分阶段安装
         if (task.TaskAction == DownloadTaskAction.InstallCollection)
         {
+            // Collection 的下载与多阶段安装是两个阶段；进入安装时重新从 0
+            // 计算安装进度，避免下载完成的 100% 覆盖后续安装状态。
+            task.Progress = 0;
             task.SetState(DownloadTaskState.Installing, "Collection 安装中");
             TaskStateChanged?.Invoke(task);
             EmitLog($"下载完成，开始安装 Collection: {task.OutputFilePath}");
@@ -5050,36 +6450,38 @@ public partial class DownloadPageViewModel : ObservableObject
                 var collectionInstanceName = string.IsNullOrWhiteSpace(task.TargetInstanceName)
                     ? Path.GetFileNameWithoutExtension(task.OutputFilePath)
                     : task.TargetInstanceName;
+                var updateExisting = HasPreviouslyInstalledPackageRuntime(task);
 
                 var collectionResult = await _collectionInstallService.InstallCollectionFromArchiveAsync(
                     task.OutputFilePath,
                     collectionInstanceName,
-                    progress =>
-                    {
-                        task.Progress = progress.Percent;
-                        task.SetState(DownloadTaskState.Installing, progress.StepText);
-                        task.SubProgressText = progress.SubProgressText;
-                        task.SubProgress = progress.SubProgress;
-                        EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
-                        TaskStateChanged?.Invoke(task);
-                    },
+                    progress => ApplyCollectionInstallProgress(task, progress),
                     collectionCts.Token,
-                    gameBasePath: task.TargetGamePath);
+                    gameBasePath: task.TargetGamePath,
+                    customIconPath: task.CustomIconPath,
+                    updateExisting: updateExisting);
 
                 if (collectionResult.IsSuccess)
                 {
-                    task.Progress = 100;
                     task.InstalledPath = collectionResult.RuntimePath;
                     task.InstalledDirectory = collectionResult.VersionRootPath;
-                    var failText = collectionResult.FailedMods.Count > 0
-                        ? $"（{collectionResult.FailedMods.Count} 个 Mod 下载失败）"
+                    var hasFailedMods = collectionResult.FailedMods.Count > 0;
+                    task.Progress = hasFailedMods ? 99 : 100;
+                    var failText = hasFailedMods
+                        ? $"（{collectionResult.FailedMods.Count} 个 Mod 下载失败，可重试）"
                         : string.Empty;
-                    task.SetState(DownloadTaskState.Completed, $"已完成{failText}");
-                    Status = $"Collection 安装完成: {task.Name}";
-                    EmitLog($"Collection 安装完成: {task.Name}, 运行目录: {collectionResult.RuntimePath}");
+                    task.SetState(
+                        hasFailedMods ? DownloadTaskState.Failed : DownloadTaskState.Completed,
+                        hasFailedMods ? $"部分完成{failText}" : "已完成");
+                    task.CanRetry = hasFailedMods;
+                    Status = hasFailedMods
+                        ? $"Collection 安装部分完成: {task.Name}"
+                        : $"Collection 安装完成: {task.Name}";
+                    EmitLog($"Collection 安装{(hasFailedMods ? "部分完成" : "完成")}: {task.Name}, 运行目录: {collectionResult.RuntimePath}, 安装 {collectionResult.InstalledMods.Count} 个, 失败 {collectionResult.FailedMods.Count} 个");
                     if (collectionResult.FailedMods.Count > 0)
                     {
                         task.FailedDetails = string.Join("\n", collectionResult.FailedMods);
+                        EmitLog($"失败 Mod 列表:\n{task.FailedDetails}");
                     }
                     // 通知 MainWindowViewModel 刷新 LaunchPage/InstancesPage 实例列表
                     Dispatcher.UIThread.Post(() => InstanceContextChanged?.Invoke());
@@ -5092,6 +6494,7 @@ public partial class DownloadPageViewModel : ObservableObject
                 else
                 {
                     task.SetState(DownloadTaskState.Failed, $"安装失败: {collectionResult.Message}");
+                    task.FailedDetails = collectionResult.Message;
                     task.CanRetry = true;
                     Status = $"Collection 安装失败: {task.Name}";
                     EmitLog($"Collection 安装失败: {task.Name}, 错误: {collectionResult.Message}");
@@ -5099,6 +6502,7 @@ public partial class DownloadPageViewModel : ObservableObject
             }
             catch (Exception ex)
             {
+                task.FailedDetails = ex.Message;
                 task.SetState(DownloadTaskState.Failed, $"安装异常: {ex.Message}");
                 task.CanRetry = true;
                 Status = $"Collection 安装失败: {task.Name}";
@@ -5107,7 +6511,7 @@ public partial class DownloadPageViewModel : ObservableObject
             finally
             {
                 collectionCts.Dispose();
-                _runningTaskCancellationSources.Remove(task);
+                _runningTaskCancellationSources.TryRemove(task, out _);
             }
 
             TaskStateChanged?.Invoke(task);
@@ -5120,6 +6524,9 @@ public partial class DownloadPageViewModel : ObservableObject
             (task.TaskKind == DownloadTaskKind.SvlModpack ||
              task.TaskKind == DownloadTaskKind.CurseforgeModpack))
         {
+            // 同上：这里只是下载包落盘，整合包清单、SMAPI、Mod 和 overrides
+            // 仍需安装，安装回调会从阶段进度重新驱动进度条。
+            task.Progress = 0;
             task.SetState(DownloadTaskState.Installing, "整合包安装中");
             TaskStateChanged?.Invoke(task);
             EmitLog($"下载完成，开始安装整合包: {task.OutputFilePath}");
@@ -5132,53 +6539,51 @@ public partial class DownloadPageViewModel : ObservableObject
                 var modpackInstanceName = string.IsNullOrWhiteSpace(task.TargetInstanceName)
                     ? Path.GetFileNameWithoutExtension(task.OutputFilePath)
                     : task.TargetInstanceName;
+                // 下载阶段完成后若安装只部分成功，OutputFilePath 仍可复用，且
+                // InstalledPath 标记了已有版本；重试必须更新该实例而非新建同名实例。
+                var updateExisting = HasPreviouslyInstalledModpackRuntime(task);
 
                 ModpackInstallResult modpackResult;
                 if (task.TaskKind == DownloadTaskKind.SvlModpack)
                 {
                     modpackResult = await _modpackInstallService.InstallSvlModpackAsync(
                         task.OutputFilePath, modpackInstanceName, task.TargetGamePath,
-                        progress =>
-                        {
-                            task.Progress = progress.Percent;
-                            task.SetState(DownloadTaskState.Installing, progress.StepText);
-                            task.SubProgressText = progress.SubProgressText;
-                            task.SubProgress = progress.SubProgress;
-                            EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
-                            TaskStateChanged?.Invoke(task);
-                        },
-                        modpackCts.Token);
+                        progress => ApplyModpackInstallProgress(task, progress),
+                    modpackCts.Token,
+                    customIconPath: task.CustomIconPath,
+                    updateExisting: updateExisting);
                 }
                 else
                 {
                     modpackResult = await _modpackInstallService.InstallCurseforgeModpackAsync(
                         task.OutputFilePath, modpackInstanceName, task.TargetGamePath,
-                        progress =>
-                        {
-                            task.Progress = progress.Percent;
-                            task.SetState(DownloadTaskState.Installing, progress.StepText);
-                            task.SubProgressText = progress.SubProgressText;
-                            task.SubProgress = progress.SubProgress;
-                            EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
-                            TaskStateChanged?.Invoke(task);
-                        },
-                        modpackCts.Token);
+                        progress => ApplyModpackInstallProgress(task, progress),
+                        modpackCts.Token,
+                        customIconPath: task.CustomIconPath,
+                        updateExisting: updateExisting);
                 }
 
                 if (modpackResult.IsSuccess)
                 {
-                    task.Progress = 100;
                     task.InstalledPath = modpackResult.RuntimePath;
                     task.InstalledDirectory = modpackResult.VersionRootPath;
-                    var failText = modpackResult.FailedMods.Count > 0
-                        ? $"（{modpackResult.FailedMods.Count} 个 Mod 下载失败）"
+                    var hasFailedMods = modpackResult.FailedMods.Count > 0;
+                    task.Progress = hasFailedMods ? 99 : 100;
+                    var failText = hasFailedMods
+                        ? $"（{modpackResult.FailedMods.Count} 个 Mod 下载失败，可重试）"
                         : string.Empty;
-                    task.SetState(DownloadTaskState.Completed, $"已完成{failText}");
-                    Status = $"整合包安装完成: {task.Name}";
-                    EmitLog($"整合包安装完成: {task.Name}, 运行目录: {modpackResult.RuntimePath}");
+                    task.SetState(
+                        hasFailedMods ? DownloadTaskState.Failed : DownloadTaskState.Completed,
+                        hasFailedMods ? $"部分完成{failText}" : "已完成");
+                    task.CanRetry = hasFailedMods;
+                    Status = hasFailedMods
+                        ? $"整合包安装部分完成: {task.Name}"
+                        : $"整合包安装完成: {task.Name}";
+                    EmitLog($"整合包安装{(hasFailedMods ? "部分完成" : "完成")}: {task.Name}, 运行目录: {modpackResult.RuntimePath}, 安装 {modpackResult.InstalledMods.Count} 个, 失败 {modpackResult.FailedMods.Count} 个");
                     if (modpackResult.FailedMods.Count > 0)
                     {
                         task.FailedDetails = string.Join("\n", modpackResult.FailedMods);
+                        EmitLog($"失败 Mod 列表:\n{task.FailedDetails}");
                     }
                     // 通知 MainWindowViewModel 刷新 LaunchPage/InstancesPage 实例列表
                     Dispatcher.UIThread.Post(() => InstanceContextChanged?.Invoke());
@@ -5191,6 +6596,7 @@ public partial class DownloadPageViewModel : ObservableObject
                 else
                 {
                     task.SetState(DownloadTaskState.Failed, $"安装失败: {modpackResult.Message}");
+                    task.FailedDetails = modpackResult.Message;
                     task.CanRetry = true;
                     Status = $"整合包安装失败: {task.Name}";
                     EmitLog($"整合包安装失败: {task.Name}, 错误: {modpackResult.Message}");
@@ -5198,6 +6604,7 @@ public partial class DownloadPageViewModel : ObservableObject
             }
             catch (Exception ex)
             {
+                task.FailedDetails = ex.Message;
                 task.SetState(DownloadTaskState.Failed, $"安装异常: {ex.Message}");
                 task.CanRetry = true;
                 Status = $"整合包安装失败: {task.Name}";
@@ -5206,7 +6613,7 @@ public partial class DownloadPageViewModel : ObservableObject
             finally
             {
                 modpackCts.Dispose();
-                _runningTaskCancellationSources.Remove(task);
+                _runningTaskCancellationSources.TryRemove(task, out _);
             }
 
             TaskStateChanged?.Invoke(task);
@@ -5214,11 +6621,20 @@ public partial class DownloadPageViewModel : ObservableObject
             return;
         }
 
+        // 普通 Mod 同样要区分“下载完成”和“安装完成”。
+        task.Progress = 0;
         task.SetState(DownloadTaskState.Installing, "安装中");
         TaskStateChanged?.Invoke(task);
         EmitLog($"下载完成，进入安装阶段: {task.OutputFilePath}");
 
-        var installResult = await _downloadInstallService.InstallAsync(task.OutputFilePath, task.Name);
+        var installResult = await _downloadInstallService.InstallAsync(
+            task.OutputFilePath,
+            task.Name,
+            sourcePlatform: task.SourcePlatform,
+            sourceProjectId: task.SourceModId,
+            sourceFileId: task.SourceFileId,
+            sourceDownloadUrl: task.SourceUrl,
+            sourceFileName: Path.GetFileName(task.OutputFilePath));
         if (!installResult.IsSuccess)
         {
             task.SetState(installResult.IsCancelled ? DownloadTaskState.Cancelled : DownloadTaskState.Failed, installResult.IsCancelled ? "安装已取消" : "安装失败（可重试）");
@@ -5240,48 +6656,116 @@ public partial class DownloadPageViewModel : ObservableObject
 
     private async Task ExecuteCollectionTaskAsync(DownloadTaskItem task)
     {
-        task.CanRetry = false;
-        task.CanCancel = false;
-        task.Progress = 0;
-        task.FailedDetails = string.Empty;
-
-        task.SetState(DownloadTaskState.Resolving, "获取 Collection 清单");
-        Status = $"正在获取清单: {task.Name}";
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 获取清单: {task.Name}");
-        await Task.Delay(300);
-        task.Progress = 15;
-        TaskStateChanged?.Invoke(task);
-
-        task.SetState(DownloadTaskState.Resolving, "解析 Collection 依赖");
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 解析依赖: {task.Name}");
-        await Task.Delay(350);
-        task.Progress = 35;
-        TaskStateChanged?.Invoke(task);
-
-        task.SetState(DownloadTaskState.Downloading, "下载 Collection 资源包");
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 下载资源: {task.Name}");
-        for (var progress = 35; progress <= 80; progress += 15)
+        // 兼容早期版本落盘的 NxmCollection 任务：当时只保存了 slug/revision，
+        // 没有保存短期 CDN 地址。不能把这种任务直接终止，应先复用稳定缓存，
+        // 再通过 API 重新换取地址，最后才使用浏览器回退。
+        if (string.IsNullOrWhiteSpace(task.CollectionSlug))
         {
-            task.Progress = progress;
+            task.CanRetry = true;
+            task.CanCancel = false;
+            task.FailedDetails = "历史 Collection 任务缺少 Collection slug，请重新导入";
+            task.SetState(DownloadTaskState.Failed, "Collection 缺少必要信息（可重试）");
+            Status = $"Collection 任务失败: {task.Name}";
             TaskStateChanged?.Invoke(task);
-            await Task.Delay(250);
+            SaveTaskState();
+            EmitLog($"Collection 任务失败，缺少 slug: {task.Name}");
+            return;
         }
 
-        task.SetState(DownloadTaskState.Installing, "安装 Collection 条目");
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 安装条目: {task.Name}");
-        await Task.Delay(350);
-        task.Progress = 95;
-        TaskStateChanged?.Invoke(task);
+        if (NexusCollectionDownloadCache.TryGet(
+                "stardewvalley",
+                task.CollectionSlug,
+                task.CollectionRevision,
+                out var cachedPath,
+                IsValidCollectionArchive))
+        {
+            task.OutputFilePath = cachedPath;
+            task.SetState(DownloadTaskState.Installing, "命中 Collection 缓存，准备安装");
+            task.Progress = 0;
+            task.CanRetry = false;
+            task.CanCancel = false;
+            TaskStateChanged?.Invoke(task);
+            EmitLog($"历史 Collection 任务命中稳定缓存，跳过地址解析: {cachedPath}");
+            await ExecuteCollectionInstallTaskAsync(task, cachedPath);
+            return;
+        }
 
-        task.SetState(DownloadTaskState.Completed, "Collection 安装完成");
-        task.Progress = 100;
-        Status = $"Collection 任务完成: {task.Name}";
+        task.CanRetry = false;
+        // 地址解析与浏览器回退阶段尚未创建下载 CTS，不能向 UI 暴露一个
+        // 实际无法取消的按钮；进入真实下载/安装方法后再开启取消。
+        task.CanCancel = false;
+        task.SetState(DownloadTaskState.Resolving, "重新解析 Collection 下载地址");
+        task.Progress = 5;
+        Status = $"正在恢复 Collection 任务: {task.Name}";
         TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 任务完成: {task.Name}");
+        EmitLog($"恢复历史 Collection 任务，重新解析地址: {task.CollectionSlug} rev {task.CollectionRevision}");
+
+        var settings = _settingsStore.Load();
+        var collectionInfo = new NxmLinkInfo
+        {
+            GameDomain = "stardewvalley",
+            ResourceType = NxmResourceType.Collection,
+            CollectionSlug = task.CollectionSlug.Trim(),
+            RevisionNumber = task.CollectionRevision
+        };
+        var resolved = await _nexusModDownloadResolverService.ResolveCollectionDownloadUrlAsync(
+            collectionInfo,
+            settings.NexusApiKey,
+            settings.NexusOAuthAccessToken);
+
+        if (!resolved.IsSuccess)
+        {
+            // 没有账号凭据或 API 失败时，复用正常导入流程的浏览器回退。
+            // 回退成功后得到的 NXM key 会在 resolver 中作为一次性凭据使用。
+            EmitLog($"历史 Collection API 解析失败，尝试浏览器回退: {resolved.Message}");
+            var browserUrl = $"https://next.nexusmods.com/stardewvalley/collections/{task.CollectionSlug}";
+            var callback = await TryCollectionBrowserDownloadFallbackAsync(
+                task.CollectionSlug,
+                task.CollectionRevision,
+                browserUrl,
+                "恢复 Collection 任务");
+
+            if (!string.IsNullOrWhiteSpace(callback) &&
+                _nxmLinkParser.TryParse(callback, out var callbackInfo, out _))
+            {
+                resolved = await _nexusModDownloadResolverService.ResolveCollectionDownloadUrlAsync(
+                    callbackInfo,
+                    settings.NexusApiKey,
+                    settings.NexusOAuthAccessToken);
+            }
+        }
+
+        if (!resolved.IsSuccess ||
+            !Uri.TryCreate(resolved.DownloadUrl, UriKind.Absolute, out var resolvedUri) ||
+            !IsHttpUri(resolvedUri))
+        {
+            task.CanRetry = true;
+            task.CanCancel = false;
+            task.FailedDetails = string.IsNullOrWhiteSpace(resolved.Message)
+                ? "未解析到有效 Collection 下载地址"
+                : resolved.Message;
+            task.SetState(DownloadTaskState.Failed, "Collection 地址解析失败（可重试）");
+            Status = $"Collection 任务失败: {task.Name}";
+            TaskStateChanged?.Invoke(task);
+            SaveTaskState();
+            EmitLog($"历史 Collection 任务地址解析失败: {task.FailedDetails}");
+            return;
+        }
+
+        task.SourceUrl = resolved.DownloadUrl;
+        task.DependencyUrls = resolved.DownloadUrls
+            .Where(url => !string.Equals(url, task.SourceUrl, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        task.OutputFilePath = Path.Combine(
+            _downloadRootPath,
+            CreateSafeFileName(ResolveDownloadFileName(resolvedUri, resolved.FileName)));
+        task.Name = string.IsNullOrWhiteSpace(task.Name)
+            ? $"Nexus Collection {task.CollectionSlug}"
+            : task.Name;
+        EmitLog($"历史 Collection 任务已恢复真实地址: {task.OutputFilePath}");
+
+        await ExecuteCollectionRealDownloadTaskAsync(task);
     }
 
     private async Task ExecuteCollectionRealDownloadTaskAsync(DownloadTaskItem task)
@@ -5289,172 +6773,274 @@ public partial class DownloadPageViewModel : ObservableObject
         task.CanRetry = false;
         task.CanCancel = false;
         task.Progress = 0;
-
-        task.SetState(DownloadTaskState.Resolving, "获取 Collection 清单");
-        Status = $"正在获取 Collection 清单: {task.Name}";
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 获取清单: {task.Name}");
-        await Task.Delay(200);
-        task.Progress = 10;
-        TaskStateChanged?.Invoke(task);
-
-        task.SetState(DownloadTaskState.Resolving, "解析 Collection 资源");
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 解析资源: {task.Name}");
-        await Task.Delay(200);
-        task.Progress = 20;
-        TaskStateChanged?.Invoke(task);
-
-        task.CanCancel = true;
-        task.SetState(DownloadTaskState.Downloading, "下载 Collection 资源包");
-        Status = $"正在下载 Collection: {task.Name}";
-        TaskStateChanged?.Invoke(task);
-        var allUrls = BuildCollectionDownloadUrls(task);
+        await ClearTaskSegmentProgressAsync(task);
         var retryFailedBefore = task.FailedDownloadUrls
             .Where(url => !string.IsNullOrWhiteSpace(url))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var candidateUrls = BuildCollectionDownloadUrls(task);
+        var stableCollectionPath = string.Empty;
+        var hasStableCollectionCache =
+            !string.IsNullOrWhiteSpace(task.CollectionSlug) &&
+            NexusCollectionDownloadCache.TryGet(
+                "stardewvalley",
+                task.CollectionSlug,
+                task.CollectionRevision,
+                out stableCollectionPath,
+                IsValidCollectionArchive);
         task.FailedDownloadUrls.Clear();
-        EmitLog($"Collection 开始真实下载，共 {allUrls.Count} 个文件");
+        task.FailedDetails = string.Empty;
+
+        task.SetState(DownloadTaskState.Resolving, "准备 Collection 清单");
+        Status = $"正在准备 Collection 清单: {task.Name}";
+        TaskStateChanged?.Invoke(task);
+        EmitLog($"Collection 准备清单: {task.Name}");
+        task.Progress = 10;
+        TaskStateChanged?.Invoke(task);
+
+        if (candidateUrls.Count == 0 && !hasStableCollectionCache)
+        {
+            task.SetState(DownloadTaskState.Failed, "缺少 Collection 下载地址（可重试）");
+            task.FailedDetails = "未找到 Collection 压缩包下载地址";
+            task.CanRetry = true;
+            Status = $"Collection 任务失败: {task.Name}";
+            TaskStateChanged?.Invoke(task);
+            SaveTaskState();
+            EmitLog($"Collection 任务失败，缺少下载地址: {task.Name}");
+            return;
+        }
 
         var cts = new CancellationTokenSource();
         _runningTaskCancellationSources[task] = cts;
-        var downloadedFiles = new List<string>();
+        var downloadProgressEpoch = BeginDownloadProgressEpoch(task);
         try
         {
-            var settings = _settingsStore.Load();
-            var configuredParallel = Math.Clamp(settings.CollectionDownloadParallelism, 1, 8);
-            var targetParallel = Math.Min(configuredParallel, allUrls.Count);
-            var currentParallel = retryFailedBefore.Count > 0
-                ? Math.Max(1, targetParallel / 2)
-                : targetParallel;
+            task.CanCancel = true;
+            task.SetState(DownloadTaskState.Downloading, "下载 Collection 压缩包");
+            Status = $"正在下载 Collection: {task.Name}";
+            task.SubProgress = 0;
+            task.SubProgressText = $"准备下载 Collection 包（{candidateUrls.Count} 个镜像）";
+            TaskStateChanged?.Invoke(task);
+            EmitLog($"Collection 开始真实下载，共 {candidateUrls.Count} 个候选镜像（仅下载一个 Collection 包）");
 
-            EmitLog($"Collection 下载并发上限: {targetParallel}");
-            if (currentParallel < targetParallel)
-            {
-                EmitLog($"检测到失败重试场景，初始并发自动降级为: {currentParallel}");
-            }
-
-            var fileProgress = new double[allUrls.Count];
-            var progressLock = new object();
+            string? archivePath = null;
             var failures = new List<string>();
             var failedUrls = new List<string>();
 
-            var cursor = 0;
-            while (cursor < allUrls.Count)
+            // 同一个 Collection 任务可能因安装阶段失败、应用重启或重复导入
+            // 再次执行。只要 OutputFilePath 已经是有效 Collection 归档，
+            // 就跳过浏览器/CDN 下载，直接进入安装阶段。
+            if (!string.IsNullOrWhiteSpace(task.OutputFilePath) &&
+                IsValidCollectionArchive(task.OutputFilePath))
             {
-                var batch = allUrls
-                    .Select((url, index) => (url, index))
-                    .Skip(cursor)
-                    .Take(currentParallel)
-                    .ToList();
-
-                var failedInBatch = 0;
-                var downloadTasks = batch.Select(item => Task.Run(async () =>
-                {
-                    var url = item.url;
-                    var index = item.index;
-
-                    try
-                    {
-                        var target = ResolveCollectionPartPath(task, url, index + 1);
-                        lock (downloadedFiles)
-                        {
-                            downloadedFiles.Add(target);
-                        }
-
-                        await _httpDownloadService.DownloadAsync(
-                            url,
-                            target,
-                            snapshot =>
-                            {
-                                lock (progressLock)
-                                {
-                                    fileProgress[index] = Math.Clamp(snapshot.Percent, 0, 100);
-                                    var overallPercent = fileProgress.Average();
-                                    var mapped = 20 + overallPercent * 0.65;
-                                    task.Progress = (int)Math.Round(Math.Min(85, mapped));
-
-                                    var downloadedMb = snapshot.DownloadedBytes / 1024d / 1024d;
-                                    var totalMb = snapshot.TotalBytes / 1024d / 1024d;
-                                    var speedMb = snapshot.BytesPerSecond / 1024d / 1024d;
-
-                                    task.SetState(DownloadTaskState.Downloading,
-                                        snapshot.TotalBytes > 0
-                                            ? $"并发下载 {index + 1}/{allUrls.Count} {snapshot.Percent:F1}% ({downloadedMb:F1}/{totalMb:F1} MB, {speedMb:F1} MB/s)"
-                                            : $"并发下载 {index + 1}/{allUrls.Count} ({downloadedMb:F1} MB, {speedMb:F1} MB/s)");
-
-                                    TaskStateChanged?.Invoke(task);
-                                }
-                            },
-                            cts.Token);
-
-                        EmitLog($"Collection 文件下载完成: {index + 1}/{allUrls.Count}");
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        lock (failures)
-                        {
-                            failures.Add($"{index + 1}/{allUrls.Count}: {ex.Message}");
-                            failedUrls.Add(url);
-                            failedInBatch++;
-                        }
-                    }
-                }, cts.Token)).ToList();
-
-                await Task.WhenAll(downloadTasks);
-
-                var batchFailureRate = batch.Count == 0
-                    ? 0
-                    : failedInBatch / (double)batch.Count;
-
-                if (batchFailureRate >= 0.34 && currentParallel > 1)
-                {
-                    currentParallel = Math.Max(1, currentParallel - 1);
-                    EmitLog($"失败率 {batchFailureRate:P0}，自动降低并发至 {currentParallel}");
-                }
-                else if (failedInBatch == 0 && currentParallel < targetParallel)
-                {
-                    currentParallel = Math.Min(targetParallel, currentParallel + 1);
-                    EmitLog($"批次稳定，自动恢复并发至 {currentParallel}");
-                }
-
-                cursor += batch.Count;
+                archivePath = task.OutputFilePath;
+                task.Progress = 85;
+                task.SubProgress = 100;
+                task.SubProgressText = "命中已下载 Collection 归档，跳过下载";
+                TaskStateChanged?.Invoke(task);
+                EmitLog($"Collection 命中本地归档，跳过下载: {archivePath}");
             }
 
-            if (failures.Count > 0)
+            if (archivePath == null && hasStableCollectionCache)
+            {
+                archivePath = stableCollectionPath;
+                task.OutputFilePath = stableCollectionPath;
+                task.Progress = 85;
+                task.SubProgress = 100;
+                task.SubProgressText = "命中稳定 Collection 缓存，跳过下载";
+                TaskStateChanged?.Invoke(task);
+                EmitLog($"Collection 命中稳定缓存，跳过下载: {archivePath}");
+            }
+
+            for (var index = 0; archivePath == null && index < candidateUrls.Count; index++)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                var url = candidateUrls[index];
+                var target = ResolveCollectionPartPath(task, url, index + 1);
+                task.SetState(DownloadTaskState.Downloading, $"下载 Collection 压缩包（镜像 {index + 1}/{candidateUrls.Count}）");
+                task.SubProgressText = $"镜像 {index + 1}/{candidateUrls.Count}";
+                TaskStateChanged?.Invoke(task);
+
+                try
+                {
+                    await _httpDownloadService.DownloadAsync(
+                        url,
+                        target,
+                        snapshot =>
+                        {
+                            var percent = Math.Clamp(snapshot.Percent, 0, 100);
+                            var displayProgress = (int)Math.Round(Math.Min(85, 20 + percent * 0.65));
+                            // DownloadAsync 返回前，最后一次回调仍然只是观测值；
+                            // 因此下载阶段最多显示 99%，真正完成由 await 返回确认。
+                            var subProgress = snapshot.IsComplete
+                                ? 100
+                                : (percent >= 100 ? 99 : (int)Math.Floor(percent));
+                            var downloadedMb = snapshot.DownloadedBytes / 1024d / 1024d;
+                            var totalMb = snapshot.TotalBytes / 1024d / 1024d;
+                            var speedMb = snapshot.BytesPerSecond / 1024d / 1024d;
+                            var statusPercent = snapshot.IsComplete
+                                ? 100d
+                                : Math.Min(99.9d, Math.Max(0d, percent));
+                            var statusText = snapshot.TotalBytes > 0
+                                ? $"下载 Collection {statusPercent:F1}% ({downloadedMb:F1}/{totalMb:F1} MB, {speedMb:F1} MB/s)"
+                                : $"下载 Collection ({downloadedMb:F1} MB, {speedMb:F1} MB/s)";
+
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                if (!IsCurrentDownloadProgressEpoch(task, downloadProgressEpoch))
+                                {
+                                    return;
+                                }
+
+                                task.Progress = displayProgress;
+                                task.SubProgress = subProgress;
+                                task.SubProgressText = $"镜像 {index + 1}/{candidateUrls.Count}: {statusPercent:F1}%";
+                                task.SetState(DownloadTaskState.Downloading, statusText);
+                                TaskStateChanged?.Invoke(task);
+                            });
+                        },
+                        cts.Token,
+                        cacheValidator: IsValidCollectionArchive);
+
+                    // 只有 DownloadAsync 正常返回，才确认压缩包完整可用。
+                    archivePath = target;
+                    task.OutputFilePath = target;
+                    if (!string.IsNullOrWhiteSpace(task.CollectionSlug))
+                    {
+                        NexusCollectionDownloadCache.Save(
+                            "stardewvalley",
+                            task.CollectionSlug,
+                            task.CollectionRevision,
+                            target,
+                            IsValidCollectionArchive);
+                    }
+                    task.Progress = 85;
+                    task.SubProgress = 100;
+                    task.SubProgressText = "Collection 压缩包下载完成";
+                    TaskStateChanged?.Invoke(task);
+                    EmitLog($"Collection 压缩包下载完成，使用镜像 {index + 1}/{candidateUrls.Count}: {target}");
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"镜像 {index + 1}: {ex.Message}");
+                    failedUrls.Add(url);
+                    try
+                    {
+                        if (File.Exists(target))
+                        {
+                            File.Delete(target);
+                        }
+                    }
+                    catch
+                    {
+                        // 下载失败时清理临时文件失败不应覆盖原始网络错误。
+                    }
+
+                    EmitLog($"Collection 镜像 {index + 1}/{candidateUrls.Count} 下载失败: {ex.Message}");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(archivePath))
             {
                 task.FailedDownloadUrls = failedUrls
                     .Where(url => !string.IsNullOrWhiteSpace(url))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-
                 var failedPreview = task.FailedDownloadUrls
                     .Take(5)
                     .Select((url, idx) => $"{idx + 1}. {url}");
-                var omittedText = task.FailedDownloadUrls.Count > 5
-                    ? $"\n... 其余 {task.FailedDownloadUrls.Count - 5} 项已省略"
-                    : string.Empty;
-                task.FailedDetails = $"失败资源 {task.FailedDownloadUrls.Count} 项:\n{string.Join("\n", failedPreview)}{omittedText}";
+                task.FailedDetails = $"Collection 压缩包下载失败:\n{string.Join("\n", failedPreview)}\n{string.Join("; ", failures.Take(3))}";
+                throw new InvalidOperationException($"Collection 压缩包下载失败: {string.Join("; ", failures.Take(3))}");
+            }
 
-                var reason = string.Join("; ", failures.Take(3));
-                throw new Exception($"部分文件下载失败: {reason}");
+            // 下载阶段结束后立刻失效所有排队中的分片回调，避免它们在安装阶段
+            // 把任务状态改回“下载中”。
+            EndDownloadProgressEpoch(task, downloadProgressEpoch);
+            await ClearTaskSegmentProgressAsync(task);
+            task.CanCancel = true;
+            task.SetState(DownloadTaskState.Installing, "解析并安装 Collection");
+            task.Progress = 90;
+            task.SubProgressText = "读取 collection.json 并下载安装 Mod";
+            TaskStateChanged?.Invoke(task);
+            EmitLog($"Collection 安装开始: {archivePath}");
+
+            var collectionInstanceName = string.IsNullOrWhiteSpace(task.TargetInstanceName)
+                ? Path.GetFileNameWithoutExtension(archivePath)
+                : task.TargetInstanceName;
+            var updateExisting = HasPreviouslyInstalledPackageRuntime(task);
+            var collectionResult = await _collectionInstallService.InstallCollectionFromArchiveAsync(
+                archivePath,
+                collectionInstanceName,
+                progress => ApplyCollectionInstallProgress(task, progress),
+                cts.Token,
+                gameBasePath: task.TargetGamePath,
+                customIconPath: task.CustomIconPath,
+                updateExisting: updateExisting);
+
+            if (collectionResult.IsSuccess)
+            {
+                task.InstalledPath = collectionResult.RuntimePath;
+                task.InstalledDirectory = collectionResult.VersionRootPath;
+                var hasFailedMods = collectionResult.FailedMods.Count > 0;
+                task.Progress = hasFailedMods ? 99 : 100;
+                task.FailedDetails = hasFailedMods
+                    ? string.Join("\n", collectionResult.FailedMods)
+                    : string.Empty;
+                task.FailedDownloadUrls.Clear();
+                task.SetState(
+                    hasFailedMods ? DownloadTaskState.Failed : DownloadTaskState.Completed,
+                    hasFailedMods
+                        ? $"部分完成（{collectionResult.FailedMods.Count} 个 Mod 下载失败，可重试）"
+                        : "已完成");
+                task.CanRetry = hasFailedMods;
+                Status = hasFailedMods
+                    ? $"Collection 安装部分完成: {task.Name}"
+                    : $"Collection 安装完成: {task.Name}";
+                EmitLog($"Collection 安装{(hasFailedMods ? "部分完成" : "完成")}: {task.Name}, 运行目录: {collectionResult.RuntimePath}, 安装 {collectionResult.InstalledMods.Count} 个, 失败 {collectionResult.FailedMods.Count} 个");
+                if (hasFailedMods)
+                {
+                    EmitLog($"失败 Mod 列表:\n{task.FailedDetails}");
+                }
+
+                Dispatcher.UIThread.Post(() => InstanceContextChanged?.Invoke());
+            }
+            else if (collectionResult.IsCancelled)
+            {
+                task.SetState(DownloadTaskState.Cancelled, "Collection 安装已取消");
+                task.CanRetry = true;
+                Status = $"Collection 安装已取消: {task.Name}";
+                EmitLog($"Collection 安装取消: {task.Name}");
+            }
+            else
+            {
+                task.SetState(DownloadTaskState.Failed, $"安装失败（可重试）: {collectionResult.Message}");
+                task.FailedDetails = collectionResult.Message;
+                task.CanRetry = true;
+                Status = $"Collection 安装失败: {task.Name}";
+                EmitLog($"Collection 安装失败: {task.Name}, 错误: {collectionResult.Message}");
+            }
+
+            var retrySuccessReport = _retryDiffReportService.Write(_downloadRootPath, task.Name, retryFailedBefore, task.FailedDownloadUrls);
+            if (!string.IsNullOrWhiteSpace(retrySuccessReport))
+            {
+                task.RetryReportPath = retrySuccessReport;
+                EmitLog($"重试对比报告: {retrySuccessReport}");
             }
         }
         catch (OperationCanceledException)
         {
             task.SetState(DownloadTaskState.Cancelled, "已取消");
-            task.CanCancel = false;
             task.CanRetry = true;
-            Status = $"任务已取消: {task.Name}";
+            task.CanCancel = false;
+            Status = $"Collection 任务已取消: {task.Name}";
             TaskStateChanged?.Invoke(task);
             SaveTaskState();
             EmitLog($"Collection 任务取消: {task.Name}");
-            return;
         }
         catch (Exception ex)
         {
@@ -5465,163 +7051,44 @@ public partial class DownloadPageViewModel : ObservableObject
                 EmitLog($"重试对比报告: {retryReport}");
             }
 
-            task.SetState(DownloadTaskState.Failed, "下载失败（可重试）");
+            task.SetState(DownloadTaskState.Failed, "Collection 下载/安装失败（可重试）");
             task.CanRetry = true;
             task.CanCancel = false;
-            Status = $"任务失败: {task.Name}";
+            if (string.IsNullOrWhiteSpace(task.FailedDetails))
+            {
+                task.FailedDetails = ex.Message;
+            }
+            Status = $"Collection 任务失败: {task.Name}";
             TaskStateChanged?.Invoke(task);
             SaveTaskState();
-            EmitLog($"Collection 下载失败: {task.Name}, 错误: {ex.Message}");
-
-            var action = await _dialogService.ShowModpackFailureDialogAsync(
-                ex.Message,
-                task.RetryReportPath ?? string.Empty,
-                "Collection 下载失败");
-            if (action == ModpackFailureDialogAction.Retry)
-            {
-                RetryTask(task);
-            }
-
-            return;
+            EmitLog($"Collection 任务失败: {task.Name}, 错误: {ex.Message}");
         }
         finally
         {
-            cts.Dispose();
-            _runningTaskCancellationSources.Remove(task);
-        }
-
-        task.CanCancel = false;
-        task.SetState(DownloadTaskState.Installing, "安装 Collection 条目");
-        task.Progress = 90;
-        TaskStateChanged?.Invoke(task);
-        EmitLog($"Collection 安装开始，文件数: {downloadedFiles.Count}");
-
-        var settingsForConflict = _settingsStore.Load();
-        var conflictStrategy = CollectionInstallConflictStrategyExtensions.Parse(settingsForConflict.CollectionInstallConflictStrategy);
-
-        var strategyOverride = await _dialogService.ShowInputAsync(
-            "安装策略（仅本次）",
-            "可输入覆盖/跳过/仅备份以临时覆盖本次策略；留空则沿用当前设置",
-            conflictStrategy.ToDisplayName());
-        if (!string.IsNullOrWhiteSpace(strategyOverride))
-        {
-            var parsedOverride = CollectionInstallConflictStrategyExtensions.Parse(strategyOverride.Trim());
-            if (parsedOverride != conflictStrategy)
-            {
-                conflictStrategy = parsedOverride;
-                EmitLog($"本次安装策略已临时覆盖为: {conflictStrategy.ToDisplayName()}");
-            }
-        }
-
-        EmitLog($"Collection 冲突策略: {conflictStrategy.ToDisplayName()}");
-
-        var previewItems = await _downloadInstallService.PreviewCollectionConflictsAsync(downloadedFiles, conflictStrategy);
-        task.ConflictPreviewItems = previewItems
-            .Select(item => $"{item.ModName} => {item.PlannedAction}")
-            .ToList();
-        TaskStateChanged?.Invoke(task);
-
-        if (previewItems.Count == 0)
-        {
-            EmitLog("Collection 冲突预览: 未识别到可安装 Mod 条目");
-        }
-        else
-        {
-            EmitLog($"Collection 冲突预览: 共 {previewItems.Count} 个条目");
-            foreach (var item in previewItems.Take(12))
-            {
-                EmitLog($"冲突预览: {item.ModName} => {item.PlannedAction}");
-            }
-
-            if (previewItems.Count > 12)
-            {
-                EmitLog($"冲突预览: 其余 {previewItems.Count - 12} 个条目已省略");
-            }
-        }
-
-        var previewSummary = BuildInstallPreviewSummary(previewItems, conflictStrategy);
-        var userConfirmed = await _dialogService.ShowConfirmAsync(
-            "安装前确认",
-            $"检测到 {previewItems.Count} 个安装条目，是否继续？\n\n{previewSummary}");
-        if (!userConfirmed)
-        {
-            task.SetState(DownloadTaskState.Cancelled, "安装已取消");
-            task.CanRetry = true;
+            EndDownloadProgressEpoch(task, downloadProgressEpoch);
+            await ClearTaskSegmentProgressAsync(task);
             task.CanCancel = false;
-            Status = $"任务已取消: {task.Name}";
-            TaskStateChanged?.Invoke(task);
-            EmitLog("用户取消了 Collection 安装");
-            SaveTaskState();
-            return;
-        }
-
-        var installResult = await _downloadInstallService.InstallCollectionAsync(
-            downloadedFiles,
-            task.Name,
-            conflictStrategy,
-            previewItems);
-        if (!installResult.IsSuccess)
-        {
-            task.SetState(installResult.IsCancelled ? DownloadTaskState.Cancelled : DownloadTaskState.Failed, installResult.IsCancelled ? "安装已取消" : "安装失败（可重试）");
-            task.CanRetry = true;
-            Status = $"任务失败: {task.Name}";
             TaskStateChanged?.Invoke(task);
             SaveTaskState();
-            EmitLog($"Collection 安装失败: {task.Name}, 错误: {installResult.Message}");
-
-            var action = await _dialogService.ShowModpackFailureDialogAsync(
-                installResult.Message,
-                installResult.ReportPath ?? task.ReportPath ?? task.RetryReportPath ?? string.Empty,
-                "Collection 安装失败");
-            if (action == ModpackFailureDialogAction.Retry)
-            {
-                RetryTask(task);
-            }
-
-            return;
+            cts.Dispose();
+            _runningTaskCancellationSources.TryRemove(task, out _);
         }
+    }
 
-        task.InstalledPath = installResult.InstalledPath;
-        task.FailedDownloadUrls.Clear();
-        task.FailedDetails = string.Empty;
-        task.ReportPath = installResult.ReportPath;
-        task.BackupPath = installResult.BackupPath;
-        task.SetState(DownloadTaskState.Completed, "Collection 安装完成");
-        task.Progress = 100;
-        Status = $"Collection 任务完成: {task.Name}";
-        TaskStateChanged?.Invoke(task);
-        SaveTaskState();
-        var installedListText = installResult.InstalledItems.Count == 0
-            ? "无可识别 Mod 条目"
-            : string.Join(", ", installResult.InstalledItems.Take(8));
-
-        EmitLog($"Collection 任务完成: {task.Name}，安装目录: {task.InstalledPath}");
-        EmitLog($"Collection 安装条目: {installedListText}");
-        if (!string.IsNullOrWhiteSpace(installResult.BackupPath))
+    private static int CalculateCollectionFileCompletionPercent(int completedFiles, int totalFiles)
+    {
+        if (totalFiles <= 0)
         {
-            EmitLog($"Collection 冲突备份目录: {installResult.BackupPath}");
+            return -1;
         }
 
-        EmitLog($"Collection 安装校验: {(installResult.ValidationPassed ? "通过" : "存在问题")}");
-        if (!installResult.ValidationPassed)
+        if (completedFiles >= totalFiles)
         {
-            foreach (var error in installResult.ValidationErrors.Take(10))
-            {
-                EmitLog($"Collection 校验问题: {error}");
-            }
+            return 100;
         }
 
-        if (!string.IsNullOrWhiteSpace(installResult.ReportPath))
-        {
-            EmitLog($"Collection 安装报告: {installResult.ReportPath}");
-        }
-
-        var retrySuccessReport = _retryDiffReportService.Write(_downloadRootPath, task.Name, retryFailedBefore, task.FailedDownloadUrls);
-        if (!string.IsNullOrWhiteSpace(retrySuccessReport))
-        {
-            task.RetryReportPath = retrySuccessReport;
-            EmitLog($"重试对比报告: {retrySuccessReport}");
-        }
+        // 下载中的文件即使字节进度接近 100%，也不能让“文件完成数”提前显示满格。
+        return Math.Clamp((int)Math.Floor(Math.Max(0, completedFiles) * 100d / totalFiles), 0, 99);
     }
 
     private static List<string> BuildCollectionDownloadUrls(DownloadTaskItem task)
@@ -5648,6 +7115,30 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         return urls;
+    }
+
+    /// <summary>校验本地文件是否确实是可识别的 Nexus Collection 归档。</summary>
+    private static bool IsValidCollectionArchive(string archivePath)
+    {
+        if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var detection = ModpackTypeDetector.Detect(archivePath);
+            if (!string.IsNullOrWhiteSpace(detection.TempExtractPath))
+            {
+                ModpackTypeDetector.CleanupTempDirectory(detection.TempExtractPath);
+            }
+
+            return detection.Type == ModpackType.NexusCollection;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private string ResolveCollectionPartPath(DownloadTaskItem task, string url, int index)
@@ -5680,6 +7171,66 @@ public partial class DownloadPageViewModel : ObservableObject
     {
         return uri.IsAbsoluteUri &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    /// <summary>
+    /// 判断 Nexus 来源的 URL 是否足够像真实归档直链。
+    /// Nexus 文件页也会被保存为 downloadUrl，因此不能仅凭 HTTP scheme 放行；
+    /// 已知 CDN、归档扩展名或非 Nexus 平台的 /download 地址才允许跳过 API/浏览器回退。
+    /// </summary>
+    private static bool IsLikelyNexusDirectDownloadUrl(Uri uri)
+    {
+        if (!IsHttpUri(uri))
+        {
+            return false;
+        }
+
+        var host = uri.Host.Trim().TrimEnd('.');
+        var path = uri.AbsolutePath;
+        var looksLikeArchive = path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                               path.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ||
+                               path.EndsWith(".rar", StringComparison.OrdinalIgnoreCase);
+        if (looksLikeArchive)
+        {
+            return !IsNexusPageHost(host);
+        }
+
+        if (host.Equals("file-metadata.nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("staticdelivery.nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("cdn.nexusmods.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return !IsNexusHost(host) &&
+               path.Contains("/download", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNexusPageHost(string host)
+    {
+        return host.Equals("nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("www.nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("next.nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("api.nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("users.nexusmods.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNexusHost(string host)
+    {
+        return host.Equals("nexusmods.com", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".nexusmods.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 判断 CurseForge 来源是否已经是可下载地址。
+    ///
+    /// CurseForge 的文件页、/download 页面以及 curse.tools API 都是网页/API，
+    /// 不能直接交给下载器，否则很容易把 HTML 当成 Mod 压缩包保存。优先使用
+    /// projectId/fileId 重新解析 CDN 地址；只有 CDN 或明确归档扩展名才放行。
+    /// </summary>
+    private static bool IsLikelyCurseforgeDirectDownloadUrl(string? value)
+    {
+        return DownloadUrlPolicy.IsLikelyCurseforgeDirectDownloadUrl(value);
     }
 
     /// <summary>扫描指定 Base 路径下 versions 子目录，返回现有实例名称列表用于重名检测。</summary>
@@ -5747,6 +7298,68 @@ public partial class DownloadPageViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 安装服务会在并发下载线程中汇报进度。Avalonia 的 ObservableProperty 和
+    /// ObservableCollection 只能在 UI 线程安全更新，因此统一在这里切回 UI 线程。
+    /// 同时安装阶段最多显示 99%；最终的 100% 由安装结果确认后设置，避免服务的
+    /// 最后一条进度回调排在 Completed 状态之后执行而把进度条重新填满/回退。
+    /// </summary>
+    private void ApplyModpackInstallProgress(DownloadTaskItem task, ModpackInstallProgress progress)
+    {
+        void Apply()
+        {
+            // 若最终结果已经到达，丢弃排队中晚到的进度回调，避免 Completed/Failed
+            // 被旧回调覆盖。重试会重新进入 Installing 后接收新回调。
+            if (task.TaskState != DownloadTaskState.Installing)
+            {
+                return;
+            }
+
+            task.Progress = Math.Clamp(progress.Percent, 0, 99);
+            task.SetState(DownloadTaskState.Installing, progress.StepText);
+            task.SubProgressText = progress.SubProgressText;
+            task.SubProgress = progress.SubProgress;
+            EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
+            TaskStateChanged?.Invoke(task);
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Apply();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(Apply);
+        }
+    }
+
+    private void ApplyCollectionInstallProgress(DownloadTaskItem task, CollectionInstallProgress progress)
+    {
+        void Apply()
+        {
+            if (task.TaskState != DownloadTaskState.Installing)
+            {
+                return;
+            }
+
+            task.Progress = Math.Clamp(progress.Percent, 0, 99);
+            task.SetState(DownloadTaskState.Installing, progress.StepText);
+            task.SubProgressText = progress.SubProgressText;
+            task.SubProgress = progress.SubProgress;
+            EmitModpackProgress(task.Name, progress.StepText, progress.SubProgressText);
+            TaskStateChanged?.Invoke(task);
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Apply();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(Apply);
+        }
+    }
+
     private void TryOpenPath(string path)
     {
         try
@@ -5765,8 +7378,259 @@ public partial class DownloadPageViewModel : ObservableObject
 
     private static bool HasRealDownloadSource(DownloadTaskItem task)
     {
+        // 本地拖拽/文件选择任务把压缩包路径放在 SourceUrl 和 OutputFilePath 中，
+        // 但这不是待下载 URL，必须直接进入安装执行器。
+        if (task.TaskAction is DownloadTaskAction.InstallModpack or DownloadTaskAction.InstallCollection &&
+            (!Uri.TryCreate(task.SourceUrl, UriKind.Absolute, out var sourceUri) ||
+             (!IsHttpUri(sourceUri) && !IsCurseforgeCacheSource(task.SourceUrl))))
+        {
+            return false;
+        }
+
         return !string.IsNullOrWhiteSpace(task.SourceUrl) &&
                !string.IsNullOrWhiteSpace(task.OutputFilePath);
+    }
+
+    private static bool HasPreviouslyInstalledModpackRuntime(DownloadTaskItem task)
+    {
+        return task.TaskAction == DownloadTaskAction.InstallModpack &&
+               HasPreviouslyInstalledPackageRuntime(task);
+    }
+
+    /// <summary>
+    /// 判断 SMAPI 任务是否已经创建过目标实例。
+    /// 应用重启时，外部 SMAPI 安装任务无法恢复原来的取消回调，会被标记为
+    /// 可重试失败；重试必须允许安装器更新现有的半成品目录，否则只要上次已
+    /// 创建 versions/&lt;实例&gt; 就会再次得到“实例已存在”。
+    /// </summary>
+    private static bool HasPreviouslyInstalledSmapiRuntime(DownloadTaskItem task)
+    {
+        if (task.TaskAction != DownloadTaskAction.InstallSmapi ||
+            string.IsNullOrWhiteSpace(task.TargetGamePath) ||
+            string.IsNullOrWhiteSpace(task.TargetInstanceName))
+        {
+            return false;
+        }
+
+        var gameBasePath = InstanceRuntimePathResolver.ResolveBasePath(task.TargetGamePath);
+        if (string.IsNullOrWhiteSpace(gameBasePath))
+        {
+            return false;
+        }
+
+        var instanceName = InstanceRuntimePathResolver.SanitizeFileNameComponent(
+            task.TargetInstanceName,
+            string.Empty);
+        if (string.IsNullOrWhiteSpace(instanceName))
+        {
+            return false;
+        }
+
+        return Directory.Exists(Path.Combine(gameBasePath, "versions", instanceName));
+    }
+
+    private static bool HasFailedCollectionDownloads(DownloadTaskItem task)
+    {
+        return (task.TaskKind is DownloadTaskKind.NxmCollection or DownloadTaskKind.NexusCollection) &&
+               task.FailedDownloadUrls.Any(url => !string.IsNullOrWhiteSpace(url));
+    }
+
+    private static bool HasPreviouslyInstalledPackageRuntime(DownloadTaskItem task)
+    {
+        var isPackageTask = task.TaskAction is DownloadTaskAction.InstallModpack or DownloadTaskAction.InstallCollection ||
+                            task.TaskKind is DownloadTaskKind.NxmCollection or DownloadTaskKind.NexusCollection;
+        if (!isPackageTask)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(task.InstalledPath) ||
+            !string.IsNullOrWhiteSpace(task.InstalledDirectory))
+        {
+            return true;
+        }
+
+        // 安装器可能已经创建 versions/<实例>，但进程恰好在返回结果前退出，
+        // 此时任务状态中还没有 InstalledPath；重试仍应进入更新模式。
+        if (string.IsNullOrWhiteSpace(task.TargetGamePath) ||
+            string.IsNullOrWhiteSpace(task.TargetInstanceName))
+        {
+            return false;
+        }
+
+        var gameBasePath = InstanceRuntimePathResolver.ResolveBasePath(task.TargetGamePath);
+        var instanceName = InstanceRuntimePathResolver.SanitizeFileNameComponent(
+            task.TargetInstanceName,
+            string.Empty);
+        return !string.IsNullOrWhiteSpace(gameBasePath) &&
+               !string.IsNullOrWhiteSpace(instanceName) &&
+               Directory.Exists(Path.Combine(gameBasePath, "versions", instanceName));
+    }
+
+    private static bool ShouldReuseLocalPackageArchive(DownloadTaskItem task)
+    {
+        var isPackageTask = task.TaskAction is DownloadTaskAction.InstallModpack or DownloadTaskAction.InstallCollection;
+        var isSupportedKind = task.TaskKind is
+            DownloadTaskKind.SvlModpack or
+            DownloadTaskKind.CurseforgeModpack or
+            DownloadTaskKind.NxmCollection or
+            DownloadTaskKind.NexusCollection;
+        return isPackageTask &&
+               isSupportedKind &&
+               !string.IsNullOrWhiteSpace(task.OutputFilePath) &&
+               IsValidLocalPackageArchive(task.OutputFilePath, task.TaskKind);
+    }
+
+    /// <summary>
+    /// 判断任务输出路径是否已经有可复用的完整下载归档。
+    /// 下载状态会先写入 .part，只有最终归档通过校验才允许跳过网络；
+    /// SMAPI 还必须包含 install.dat，避免把普通 Mod/错误响应当成安装包。
+    /// </summary>
+    private static bool TryReuseExistingDownloadedArtifact(DownloadTaskItem task)
+    {
+        if (task == null ||
+            string.IsNullOrWhiteSpace(task.OutputFilePath) ||
+            !File.Exists(task.OutputFilePath))
+        {
+            return false;
+        }
+
+        // DownloadAsync 先写入 .part，成功后才原子改名到 OutputFilePath。
+        // 如果仍有断点文件，说明最终文件可能只是旧文件或上一次未完成的
+        // 残留，不能因为它恰好能被解压/读取就跳过本次下载。
+        if (File.Exists(task.OutputFilePath + ".part") ||
+            File.Exists(task.OutputFilePath + ".part.json"))
+        {
+            return false;
+        }
+
+        return task.TaskAction switch
+        {
+            DownloadTaskAction.InstallSmapi =>
+                ModpackInstallService.TryNormalizeSmapiArchive(task.OutputFilePath),
+            DownloadTaskAction.InstallMod =>
+                ModpackInstallService.IsValidModArchiveFile(task.OutputFilePath),
+            // 另存为不要求目标是 Mod 压缩包：可以是游戏文件、说明包或
+            // 其他用户指定的资源。最终文件存在且没有 .part 即表示上一次
+            // 下载已完成，可直接进入“已完成（另存为）”。
+            DownloadTaskAction.SaveOnly => IsCompleteSavedFile(task.OutputFilePath),
+            _ => false
+        };
+    }
+
+    private static bool IsCompleteSavedFile(string path)
+    {
+        try
+        {
+            return File.Exists(path) &&
+                   !File.Exists(path + ".part") &&
+                   !File.Exists(path + ".part.json");
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)
+        {
+            return $"{bytes} B";
+        }
+
+        var units = new[] { "KB", "MB", "GB", "TB" };
+        var unitIndex = -1;
+        double display = bytes;
+        while (display >= 1024 && unitIndex < units.Length - 1)
+        {
+            display /= 1024;
+            unitIndex++;
+        }
+
+        return $"{display:0.0} {units[Math.Max(0, unitIndex)]}";
+    }
+
+    /// <summary>
+    /// 只有归档真实包含对应类型的清单时才允许重试复用。
+    /// 下载阶段可能把 HTML、错误响应或截断文件写入 OutputFilePath；
+    /// 仅判断 File.Exists 会让后续重试反复跳过远程下载，必须让坏归档回到真实下载流程。
+    /// </summary>
+    private static bool IsValidLocalPackageArchive(string archivePath, DownloadTaskKind taskKind)
+    {
+        if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var detection = ModpackTypeDetector.Detect(archivePath);
+            if (!string.IsNullOrWhiteSpace(detection.TempExtractPath))
+            {
+                ModpackTypeDetector.CleanupTempDirectory(detection.TempExtractPath);
+            }
+
+            return taskKind switch
+            {
+                DownloadTaskKind.SvlModpack => detection.Type == ModpackType.SVL,
+                DownloadTaskKind.CurseforgeModpack => detection.Type == ModpackType.Curseforge,
+                DownloadTaskKind.NxmCollection or DownloadTaskKind.NexusCollection =>
+                    detection.Type == ModpackType.NexusCollection,
+                _ => false
+            };
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 为恢复/重试的本地整合包任务补回真实类型。
+    /// URL 导入在下载前无法知道是 SVL、CurseForge 还是 Collection，
+    /// 因此初始 TaskKind 为 Generic；只要本地归档已经存在，就可以重新检测。
+    /// </summary>
+    private static bool TryResolveLocalPackageTaskKind(DownloadTaskItem task)
+    {
+        if (task.TaskAction != DownloadTaskAction.InstallModpack ||
+            task.TaskKind != DownloadTaskKind.Generic ||
+            string.IsNullOrWhiteSpace(task.OutputFilePath) ||
+            !File.Exists(task.OutputFilePath))
+        {
+            return task.TaskKind is DownloadTaskKind.SvlModpack or
+                DownloadTaskKind.CurseforgeModpack or
+                DownloadTaskKind.NexusCollection;
+        }
+
+        try
+        {
+            var detection = ModpackTypeDetector.Detect(task.OutputFilePath);
+            if (!string.IsNullOrWhiteSpace(detection.TempExtractPath))
+            {
+                ModpackTypeDetector.CleanupTempDirectory(detection.TempExtractPath);
+            }
+
+            switch (detection.Type)
+            {
+                case ModpackType.SVL:
+                    task.TaskKind = DownloadTaskKind.SvlModpack;
+                    return true;
+                case ModpackType.Curseforge:
+                    task.TaskKind = DownloadTaskKind.CurseforgeModpack;
+                    return true;
+                case ModpackType.NexusCollection:
+                    task.TaskKind = DownloadTaskKind.NexusCollection;
+                    task.TaskAction = DownloadTaskAction.InstallCollection;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void RefreshGamePathState()
@@ -5776,7 +7640,9 @@ public partial class DownloadPageViewModel : ObservableObject
 
         var gamePath = !string.IsNullOrWhiteSpace(preferred) && Directory.Exists(preferred)
             ? preferred
-            : _gameInstallPathLocator.TryLocateSteamStardewPath() ?? _gameInstallPathLocator.TryLocateGogStardewPath();
+            : _gameInstallPathLocator.TryLocateSteamStardewPath()
+              ?? _gameInstallPathLocator.TryLocateGogStardewPath()
+              ?? _gameInstallPathLocator.TryLocateXboxStardewPath();
 
         var hasValidPath = !string.IsNullOrWhiteSpace(gamePath) && Directory.Exists(gamePath);
         ShowGamePathWarning = !hasValidPath;
@@ -5846,14 +7712,21 @@ public partial class DownloadPageViewModel : ObservableObject
     /// 浏览器下载回退：打开 Nexus 页面，等待用户在浏览器点击 Manual Download 后回传的 NXM 链接。
     /// 返回 NXM 原始链接字符串；超时或取消返回 null。
     /// </summary>
-    private async Task<string?> TryBrowserDownloadFallbackAsync(long modId, long fileId, string browserUrl)
+    private async Task<string?> TryBrowserDownloadFallbackAsync(
+        long modId,
+        long fileId,
+        string browserUrl,
+        CancellationToken cancellationToken = default)
     {
         NxmImportStatus = "浏览器下载回退：请在浏览器中点击 Manual Download";
-        return await _browserDownloadFallbackService.WaitForNxmCallbackAsync(
+        var result = await _browserDownloadFallbackService.WaitForNxmCallbackAsync(
             modId,
             fileId,
             browserUrl,
-            hint => NxmImportStatus = hint);
+            hint => NxmImportStatus = hint,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
     }
 
     /// <summary>
@@ -5986,6 +7859,11 @@ public partial class DownloadPageViewModel : ObservableObject
         return $"download-{DateTime.Now:yyyyMMddHHmmss}.bin";
     }
 
+    private static bool TryParsePositiveLong(string? value, out long result)
+    {
+        return long.TryParse(value, out result) && result > 0;
+    }
+
     /// <summary>判断扩展名是否为已知的压缩包格式。</summary>
     private static bool IsKnownArchiveExtension(string? extension)
     {
@@ -6011,13 +7889,48 @@ public partial class DownloadPageViewModel : ObservableObject
 
     private void SaveTaskState()
     {
+        // 多个 Collection/Mod 任务会从不同线程同时汇报进度；状态文件使用同一个
+        // .tmp 路径，若并发写入会出现互相覆盖或 Move 失败，导致重启后丢任务。
+        // 先取得 UI 线程快照，再串行化文件写入。不能在持有写入锁时同步等待
+        // UI 线程：若 UI 回调同时触发 SaveTaskState，会形成后台线程等待 UI、UI
+        // 等待写入锁的死锁。
+        var saveSequence = Interlocked.Increment(ref _taskStateSaveSequence);
+        List<DownloadTaskItem> snapshot;
         try
         {
-            _taskStateStore.Save(_taskStatePath, DownloadTasks.ToList());
+            // DownloadTasks 由 UI 线程维护；安装/下载回调可能从线程池触发保存。
+            // 先在 UI 线程取得稳定快照，避免 ObservableCollection 在增删任务时
+            // 被后台枚举导致 InvalidOperationException，进而丢失重启恢复记录。
+            snapshot = Dispatcher.UIThread.CheckAccess()
+                ? DownloadTasks.ToList()
+                : Dispatcher.UIThread.InvokeAsync(() => DownloadTasks.ToList())
+                    .GetAwaiter()
+                    .GetResult();
         }
         catch
         {
             // Keep persistence as best-effort to avoid breaking download workflow.
+            return;
+        }
+
+        lock (_taskStateSaveLock)
+        {
+            // 快照在锁外取得，较早请求可能晚于较新请求完成快照；跳过旧序号，
+            // 避免新状态已经落盘后又被旧状态覆盖。
+            if (saveSequence < _lastSavedTaskStateSequence)
+            {
+                return;
+            }
+
+            try
+            {
+                _taskStateStore.Save(_taskStatePath, snapshot);
+                _lastSavedTaskStateSequence = saveSequence;
+            }
+            catch
+            {
+                // Keep persistence as best-effort to avoid breaking download workflow.
+            }
         }
     }
 
@@ -6036,22 +7949,8 @@ public partial class DownloadPageViewModel : ObservableObject
                 return;
             }
 
-            var filteredRecords = records
-                .Where(record => !IsSmokeTestTaskRecord(record))
-                .ToList();
-
-            if (filteredRecords.Count != records.Count)
-            {
-                EmitLog($"已过滤 {records.Count - filteredRecords.Count} 条测试任务记录");
-            }
-
-            if (filteredRecords.Count == 0)
-            {
-                return;
-            }
-
             DownloadTasks.Clear();
-            foreach (var record in filteredRecords)
+            foreach (var record in records)
             {
                 DownloadTasks.Add(new DownloadTaskItem
                 {
@@ -6065,19 +7964,30 @@ public partial class DownloadPageViewModel : ObservableObject
                     TaskAction = record.TaskAction,
                     SourceModId = record.SourceModId,
                     SourceFileId = record.SourceFileId,
+                    SourcePlatform = record.SourcePlatform,
+                    CollectionSlug = record.CollectionSlug,
+                    CollectionRevision = record.CollectionRevision,
                     SourceUrl = record.SourceUrl,
                     OutputFilePath = record.OutputFilePath,
                     InstalledPath = record.InstalledPath,
+                    InstalledDirectory = record.InstalledDirectory,
                     ReportPath = record.ReportPath,
                     BackupPath = record.BackupPath,
                     FailedDetails = record.FailedDetails,
                     RetryReportPath = record.RetryReportPath,
                     TargetGamePath = record.TargetGamePath,
                     TargetInstanceName = record.TargetInstanceName,
+                    CustomIconPath = record.CustomIconPath,
+                    SpeedText = record.SpeedText,
+                    EtaText = record.EtaText,
+                    TotalSizeText = record.TotalSizeText,
+                    DownloadedSizeText = record.DownloadedSizeText,
+                    SubProgressText = record.SubProgressText,
+                    SubProgress = record.SubProgress,
                     StatusIconSource = string.Empty,
-                    DependencyUrls = record.DependencyUrls,
-                    FailedDownloadUrls = record.FailedDownloadUrls,
-                    ConflictPreviewItems = record.ConflictPreviewItems
+                    DependencyUrls = record.DependencyUrls ?? [],
+                    FailedDownloadUrls = record.FailedDownloadUrls ?? [],
+                    ConflictPreviewItems = record.ConflictPreviewItems ?? []
                 });
 
                 NormalizeRecoveredTaskState(DownloadTasks[^1]);
@@ -6090,25 +8000,25 @@ public partial class DownloadPageViewModel : ObservableObject
         }
     }
 
-    private static bool IsSmokeTestTaskRecord(DownloadTaskStateRecord record)
-    {
-        if (record == null)
-        {
-            return false;
-        }
-
-        var hasSmokeName = !string.IsNullOrWhiteSpace(record.Name) &&
-                           record.Name.Contains("smoke", StringComparison.OrdinalIgnoreCase);
-        var hasSmokeSource = !string.IsNullOrWhiteSpace(record.SourceUrl) &&
-                             record.SourceUrl.Contains("smoke", StringComparison.OrdinalIgnoreCase);
-        var hasSmokeOutputPath = !string.IsNullOrWhiteSpace(record.OutputFilePath) &&
-                                 record.OutputFilePath.Contains("svl-smoke-instance", StringComparison.OrdinalIgnoreCase);
-
-        return hasSmokeName || hasSmokeSource || hasSmokeOutputPath;
-    }
-
     private static void NormalizeRecoveredTaskState(DownloadTaskItem task)
     {
+        // 早期状态文件新增 TaskKind 后没有同步写入 TaskAction，
+        // 反序列化会使用 InstallMod 默认值。按更具体的任务类型补回动作，
+        // 否则重启后本地 Collection/整合包会误走普通 Mod 安装分支。
+        if (task.TaskAction == DownloadTaskAction.InstallMod)
+        {
+            task.TaskAction = LooksLikeSmapiTask(task)
+                ? DownloadTaskAction.InstallSmapi
+                : task.TaskKind switch
+            {
+                DownloadTaskKind.NxmCollection or DownloadTaskKind.NexusCollection
+                    => DownloadTaskAction.InstallCollection,
+                DownloadTaskKind.SvlModpack or DownloadTaskKind.CurseforgeModpack
+                    => DownloadTaskAction.InstallModpack,
+                _ => task.TaskAction
+            };
+        }
+
         var inferred = task.TaskState;
 
         if (inferred is DownloadTaskState.Resolving or DownloadTaskState.Downloading or DownloadTaskState.Installing)
@@ -6129,6 +8039,14 @@ public partial class DownloadPageViewModel : ObservableObject
             }
             task.CanRetry = false;
             task.CanCancel = false;
+        }
+    }
+
+    private static void NormalizeSmapiTaskAction(DownloadTaskItem task)
+    {
+        if (task.TaskAction == DownloadTaskAction.InstallMod && LooksLikeSmapiTask(task))
+        {
+            task.TaskAction = DownloadTaskAction.InstallSmapi;
         }
     }
 

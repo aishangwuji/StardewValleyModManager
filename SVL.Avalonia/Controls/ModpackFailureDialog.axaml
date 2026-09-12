@@ -6,7 +6,10 @@
 		<StackPanel Spacing="10">
 			<TextBlock Text="{Binding Title, ElementName=Root}" Classes="heroTitle" />
 			<TextBlock Text="{Binding FailureReason, ElementName=Root}" TextWrapping="Wrap" />
-			<TextBlock Text="日志: {Binding LogPath, ElementName=Root}" TextWrapping="Wrap" Opacity="0.8" />
+			<StackPanel Orientation="Horizontal" Spacing="4">
+				<TextBlock Text="日志:" Opacity="0.8" />
+				<TextBlock Text="{Binding LogPath, ElementName=Root}" TextWrapping="Wrap" Opacity="0.8" />
+			</StackPanel>
 			<StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
 				<Button Content="查看日志" Command="{Binding OpenLogCommand, ElementName=Root}" CommandParameter="{Binding LogPath, ElementName=Root}" />
 				<Button Content="重试" Command="{Binding RetryCommand, ElementName=Root}" />

@@ -19,6 +19,7 @@
         Height="680"
         MinWidth="900"
         MinHeight="600"
+        UseLayoutRounding="True"
         Background="{DynamicResource WindowBackgroundBrush}"
         DragDrop.AllowDrop="True"
         DragDrop.DragOver="MainWindow_DragOver"
@@ -55,9 +56,6 @@
     <DataTemplate DataType="vm:InstanceSettingsPageViewModel">
       <views:InstanceSettingsPageView />
     </DataTemplate>
-    <DataTemplate DataType="vm:ExportPageViewModel">
-      <views:ExportPageView />
-    </DataTemplate>
     <!-- 浮窗通知卡片：由 NotificationContainer ItemsControl 使用 -->
     <DataTemplate DataType="models:NotificationItem">
       <controls:FloatingNotificationControl />
@@ -69,7 +67,7 @@
       <Grid ColumnDefinitions="Auto,*,Auto" Margin="16,0">
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Classes="nav back" IsVisible="{Binding ShowBackButton}" Command="{Binding NavigateBackCommand}">
-            <Path Data="{StaticResource Icon.ArrowLeft}" Width="16" Height="16" Stretch="Uniform" Stroke="White" StrokeThickness="1.8" VerticalAlignment="Center" HorizontalAlignment="Center" />
+            <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/ArrowLeft.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center" />
           </Button>
           <Image Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="22" Height="22" VerticalAlignment="Center" IsVisible="{Binding ShowBrandIdentity}" />
           <TextBlock Text="{Binding LauncherAppNameText}" Classes="brand" Foreground="White" IsVisible="{Binding ShowBrandIdentity}" />
@@ -111,21 +109,35 @@
           </Button>
         </StackPanel>
 
-        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8" IsVisible="{Binding ShowWindowControlButtons}">
-          <Button Classes="winCtrl min" Click="MinimizeButton_Click" ToolTip.Tip="最小化">
-            <Path Data="{StaticResource Icon.Minus}" Width="14" Height="14" Stretch="Uniform" Fill="White" VerticalAlignment="Center" HorizontalAlignment="Center">
-              <Path.RenderTransform>
-                <TranslateTransform Y="4" />
-              </Path.RenderTransform>
-            </Path>
+        <Grid Grid.Column="2" Width="120" Height="48" RowDefinitions="48" ColumnDefinitions="40,40,40"
+              HorizontalAlignment="Right" VerticalAlignment="Center" IsVisible="{Binding ShowWindowControlButtons}">
+          <Button Grid.Row="0" Grid.Column="0" Classes="winCtrl min" Click="MinimizeButton_Click" ToolTip.Tip="最小化"
+                  Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+            <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+              <!-- 三个图形都以 24×24 的同一坐标系绘制，避免资源图片透明边界造成视觉偏移。 -->
+              <Path Data="M 4,12 L 20,12" Stroke="White" StrokeThickness="2"
+                    StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+            </Grid>
           </Button>
-          <Button Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化/还原">
-            <Path Data="{StaticResource Icon.Maximize}" Width="14" Height="14" Stretch="Uniform" Stroke="White" StrokeThickness="1.6" VerticalAlignment="Center" HorizontalAlignment="Center" />
+          <Button Grid.Row="0" Grid.Column="1" Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化/还原"
+                  Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+            <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Path Data="M 5,19 L 5,5 L 19,5 L 19,19 Z" Stroke="White" StrokeThickness="2"
+                    Fill="Transparent"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+            </Grid>
           </Button>
-          <Button Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭">
-            <Path Data="{StaticResource Icon.X}" Width="14" Height="14" Stretch="Uniform" Stroke="White" StrokeThickness="1.8" VerticalAlignment="Center" HorizontalAlignment="Center" />
+          <Button Grid.Row="0" Grid.Column="2" Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭"
+                  Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+            <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Path Data="M 5,5 L 19,19 M 19,5 L 5,19" Stroke="White" StrokeThickness="2"
+                    StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+            </Grid>
           </Button>
-        </StackPanel>
+        </Grid>
       </Grid>
     </Border>
 

@@ -1,3 +1,5 @@
+using SVL.Avalonia.Services;
+
 namespace SVL.Avalonia.Models;
 
 public enum ExternalDownloadAction
@@ -73,28 +75,30 @@ public sealed class ExternalDownloadRequest
             var pipeIndex = option.IndexOf('|');
             if (pipeIndex > 0)
             {
-                var leftPart = option[..pipeIndex].Trim();
-                if (leftPart.Length > 0)
+                var leftPart = DownloadOptionIdentityParser.StripGeneratedFilePrefix(option[..pipeIndex]);
+                if (leftPart.Length > 0 && !IsHttpUrl(leftPart))
                 {
                     return leftPart;
                 }
             }
 
-            if (option.StartsWith("File ", StringComparison.OrdinalIgnoreCase))
-            {
-                var colonIndex = option.IndexOf(':');
-                if (colonIndex > 0 && colonIndex < option.Length - 1)
-                {
-                    var filePart = option[(colonIndex + 1)..].Trim();
-                    if (filePart.Length > 0)
-                    {
-                        return filePart;
-                    }
-                }
-            }
-
+            option = DownloadOptionIdentityParser.StripGeneratedFilePrefix(option);
             if (option.Length > 0)
             {
+                if (TryGetUrlFileName(option, out var urlFileName))
+                {
+                    return urlFileName;
+                }
+
+                // 只有 URL、且 URL 没有可读文件名时，回退到 ResourceName，
+                // 不要把整条 URL 交给文件选择器作为默认文件名。
+                if (IsHttpUrl(option))
+                {
+                    return string.IsNullOrWhiteSpace(ResourceName)
+                        ? "download.zip"
+                        : ResourceName.Trim();
+                }
+
                 return option;
             }
         }
@@ -105,5 +109,32 @@ public sealed class ExternalDownloadRequest
         }
 
         return ResourceName.Trim();
+    }
+
+    private static bool IsHttpUrl(string value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    private static bool TryGetUrlFileName(string value, out string fileName)
+    {
+        fileName = string.Empty;
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return false;
+        }
+
+        var pathFileName = Uri.UnescapeDataString(Path.GetFileName(uri.LocalPath));
+        if (string.IsNullOrWhiteSpace(pathFileName) ||
+            pathFileName is "." or ".." ||
+            pathFileName.Equals("download", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        fileName = pathFileName;
+        return true;
     }
 }

@@ -174,7 +174,7 @@
                     Classes.selected="{Binding IsOverviewSection}"
                     Command="{Binding SwitchToGeneralSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Path Data="{StaticResource Icon.BarChart}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/BarChart.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="1" Text="{Binding OverviewNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -182,7 +182,7 @@
                     Classes.selected="{Binding IsAutoInstallSection}"
                     Command="{Binding SwitchToAutoInstallSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Path Data="{StaticResource Icon.Download}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Download.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="1" Text="{Binding AutoInstallNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -190,7 +190,7 @@
                     Classes.selected="{Binding IsModManageSection}"
                     Command="{Binding SwitchToModManageSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Path Data="{StaticResource Icon.Package}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="1" Text="{Binding ModManageNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -198,7 +198,7 @@
                     Classes.selected="{Binding IsSettingsSection}"
                     Command="{Binding SwitchToInstanceSettingsSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Path Data="{StaticResource Icon.Settings}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Settings.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="1" Text="{Binding InstanceSettingsNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -206,7 +206,7 @@
                     Classes.selected="{Binding IsExportSection}"
                     Command="{Binding SwitchToExportSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Path Data="{StaticResource Icon.Upload}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Upload.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="1" Text="{Binding ExportNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -218,7 +218,7 @@
             <Border Width="36"
                     Height="36"
                     CornerRadius="6"
-                    Background="{DynamicResource WindowBackgroundBrush}"
+                    Background="Transparent"
                     BorderBrush="{DynamicResource PanelBorderBrush}"
                     BorderThickness="1"
                     Margin="0,0,10,0">
@@ -255,7 +255,7 @@
                   <Border Width="54"
                           Height="54"
                           CornerRadius="7"
-                          Background="{DynamicResource WindowBackgroundBrush}"
+                          Background="Transparent"
                           BorderBrush="{DynamicResource PanelBorderBrush}"
                           BorderThickness="1"
                           VerticalAlignment="Top"
@@ -272,17 +272,17 @@
                     <TextBlock Text="{Binding OverviewVersionCardTitleText}" Classes="sectionTitle" />
                     <TextBlock Text="{Binding InstanceDisplayName}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                      <Path Data="{StaticResource Icon.Gamepad}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Opacity="0.78" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Gamepad.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.78" />
                       <TextBlock Text="原版: " FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding InstanceVersionText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowSmapiVersion}">
-                      <Path Data="{StaticResource Icon.Wrench}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Opacity="0.78" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Wrench.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.78" />
                       <TextBlock Text="SMAPI: " FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding SmapiVersionText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowNoSmapiHint}">
-                      <Path Data="{StaticResource Icon.Lightbulb}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Opacity="0.68" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Lightbulb.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.68" />
                       <TextBlock Text="当前为原版，自动安装页可执行 SMAPI 安装/切换流程" FontSize="12" Opacity="0.68" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
                   </StackPanel>
@@ -347,7 +347,7 @@
                           CornerRadius="6"
                           Padding="10">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                      <Path Data="{StaticResource Icon.AlertTriangle}" Width="15" Height="15" Stretch="Uniform" Fill="{DynamicResource ColorBrushWarn}" VerticalAlignment="Center" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/AlertTriangle.png" Width="15" Height="15" Stretch="Uniform" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding AdvancedWarningText}"
                                  Foreground="{DynamicResource TextSecondaryBrush}"
                                  TextWrapping="Wrap"
@@ -381,7 +381,7 @@
                   <Border Width="54"
                           Height="54"
                           CornerRadius="7"
-                          Background="{DynamicResource WindowBackgroundBrush}"
+                          Background="Transparent"
                           BorderBrush="{DynamicResource PanelBorderBrush}"
                           BorderThickness="1"
                           VerticalAlignment="Top"
@@ -398,12 +398,12 @@
                     <TextBlock Text="{Binding GeneralSectionButtonText}" Classes="sectionTitle" />
                     <TextBlock Text="{Binding InstanceDisplayName}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                      <Path Data="{StaticResource Icon.Gamepad}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Opacity="0.78" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Gamepad.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.78" />
                       <TextBlock Text="原版: " FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding InstanceVersionText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowSmapiVersion}">
-                      <Path Data="{StaticResource Icon.Wrench}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" Opacity="0.78" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Wrench.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.78" />
                       <TextBlock Text="SMAPI: " FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding SmapiVersionText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                     </StackPanel>
@@ -435,8 +435,8 @@
                           IsVisible="{Binding IsInstallingSmapi}">
                     <StackPanel Spacing="6">
                       <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Path Data="{StaticResource Icon.RefreshCw}" Width="16" Height="16"
-                              Stretch="Uniform" Fill="{DynamicResource AccentBrush}"
+                        <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="20" Height="20"
+                              Stretch="Uniform"
                               VerticalAlignment="Center" />
                         <TextBlock Text="正在安装 SMAPI..."
                                    FontSize="13"
@@ -461,7 +461,7 @@
                       IsVisible="{Binding ShowSwitchToSmapiHint}">
                 <Grid ColumnDefinitions="*,Auto">
                   <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
-                    <Path Data="{StaticResource Icon.Wrench}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource ColorBrushWarn}" VerticalAlignment="Center" />
+                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Wrench.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding SwitchToSmapiTipText}"
                                FontSize="13"
                                Foreground="{DynamicResource TextSecondaryBrush}"
@@ -487,7 +487,7 @@
                     Padding="12"
                     IsVisible="{Binding ShowBaseModeModWarning}">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Path Data="{StaticResource Icon.AlertTriangle}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource ColorBrushWarn}" VerticalAlignment="Center" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/AlertTriangle.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
                 <TextBlock Text="这是原版版本，不支持使用 MOD。请先安装并切换到 SMAPI 版本。"
                            FontSize="13"
                            Foreground="{DynamicResource TextSecondaryBrush}"
@@ -504,7 +504,7 @@
                     IsVisible="{Binding ShowSwitchToSmapiHint}">
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
-                  <Path Data="{StaticResource Icon.Wrench}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource ColorBrushWarn}" VerticalAlignment="Center" />
+                  <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Wrench.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
                   <TextBlock Text="{Binding SwitchToSmapiTipText}"
                              FontSize="13"
                              Foreground="{DynamicResource TextSecondaryBrush}"
@@ -551,6 +551,29 @@
                       <Button Grid.Column="6" Classes="segmentSub" Classes.selected="{Binding IsUpdatableFilter}" Content="{Binding UpdatableFilterText}" Command="{Binding SetUpdatableFilterCommand}" />
                     </Grid>
                   </Border>
+                </StackPanel>
+              </Border>
+
+              <!-- Mods/备份分栏下方的操作工具栏。工具栏与当前分栏保持同一视觉层级，
+                   避免打开文件夹、刷新等操作被 Tag 筛选区域隔开。 -->
+              <Border Classes="hintCard" Padding="14,12">
+                <StackPanel>
+                  <WrapPanel IsVisible="{Binding IsModsTab}">
+                    <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenCurrentInstanceModsFolderCommand}" />
+                    <Button Classes="toolbarAction" Content="检测更新" Command="{Binding CheckAllModsUpdateCommand}" IsEnabled="{Binding IsCheckingModUpdates, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="检测冲突" Command="{Binding DetectModConflictsCommand}" IsEnabled="{Binding CanDetectModConflicts}" />
+                    <Button Classes="toolbarAction" Content="检测汉化" Command="{Binding CheckAllModsLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="刷新选中汉化" Command="{Binding RefreshSelectedLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
+                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" />
+                    <Button Classes="toolbarAction" Width="34" Padding="0" Content="+" ToolTip.Tip="从本地安装 Mod" Command="{Binding InstallModFromLocalCommand}" />
+                  </WrapPanel>
+
+                  <WrapPanel IsVisible="{Binding IsBackupTab}">
+                    <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenBackupFolderCommand}" />
+                    <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
+                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" />
+                  </WrapPanel>
                 </StackPanel>
               </Border>
 
@@ -664,22 +687,40 @@
                 </StackPanel>
               </Border>
 
-              <Border Classes="hintCard" Padding="14,12">
-                <StackPanel>
-                  <WrapPanel IsVisible="{Binding IsModsTab}">
-                    <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenCurrentInstanceModsFolderCommand}" />
-                    <Button Classes="toolbarAction" Content="检测更新" Command="{Binding CheckAllModsUpdateCommand}" IsEnabled="{Binding IsCheckingModUpdates, Converter={x:Static BoolConverters.Not}}" />
-                    <Button Classes="toolbarAction" Content="检测汉化" Command="{Binding CheckAllModsLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
-                    <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" />
-                    <Button Classes="toolbarAction" Width="34" Padding="0" Content="+" ToolTip.Tip="从本地安装 Mod" Command="{Binding InstallModFromLocalCommand}" />
-                  </WrapPanel>
-
-                  <WrapPanel IsVisible="{Binding IsBackupTab}">
-                    <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenBackupFolderCommand}" />
-                    <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" />
-                  </WrapPanel>
+              <Border Classes="hintCard" Padding="14,12" IsVisible="{Binding ShowModConflictResult}">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Mod 冲突检测" Classes="sectionTitle" />
+                    <Button Grid.Column="1"
+                            Content="清除结果"
+                            Command="{Binding ClearModConflictsCommand}"
+                            Padding="10,4" />
+                  </Grid>
+                  <TextBlock Text="{Binding ModConflictSummary}"
+                             FontSize="12"
+                             Opacity="0.78"
+                             TextWrapping="Wrap" />
+                  <ScrollViewer MaxHeight="220"
+                                VerticalScrollBarVisibility="Auto"
+                                HorizontalScrollBarVisibility="Disabled"
+                                IsVisible="{Binding HasModConflicts}">
+                    <ItemsControl ItemsSource="{Binding ModConflicts}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Border Background="{DynamicResource CardHighlightBg}"
+                                  BorderBrush="{DynamicResource PanelBorderBrush}"
+                                  BorderThickness="1"
+                                  CornerRadius="6"
+                                  Padding="10,7"
+                                  Margin="0,0,0,6">
+                            <TextBlock Text="{Binding DisplayText}"
+                                       FontSize="12"
+                                       TextWrapping="Wrap" />
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
                 </StackPanel>
               </Border>
 
@@ -689,7 +730,7 @@
 
                   <StackPanel IsVisible="{Binding IsCheckingModUpdates}" Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                      <Path Data="{StaticResource Icon.RefreshCw}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
                       <TextBlock Text="更新检测" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding CurrentUpdateProcessingModName}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
@@ -698,7 +739,7 @@
 
                   <StackPanel IsVisible="{Binding IsCheckingLocalization}" Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                      <Path Data="{StaticResource Icon.RefreshCw}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" />
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
                       <TextBlock Text="汉化检测" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding CurrentLocalizationProcessingModName}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
@@ -738,6 +779,7 @@
                            ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:ModManageItem">
+                        <StackPanel>
                         <Border Classes="modRow" CornerRadius="8" Padding="12,10" Background="Transparent" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
                           <Grid ColumnDefinitions="Auto,*,Auto">
                             <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" Margin="0,0,12,0" />
@@ -760,6 +802,16 @@
                               <TextBlock Margin="0,4,0,0" Opacity="0.62" FontSize="12" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" IsVisible="{Binding HasBackupSummary}">
                                 <Run Text="{Binding BackupSummaryText}" />
                               </TextBlock>
+                              <StackPanel Orientation="Horizontal" Margin="0,4,0,0" IsVisible="{Binding HasChildren}">
+                                <TextBlock Text="{Binding ChildModsSummaryText}" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
+                                <Button Content="{Binding GroupToggleText}"
+                                        Command="{Binding DataContext.ToggleModGroupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding .}"
+                                        Margin="8,0,0,0"
+                                        Padding="8,2"
+                                        MinWidth="52"
+                                        FontSize="11" />
+                              </StackPanel>
                               <StackPanel Margin="0,4,0,0" Orientation="Horizontal" IsVisible="{Binding HasDisplayDependencies}">
                                 <TextBlock Text="前置：" Opacity="0.64" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Top" />
                                 <ItemsControl ItemsSource="{Binding DisplayDependencies}" MaxWidth="360">
@@ -820,37 +872,96 @@
 
                               <StackPanel Classes="rowHoverActions" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="6">
                                 <WrapPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                                  <Button Classes="rowAction" IsVisible="{Binding HasLocalization}" Command="{Binding DataContext.ToggleModLocalizationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="切换中英文">
+                                    <TextBlock Text="{Binding LocalizationToggleButtonText}" FontSize="11" FontWeight="SemiBold" />
+                                  </Button>
                                   <Button Classes="rowAction" Command="{Binding DataContext.ShowLocalItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="查看本地详情">
-                                    <Path Data="{StaticResource Icon.FileText}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FileText.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                   <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.ShowOnlineItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="查看在线详情">
-                                    <Path Data="{StaticResource Icon.Globe}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Globe.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                   <Button Classes="rowAction" Command="{Binding DataContext.OpenItemFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="打开目录">
-                                    <Path Data="{StaticResource Icon.FolderOpen}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FolderOpen.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                 </WrapPanel>
                                 <WrapPanel HorizontalAlignment="Right" Orientation="Horizontal">
                                   <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.CheckItemUpdateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="检查更新">
-                                    <Path Data="{StaticResource Icon.RefreshCw}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                   <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.ToggleItemEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="启用/禁用">
-                                    <Path Data="{StaticResource Icon.Power}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Power.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                   <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.BackupItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="备份">
-                                    <Path Data="{StaticResource Icon.HardDrive}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/HardDrive.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                   <Button Classes="rowAction" IsVisible="{Binding IsBackupItem}" Command="{Binding DataContext.RestoreItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="恢复备份">
-                                    <Path Data="{StaticResource Icon.RotateCcw}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RotateCcw.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                   <Button Classes="rowAction" Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="删除">
-                                    <Path Data="{StaticResource Icon.Trash2}" Width="14" Height="14" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" />
+                                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Trash2.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                 </WrapPanel>
                               </StackPanel>
                             </Grid>
                           </Grid>
                         </Border>
+                        <ItemsControl ItemsSource="{Binding ChildMods}"
+                                      IsVisible="{Binding IsGroupExpanded}"
+                                      Margin="40,0,0,8">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ModManageItem">
+                              <Border Classes="modRow" CornerRadius="8" Padding="12,8" Margin="0,4,0,0"
+                                      Background="{DynamicResource CardHighlightBg}"
+                                      BorderBrush="{DynamicResource PanelBorderBrush}"
+                                      BorderThickness="1">
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                  <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Top" Margin="0,2,12,0" />
+                                  <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                    <TextBlock TextTrimming="CharacterEllipsis" TextWrapping="NoWrap">
+                                      <Run Text="{Binding DirectoryName}" FontSize="13" FontWeight="SemiBold" />
+                                      <Run Text=" | " FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                      <Run Text="{Binding DisplayName}" FontSize="12" />
+                                      <Run Text=" | 子 Mod" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Description}" Margin="0,3,0,0" FontSize="11" Opacity="0.65"
+                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                    <ItemsControl Margin="0,3,0,0" ItemsSource="{Binding DisplayTags}" IsVisible="{Binding HasAnyTag}">
+                                      <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                          <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                      </ItemsControl.ItemsPanel>
+                                      <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                          <TextBlock Text="{Binding .}" FontSize="10" Opacity="0.7" Margin="0,0,6,0" />
+                                        </DataTemplate>
+                                      </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                  </StackPanel>
+                                  <WrapPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                    <Button Classes="rowAction" IsVisible="{Binding HasLocalization}" Command="{Binding DataContext.ToggleModLocalizationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="切换中英文">
+                                      <TextBlock Text="{Binding LocalizationToggleButtonText}" FontSize="10" FontWeight="SemiBold" />
+                                    </Button>
+                                    <Button Classes="rowAction" Command="{Binding DataContext.ShowLocalItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="查看本地详情">
+                                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FileText.png" Width="16" Height="16" Stretch="Uniform" />
+                                    </Button>
+                                    <Button Classes="rowAction" Command="{Binding DataContext.OpenItemFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="打开目录">
+                                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FolderOpen.png" Width="16" Height="16" Stretch="Uniform" />
+                                    </Button>
+                                    <Button Classes="rowAction" Command="{Binding DataContext.ToggleItemEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="启用/禁用">
+                                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Power.png" Width="16" Height="16" Stretch="Uniform" />
+                                    </Button>
+                                    <Button Classes="rowAction" Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="删除">
+                                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Trash2.png" Width="16" Height="16" Stretch="Uniform" />
+                                    </Button>
+                                  </WrapPanel>
+                                </Grid>
+                              </Border>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        </StackPanel>
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
@@ -903,7 +1014,7 @@
           <StackPanel IsVisible="{Binding IsSettingsSection}" Spacing="10">
             <Border Classes="hintCard" Padding="14,12">
               <StackPanel Orientation="Horizontal" Spacing="10">
-                <Path Data="{StaticResource Icon.Info}" Width="16" Height="16" Stretch="Uniform" Fill="{DynamicResource DefaultTextForeground}" VerticalAlignment="Center" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Info.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
                 <TextBlock Text="这些设置只对该游戏版本生效，不会影响其他版本"
                            FontSize="13"
                            Opacity="0.84"
@@ -917,7 +1028,21 @@
                 <TextBlock Text="启动选项" Classes="sectionTitle" />
 
                 <TextBlock Text="窗口标题" FontWeight="SemiBold" />
-                <TextBox Text="{Binding GameWindowTitle}" Watermark="例如: {InstanceName} - SVL" />
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBox Text="{Binding GameWindowTitle}" Watermark="例如: Stardew Valley &lt;ver&gt; - &lt;name&gt;" />
+                  <Button Grid.Column="1"
+                          Content="?"
+                          Command="{Binding ShowWindowTitleHelpCommand}"
+                          Width="32"
+                          Height="32"
+                          Padding="0"
+                          FontSize="16"
+                          FontWeight="Bold"
+                          Margin="8,0,0,0"
+                          HorizontalContentAlignment="Center"
+                          VerticalContentAlignment="Center"
+                          ToolTip.Tip="查看窗口标题占位符说明" />
+                </Grid>
 
                 <TextBlock Text="启动参数" FontWeight="SemiBold" />
                 <TextBox Text="{Binding InstanceCustomLaunchArguments}"

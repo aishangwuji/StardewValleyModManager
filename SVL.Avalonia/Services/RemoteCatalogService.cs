@@ -14,8 +14,12 @@ public sealed class RemoteCatalogService
 {
     // Follow legacy desktop implementation: Stardew Valley gameId on curse.tools is 669.
     private const int StardewCurseforgeGameId = 669;
+    private const int MaxLocalSearchCandidates = 400;
+    private const int MaxNexusSearchBatch = 80;
+    private const int MaxCurseforgeSearchBatch = 50;
     private const string NexusGameDomain = "stardewvalley";
     private readonly AppUserSettingsStore _settingsStore;
+    private readonly HttpClient? _httpClientOverride;
     private CommunityLocalizationService? _localizationService;
     private static readonly object HttpClientLock = new();
     private static HttpClient? _httpClient;
@@ -28,9 +32,24 @@ public sealed class RemoteCatalogService
 
     public event Action<string>? NexusAuthExpired;
 
-    public RemoteCatalogService(AppUserSettingsStore settingsStore)
+    public RemoteCatalogService(AppUserSettingsStore settingsStore, HttpClient? httpClientOverride = null)
     {
         _settingsStore = settingsStore;
+        _httpClientOverride = httpClientOverride;
+    }
+
+    /// <summary>读取搜索页共用的默认来源配置，失败时回退为全部。</summary>
+    public string GetDefaultSource()
+    {
+        try
+        {
+            var source = _settingsStore.Load().DefaultModSource;
+            return string.IsNullOrWhiteSpace(source) ? "全部" : source.Trim();
+        }
+        catch
+        {
+            return "全部";
+        }
     }
 
     /// <summary>注入社区汉化服务（启用缓存）。若不注入则回退到无缓存直连。</summary>
@@ -41,6 +60,11 @@ public sealed class RemoteCatalogService
 
     private HttpClient GetHttpClient(AppUserSettings? settings = null)
     {
+        if (_httpClientOverride != null)
+        {
+            return _httpClientOverride;
+        }
+
         settings ??= _settingsStore.Load();
         var signature = BuildProxySignature(settings);
 
@@ -81,6 +105,11 @@ public sealed class RemoteCatalogService
 
     private HttpClient GetDirectHttpClient()
     {
+        if (_httpClientOverride != null)
+        {
+            return _httpClientOverride;
+        }
+
         lock (HttpClientLock)
         {
             if (_directHttpClient != null)
@@ -177,82 +206,18 @@ public sealed class RemoteCatalogService
         bool hotOnly = false,
         int page = 1)
     {
-        var settings = _settingsStore.Load();
-        var includeNexus = string.Equals(source, "全部", StringComparison.Ordinal) ||
-                           string.Equals(source, "NexusMods", StringComparison.Ordinal);
-        var includeCurseforge = string.Equals(source, "全部", StringComparison.Ordinal) ||
-                                string.Equals(source, "Curseforge", StringComparison.Ordinal);
-
-        var normalizedKeyword = hotOnly ? string.Empty : keyword?.Trim() ?? string.Empty;
-        var normalizedVersionFilter = NormalizeFilterToken(gameVersion);
-        var normalizedModTypeFilter = NormalizeFilterToken(modType);
-        var pageSize = hotOnly ? 20 : 20;
-        var offset = Math.Max(0, (page - 1) * pageSize);
-
-        LogDebug($"SearchModsAdvanced/start source={source}, hotOnly={hotOnly}, page={page}, offset={offset}, keyword='{normalizedKeyword}'");
-
-        var results = new List<ModSearchResultItem>();
-
-        if (includeNexus)
-        {
-            var nexusItems = await SearchNexusModsAsync(normalizedKeyword, settings, pageSize, offset);
-            LogDebug($"SearchModsAdvanced/nexus raw={nexusItems.Count}");
-            if (!string.IsNullOrWhiteSpace(normalizedModTypeFilter))
-            {
-                nexusItems = nexusItems
-                    .Where(item => MatchesModTypeFilter(item.ModType, normalizedModTypeFilter))
-                    .ToList();
-            }
-
-            if (!string.IsNullOrWhiteSpace(normalizedVersionFilter))
-            {
-                nexusItems = nexusItems
-                    .Where(item => MatchesGameVersionFilter(item.SupportedGameVersions, item.GameVersionTag, normalizedVersionFilter))
-                    .ToList();
-            }
-
-            if (useCommunityLocalization)
-            {
-                await ApplyCommunityLocalizationAsync(nexusItems, "NexusMods");
-            }
-
-            LogDebug($"SearchModsAdvanced/nexus filtered={nexusItems.Count}");
-
-            results.AddRange(nexusItems.Take(10).Select(item => ToSearchResultItem(item, CatalogSource.NexusMods, isModpack: false)));
-        }
-
-        if (includeCurseforge)
-        {
-            LogDebug($"SearchModsAdvanced/curse url={BuildCurseforgeSearchUrl(normalizedKeyword, pageSize)}");
-            var curseforgeItems = await SearchCurseforgeModsAsync(normalizedKeyword, pageSize, offset);
-            LogDebug($"SearchModsAdvanced/curse raw={curseforgeItems.Count}");
-            if (!string.IsNullOrWhiteSpace(normalizedModTypeFilter))
-            {
-                curseforgeItems = curseforgeItems
-                    .Where(item => MatchesModTypeFilter(item.ModType, normalizedModTypeFilter))
-                    .ToList();
-            }
-
-            if (!string.IsNullOrWhiteSpace(normalizedVersionFilter))
-            {
-                curseforgeItems = curseforgeItems
-                    .Where(item => MatchesGameVersionFilter(item.SupportedGameVersions, item.GameVersionTag, normalizedVersionFilter))
-                    .ToList();
-            }
-
-            if (useCommunityLocalization)
-            {
-                await ApplyCommunityLocalizationAsync(curseforgeItems, "Curseforge");
-            }
-
-            LogDebug($"SearchModsAdvanced/curse filtered={curseforgeItems.Count}");
-
-            results.AddRange(curseforgeItems.Take(10).Select(item => ToSearchResultItem(item, CatalogSource.Curseforge, isModpack: false)));
-        }
-
-        var deduplicated = Deduplicate(results);
-        LogDebug($"SearchModsAdvanced/done total={deduplicated.Count}");
-        return deduplicated;
+        // 兼容旧调用方，但必须复用统一分页实现。旧实现先按服务端 offset
+        // 截断再做版本/类型过滤，深页会跳过大量匹配项，并且与新页面结果不一致。
+        var paged = await SearchModsAdvancedPagedAsync(
+            keyword,
+            source,
+            gameVersion,
+            modType,
+            useCommunityLocalization,
+            hotOnly,
+            page,
+            pageSize: 20);
+        return paged.Items;
     }
 
     public async Task<CatalogPagedResult> SearchModsAdvancedPagedAsync(
@@ -278,9 +243,29 @@ public sealed class RemoteCatalogService
         var safePageSize = Math.Clamp(pageSize, 1, 30);
         // 多请求 1 个用于判断是否有下一页
         var fetchCount = safePageSize + 1;
-        var offset = (safePage - 1) * safePageSize;
+        var offsetLong = (long)(safePage - 1) * safePageSize;
+        var offset = offsetLong > int.MaxValue ? int.MaxValue : (int)offsetLong;
+        var mergeSources = includeNexus && includeCurseforge;
+        var hasClientSideFilter = !string.IsNullOrWhiteSpace(normalizedModTypeFilter) ||
+                                  !string.IsNullOrWhiteSpace(normalizedVersionFilter);
+        // “全部来源”页面是交错合并后的全局分页。若按各来源分别 offset，
+        // 第 1 页取出的来源条目还没消费完，第 2 页就会跳过一半结果。
+        // 有客户端筛选时也必须从 0 拉取到当前页末尾；否则服务端 offset 会
+        // 先跳过尚未过滤的条目，导致后页结果不足甚至直接为空。
+        // 单一来源、无筛选时仍走服务端 offset，避免无谓地扩大请求。
+        var useLocalPaging = mergeSources || hasClientSideFilter;
+        var requiredFetchCount = Math.Clamp(
+            offsetLong >= MaxLocalSearchCandidates
+                ? MaxLocalSearchCandidates
+                : (int)Math.Min(int.MaxValue, offsetLong + safePageSize + 1),
+            fetchCount,
+            MaxLocalSearchCandidates);
+        var sourceFetchCount = useLocalPaging
+            ? requiredFetchCount
+            : fetchCount;
+        var sourceOffset = useLocalPaging ? 0 : offset;
 
-        LogDebug($"SearchModsPaged/start source={source}, page={safePage}, offset={offset}, fetchCount={fetchCount}, keyword='{normalizedKeyword}'");
+        LogDebug($"SearchModsPaged/start source={source}, page={safePage}, offset={offset}, fetchCount={sourceFetchCount}, keyword='{normalizedKeyword}'");
 
         var nexusItems = new List<RemoteSearchItem>();
         var curseItems = new List<RemoteSearchItem>();
@@ -288,25 +273,37 @@ public sealed class RemoteCatalogService
         var curseHasMore = false;
 
         // Kick off Nexus and Curseforge searches concurrently to reduce overall latency.
+        var candidateFilter = hasClientSideFilter
+            ? new Func<RemoteSearchItem, bool>(item =>
+                MatchesModTypeFilter(item.ModType, normalizedModTypeFilter) &&
+                MatchesGameVersionFilter(item.SupportedGameVersions, item.GameVersionTag, normalizedVersionFilter))
+            : null;
         var nexusSearchTask = includeNexus
-            ? SearchNexusModsAsync(normalizedKeyword, settings, fetchCount, offset)
-            : Task.FromResult(new List<RemoteSearchItem>());
+            ? FetchNexusSearchCandidatesAsync(
+                normalizedKeyword, settings, sourceFetchCount, sourceOffset, useLocalPaging, candidateFilter)
+            : Task.FromResult(SearchCandidateFetchResult.Empty);
         var curseSearchTask = includeCurseforge
-            ? SearchCurseforgeModsAsync(normalizedKeyword, fetchCount, offset)
-            : Task.FromResult(new List<RemoteSearchItem>());
+            ? FetchCurseforgeSearchCandidatesAsync(
+                normalizedKeyword, sourceFetchCount, sourceOffset, useLocalPaging, candidateFilter)
+            : Task.FromResult(SearchCandidateFetchResult.Empty);
 
         await Task.WhenAll(nexusSearchTask, curseSearchTask);
 
         if (includeNexus)
         {
-            var nexusRaw = await nexusSearchTask;
+            var nexusFetched = await nexusSearchTask;
+            var nexusRaw = nexusFetched.Items;
             var nexusFiltered = nexusRaw
                 .Where(item => MatchesModTypeFilter(item.ModType, normalizedModTypeFilter))
                 .Where(item => MatchesGameVersionFilter(item.SupportedGameVersions, item.GameVersionTag, normalizedVersionFilter))
                 .ToList();
 
-            nexusHasMore = nexusFiltered.Count > safePageSize;
-            nexusItems = nexusFiltered.Take(safePageSize).ToList();
+            nexusHasMore = useLocalPaging
+                ? nexusFetched.HasMore
+                : nexusFiltered.Count > safePageSize;
+            nexusItems = useLocalPaging
+                ? nexusFiltered
+                : nexusFiltered.Take(safePageSize).ToList();
             foreach (var item in nexusItems)
             {
                 item.Source = CatalogSource.NexusMods;
@@ -316,14 +313,19 @@ public sealed class RemoteCatalogService
 
         if (includeCurseforge)
         {
-            var curseRaw = await curseSearchTask;
+            var curseFetched = await curseSearchTask;
+            var curseRaw = curseFetched.Items;
             var curseFiltered = curseRaw
                 .Where(item => MatchesModTypeFilter(item.ModType, normalizedModTypeFilter))
                 .Where(item => MatchesGameVersionFilter(item.SupportedGameVersions, item.GameVersionTag, normalizedVersionFilter))
                 .ToList();
 
-            curseHasMore = curseFiltered.Count > safePageSize;
-            curseItems = curseFiltered.Take(safePageSize).ToList();
+            curseHasMore = useLocalPaging
+                ? curseFetched.HasMore
+                : curseFiltered.Count > safePageSize;
+            curseItems = useLocalPaging
+                ? curseFiltered
+                : curseFiltered.Take(safePageSize).ToList();
             foreach (var item in curseItems)
             {
                 item.Source = CatalogSource.Curseforge;
@@ -331,7 +333,10 @@ public sealed class RemoteCatalogService
             }
         }
 
-        var merged = MergeBySourceAlternating(nexusItems, curseItems)
+        var mergedCandidates = MergeBySourceAlternating(nexusItems, curseItems);
+        var merged = (useLocalPaging
+                ? mergedCandidates.Skip(offset)
+                : mergedCandidates)
             .Take(safePageSize)
             .ToList();
 
@@ -356,7 +361,10 @@ public sealed class RemoteCatalogService
         return new CatalogPagedResult
         {
             Items = Deduplicate(formatted),
-            HasMore = nexusHasMore || curseHasMore
+            HasMore = useLocalPaging
+                ? mergedCandidates.Count > offset + safePageSize ||
+                  ((nexusHasMore || curseHasMore) && merged.Count == safePageSize)
+                : nexusHasMore || curseHasMore
         };
     }
 
@@ -420,7 +428,7 @@ public sealed class RemoteCatalogService
 
     private static List<string> ParseCurseforgeGameVersions(JsonElement root)
     {
-        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        if (!TryGetArrayPayload(root, out var data, "data", "versions", "results", "items"))
         {
             return [];
         }
@@ -428,7 +436,7 @@ public sealed class RemoteCatalogService
         var versions = new List<string>();
         foreach (var group in data.EnumerateArray())
         {
-            if (!group.TryGetProperty("versions", out var versionArray) || versionArray.ValueKind != JsonValueKind.Array)
+            if (!TryGetArrayPayload(group, out var versionArray, "versions", "data", "items"))
             {
                 continue;
             }
@@ -490,9 +498,10 @@ public sealed class RemoteCatalogService
 
         var safePage = Math.Max(1, page);
         var safePageSize = Math.Clamp(pageSize, 1, 30);
-        var includeBothSources = includeNexus && includeCurseforge;
         var perSourceFetchCount = safePageSize;
-        var mergedPageSize = includeBothSources ? safePageSize * 2 : safePageSize;
+        var offsetLong = (long)(safePage - 1) * perSourceFetchCount;
+        var offset = offsetLong > int.MaxValue ? int.MaxValue : (int)offsetLong;
+        var mergeSources = includeNexus && includeCurseforge;
 
         var nexusItems = new List<RemoteSearchItem>();
         var curseItems = new List<RemoteSearchItem>();
@@ -501,47 +510,89 @@ public sealed class RemoteCatalogService
 
         if (includeNexus)
         {
-            var nexusRaw = await SearchNexusCollectionsAsync(keyword, settings);
-            nexusHasMore = nexusRaw.Count > safePage * perSourceFetchCount;
-            nexusItems = nexusRaw
-                .Skip((safePage - 1) * perSourceFetchCount)
-                .Take(perSourceFetchCount)
-                .ToList();
+            // Nexus GraphQL 当前没有可靠的服务端关键词过滤。必须按原始结果批次
+            // 向后拉取，再对匹配结果分页；只取 offset=0 的一批会让稀疏关键词在后页
+            // 被错误判断为“没有更多”。
+            var nexusRequiredCount = Math.Clamp(
+                offsetLong >= MaxLocalSearchCandidates
+                    ? MaxLocalSearchCandidates
+                    : (int)Math.Min(int.MaxValue, offsetLong + perSourceFetchCount + 1),
+                perSourceFetchCount + 1,
+                MaxLocalSearchCandidates);
+            var nexusFetched = await FetchNexusCollectionSearchCandidatesAsync(
+                keyword,
+                settings,
+                nexusRequiredCount);
+            var nexusRaw = nexusFetched.Items;
+            nexusHasMore = nexusFetched.HasMore;
+            nexusItems = mergeSources
+                ? nexusRaw
+                : nexusRaw.Skip(offset).Take(perSourceFetchCount).ToList();
             foreach (var item in nexusItems)
             {
                 item.Source = CatalogSource.NexusMods;
                 item.SourceTagHint = "NexusPack";
             }
-            nexusHasMore = nexusItems.Count >= perSourceFetchCount;
         }
         if (includeCurseforge)
         {
-            var curseRaw = await SearchCurseforgeModpacksAsync(keyword);
-            curseHasMore = curseRaw.Count > safePage * perSourceFetchCount;
-            curseItems = curseRaw
-                .Skip((safePage - 1) * perSourceFetchCount)
-                .Take(perSourceFetchCount)
-                .ToList();
+            // CurseForge 支持服务端 index/pageSize，按当前页请求多一个条目即可判断
+            // HasMore，避免每次翻页都重新读取第一页并导致重复结果。
+            var curseFetchCount = mergeSources
+                ? Math.Clamp(
+                    offsetLong >= MaxLocalSearchCandidates
+                        ? MaxLocalSearchCandidates
+                        : (int)Math.Min(int.MaxValue, offsetLong + perSourceFetchCount + 1),
+                    perSourceFetchCount + 1,
+                    50)
+                : perSourceFetchCount + 1;
+            var curseRaw = await SearchCurseforgeModpacksAsync(
+                keyword,
+                curseFetchCount,
+                mergeSources ? 0 : offset);
+            curseHasMore = mergeSources
+                ? curseRaw.Count >= curseFetchCount
+                : curseRaw.Count > perSourceFetchCount;
+            curseItems = mergeSources
+                ? curseRaw
+                : curseRaw.Take(perSourceFetchCount).ToList();
             foreach (var item in curseItems)
             {
                 item.Source = CatalogSource.Curseforge;
                 item.SourceTagHint = "CurseforgePack";
             }
-            await ApplyCommunityLocalizationAsync(curseItems, "Curseforge", "modpack");
         }
 
-        await ApplyCommunityLocalizationAsync(nexusItems, "NexusMods", "collection");
-
-        var merged = MergeBySourceAlternating(nexusItems, curseItems)
+        var mergedCandidates = MergeBySourceAlternating(nexusItems, curseItems);
+        var merged = (mergeSources
+                ? mergedCandidates.Skip(offset)
+                : mergedCandidates)
             .Take(safePageSize)
             .ToList();
+
+        // 只为当前页做本地化请求。合并来源时不能提前给两边的候选全集请求，
+        // 否则翻页会产生大量无显示条目的网络请求。
+        var nexusMerged = merged.Where(item => item.Source == CatalogSource.NexusMods).ToList();
+        var curseMerged = merged.Where(item => item.Source == CatalogSource.Curseforge).ToList();
+        if (nexusMerged.Count > 0)
+        {
+            await ApplyCommunityLocalizationAsync(nexusMerged, "NexusMods", "collection");
+        }
+
+        if (curseMerged.Count > 0)
+        {
+            await ApplyCommunityLocalizationAsync(curseMerged, "Curseforge", "modpack");
+        }
 
         var formatted = merged.Select(item => ToSearchResultItem(item, item.Source, isModpack: true)).ToList();
 
         return new CatalogPagedResult
         {
             Items = Deduplicate(formatted),
-            HasMore = nexusHasMore || curseHasMore
+            HasMore = mergeSources
+                ? mergedCandidates.Count > offset + safePageSize ||
+                  ((nexusHasMore || curseHasMore) && merged.Count == safePageSize)
+                : nexusHasMore || curseHasMore
         };
     }
 
@@ -1107,7 +1158,7 @@ public sealed class RemoteCatalogService
 
         await using var stream = await response.Content.ReadAsStreamAsync();
         using var doc = await JsonDocument.ParseAsync(stream);
-        if (!doc.RootElement.TryGetProperty("data", out var itemElement) || itemElement.ValueKind != JsonValueKind.Object)
+        if (!TryGetObjectPayload(doc.RootElement, out var itemElement))
         {
             return null;
         }
@@ -1115,33 +1166,46 @@ public sealed class RemoteCatalogService
         return ParseCurseforgeItem(itemElement, onlyLikelyModpacks: false);
     }
 
-    private async Task<List<RemoteSearchItem>> SearchCurseforgeModpacksAsync(string keyword)
+    private async Task<List<RemoteSearchItem>> SearchCurseforgeModpacksAsync(
+        string keyword,
+        int pageSize = 20,
+        int index = 0)
     {
         // 参考旧架构：通过 classId 过滤 Modpacks 分类，而非关键词拼接
         var modpackClassId = await TryGetModpackClassIdAsync();
-        var url = BuildCurseforgeSearchUrl(keyword, 20, 0, modpackClassId);
-        LogDebug($"Curseforge/modpacks request url={url} (classId={modpackClassId})");
-        using var response = await GetWithRedirectAsync(url);
-        if (!response.IsSuccessStatusCode)
+        var normalizedPageSize = Math.Clamp(pageSize, 1, 50);
+        var normalizedIndex = Math.Max(0, index);
+        var url = BuildCurseforgeSearchUrl(keyword, normalizedPageSize, normalizedIndex, modpackClassId);
+        LogDebug($"Curseforge/modpacks request url={url} (classId={modpackClassId}, pageSize={normalizedPageSize}, index={normalizedIndex})");
+        try
         {
-            LogDebug($"Curseforge/modpacks failed status={(int)response.StatusCode} {response.ReasonPhrase}");
+            using var response = await GetWithRedirectAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                LogDebug($"Curseforge/modpacks failed status={(int)response.StatusCode} {response.ReasonPhrase}");
+                return [];
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var doc = await JsonDocument.ParseAsync(stream);
+            // 不使用 ParseCurseforgeItems（会排除 modpack），直接解析所有结果
+            var items = ParseCurseforgeItemsRaw(doc.RootElement);
+
+            // 参考旧架构 IsLikelyModpack：classId 获取失败时客户端兜底过滤
+            if (modpackClassId <= 0)
+            {
+                items = items.Where(IsLikelyModpack).ToList();
+            }
+
+            await FillMissingCurseforgeIconsAsync(items);
+            LogDebug($"Curseforge/modpacks parsed={items.Count}");
+            return items;
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"Curseforge/modpacks exception: {ex.Message}");
             return [];
         }
-
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        using var doc = await JsonDocument.ParseAsync(stream);
-        // 不使用 ParseCurseforgeItems（会排除 modpack），直接解析所有结果
-        var items = ParseCurseforgeItemsRaw(doc.RootElement);
-
-        // 参考旧架构 IsLikelyModpack：classId 获取失败时客户端兜底过滤
-        if (modpackClassId <= 0)
-        {
-            items = items.Where(IsLikelyModpack).ToList();
-        }
-
-        await FillMissingCurseforgeIconsAsync(items);
-        LogDebug($"Curseforge/modpacks parsed={items.Count}");
-        return items;
     }
 
     /// <summary>
@@ -1191,7 +1255,7 @@ public sealed class RemoteCatalogService
     private static List<RemoteSearchItem> ParseCurseforgeItemsRaw(JsonElement root)
     {
         var result = new List<RemoteSearchItem>();
-        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        if (!TryGetArrayPayload(root, out var data, "data", "results", "items"))
         {
             return result;
         }
@@ -1239,16 +1303,29 @@ public sealed class RemoteCatalogService
         return baseUrl + $"&searchFilter={Uri.EscapeDataString(keyword.Trim())}";
     }
 
-    private async Task<HttpResponseMessage> GetWithRedirectAsync(string url, int maxRedirects = 3)
+    private async Task<HttpResponseMessage> GetWithRedirectAsync(
+        string url,
+        int maxRedirects = 3,
+        CancellationToken cancellationToken = default)
     {
         // CurseForge 使用专用客户端，已处理重定向，无需 fallback
         if (IsCurseforgeApiUrl(url))
         {
-            return await GetWithRedirectCoreAsync(url, maxRedirects, forceDirect: false, settings: null!);
+            return await GetWithRedirectCoreAsync(
+                url,
+                maxRedirects,
+                forceDirect: false,
+                settings: null!,
+                cancellationToken);
         }
 
         var settings = _settingsStore.Load();
-        var response = await GetWithRedirectCoreAsync(url, maxRedirects, forceDirect: false, settings);
+        var response = await GetWithRedirectCoreAsync(
+            url,
+            maxRedirects,
+            forceDirect: false,
+            settings,
+            cancellationToken);
 
         // CurseForge 使用独立客户端，无需 proxy fallback
         if (!settings.EnableDownloadProxy || IsCurseforgeApiUrl(url) || response.IsSuccessStatusCode)
@@ -1264,7 +1341,12 @@ public sealed class RemoteCatalogService
 
         LogDebug($"Curseforge/proxy-fallback enabled status={(int)response.StatusCode}, body={body}");
         response.Dispose();
-        return await GetWithRedirectCoreAsync(url, maxRedirects, forceDirect: true, settings);
+        return await GetWithRedirectCoreAsync(
+            url,
+            maxRedirects,
+            forceDirect: true,
+            settings,
+            cancellationToken);
     }
 
     /// <summary>
@@ -1283,13 +1365,19 @@ public sealed class RemoteCatalogService
         string url,
         int maxRedirects,
         bool forceDirect,
-        AppUserSettings settings)
+        AppUserSettings settings,
+        CancellationToken cancellationToken = default)
     {
         // CurseForge 使用专用客户端（对齐 WPF，自动跟随重定向）
         if (IsCurseforgeApiUrl(url))
         {
+            if (_httpClientOverride != null)
+            {
+                return await _httpClientOverride.GetAsync(url, cancellationToken);
+            }
+
             using var cfClient = CreateCurseforgeHttpClient();
-            return await cfClient.GetAsync(url);
+            return await cfClient.GetAsync(url, cancellationToken);
         }
 
         var currentUrl = url;
@@ -1297,7 +1385,9 @@ public sealed class RemoteCatalogService
 
         for (var index = 0; index <= maxRedirects; index++)
         {
-            var response = await (forceDirect ? GetDirectHttpClient() : GetHttpClient(settings)).GetAsync(currentUrl);
+            var response = await (forceDirect ? GetDirectHttpClient() : GetHttpClient(settings)).GetAsync(
+                currentUrl,
+                cancellationToken);
             if (!IsRedirectStatusCode(response.StatusCode) || response.Headers.Location == null)
             {
                 return response;
@@ -1338,7 +1428,9 @@ public sealed class RemoteCatalogService
             currentUrl = nextUrl;
         }
 
-        return await (forceDirect ? GetDirectHttpClient() : GetHttpClient(settings)).GetAsync(currentUrl);
+        return await (forceDirect ? GetDirectHttpClient() : GetHttpClient(settings)).GetAsync(
+            currentUrl,
+            cancellationToken);
     }
 
     private static bool IsCurseforgeApiUrl(string rawUrl)
@@ -1411,7 +1503,7 @@ public sealed class RemoteCatalogService
 
     private static List<RemoteSearchItem> ParseCurseforgeItems(JsonElement root, bool onlyLikelyModpacks)
     {
-        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        if (!TryGetArrayPayload(root, out var data, "data", "results", "items"))
         {
             return [];
         }
@@ -1686,15 +1778,35 @@ public sealed class RemoteCatalogService
         return results;
     }
 
-    private async Task<List<RemoteSearchItem>> SearchNexusCollectionsAsync(string keyword, AppUserSettings settings)
+    private async Task<List<RemoteSearchItem>> SearchNexusCollectionsAsync(
+        string keyword,
+        AppUserSettings settings,
+        int fetchCount = 30,
+        int offset = 0)
+    {
+        return (await FetchNexusCollectionBatchAsync(keyword, settings, fetchCount, offset)).Items;
+    }
+
+    /// <summary>
+    /// 拉取 Nexus Collection 的一批原始结果，并在客户端应用关键词过滤。
+    /// GraphQL 当前没有可靠的 Collection 关键词过滤字段，因此必须保留原始数量，
+    /// 由上层继续请求后续 offset 来判断是否还有匹配项。
+    /// </summary>
+    private async Task<NexusCollectionBatchResult> FetchNexusCollectionBatchAsync(
+        string keyword,
+        AppUserSettings settings,
+        int fetchCount,
+        int offset)
     {
         if (!HasNexusCredential(settings))
         {
             HandleNexusAuthExpired("Nexus/search-collections-no-credential", settings, HttpStatusCode.Unauthorized, "No authentication method");
-            return [];
+            return NexusCollectionBatchResult.Empty;
         }
 
         var normalized = keyword?.Trim() ?? string.Empty;
+        var safeFetchCount = Math.Clamp(fetchCount, 1, 100);
+        var safeOffset = Math.Max(0, offset);
         var graphQlQuery = @"
             query GetGameCollections(
               $filter: CollectionsSearchFilter,
@@ -1757,8 +1869,8 @@ public sealed class RemoteCatalogService
                             endorsements = new { direction = "DESC" }
                         }
                     },
-                    offset = 0,
-                    count = 30
+                    offset = safeOffset,
+                    count = safeFetchCount
                 }
             };
 
@@ -1774,6 +1886,7 @@ public sealed class RemoteCatalogService
                 continue;
             }
 
+            var rawCount = collections.Count;
             if (!string.IsNullOrWhiteSpace(normalized))
             {
                 collections = collections
@@ -1782,10 +1895,66 @@ public sealed class RemoteCatalogService
                     .ToList();
             }
 
-            return collections;
+            return new NexusCollectionBatchResult(
+                collections,
+                rawCount,
+                hasMoreRaw: rawCount >= safeFetchCount);
         }
 
-        return [];
+        return NexusCollectionBatchResult.Empty;
+    }
+
+    private async Task<SearchCandidateFetchResult> FetchNexusCollectionSearchCandidatesAsync(
+        string keyword,
+        AppUserSettings settings,
+        int requiredCount)
+    {
+        var allItems = new List<RemoteSearchItem>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rawOffset = 0;
+        var rawFetched = 0;
+        var safeRequiredCount = Math.Clamp(requiredCount, 1, MaxLocalSearchCandidates);
+
+        while (rawFetched < MaxLocalSearchCandidates)
+        {
+            var requestCount = Math.Min(MaxNexusSearchBatch, MaxLocalSearchCandidates - rawFetched);
+            var batch = await FetchNexusCollectionBatchAsync(keyword, settings, requestCount, rawOffset);
+            if (batch.RawCount == 0)
+            {
+                return new SearchCandidateFetchResult(allItems, hasMore: false);
+            }
+
+            foreach (var item in batch.Items)
+            {
+                var key = item.ResourceId > 0
+                    ? $"id:{item.ResourceId}"
+                    : $"name:{item.Name}";
+                if (seenKeys.Add(key))
+                {
+                    allItems.Add(item);
+                }
+            }
+
+            rawFetched += batch.RawCount;
+            rawOffset += batch.RawCount;
+
+            // requiredCount 包含当前页面末尾之后的一个候选，达到它就能可靠地
+            // 告知 UI 还有下一页；即使这一批原始数据已经到尾，也不需要再猜测。
+            if (allItems.Count >= safeRequiredCount)
+            {
+                return new SearchCandidateFetchResult(allItems, hasMore: true);
+            }
+
+            if (!batch.HasMoreRaw || batch.RawCount < requestCount)
+            {
+                return new SearchCandidateFetchResult(allItems, hasMore: false);
+            }
+        }
+
+        // 到达本地保护上限时，只有已经收集到页面末尾之外的匹配项，才报告下一页。
+        return new SearchCandidateFetchResult(
+            allItems,
+            hasMore: allItems.Count >= safeRequiredCount);
     }
 
     private static List<RemoteSearchItem> ParseNexusCollectionsFromGraphQl(JsonElement root)
@@ -2685,7 +2854,13 @@ public sealed class RemoteCatalogService
                         var optionTitle = revisionNumber > 0
                             ? $"Revision {revisionNumber}: {revName}"
                             : $"{revName}";
-                        var meta = BuildNexusCollectionOptionMetadata(latestTag, sizeText, downloadsText, dateText, modCount);
+                        var meta = BuildNexusCollectionOptionMetadata(
+                            latestTag,
+                            sizeText,
+                            downloadsText,
+                            dateText,
+                            modCount,
+                            revisionNumber);
                         var option = string.IsNullOrWhiteSpace(meta)
                             ? optionTitle
                             : $"{optionTitle} ~~ {meta}";
@@ -2809,9 +2984,20 @@ public sealed class RemoteCatalogService
         }
     }
 
-    private static string BuildNexusCollectionOptionMetadata(string latestTag, string sizeText, string downloadsText, string dateText, long modCount)
+    private static string BuildNexusCollectionOptionMetadata(
+        string latestTag,
+        string sizeText,
+        string downloadsText,
+        string dateText,
+        long modCount,
+        long revisionNumber)
     {
         var parts = new List<string>();
+        if (revisionNumber > 0)
+        {
+            parts.Add($"revision={revisionNumber.ToString(CultureInfo.InvariantCulture)}");
+        }
+
         if (!string.IsNullOrWhiteSpace(latestTag))
         {
             parts.Add($"channel={latestTag}");
@@ -3119,7 +3305,7 @@ public sealed class RemoteCatalogService
             {
                 await using var modStream = await modResponse.Content.ReadAsStreamAsync();
                 using var modDoc = await JsonDocument.ParseAsync(modStream);
-                if (modDoc.RootElement.TryGetProperty("data", out var modData) && modData.ValueKind == JsonValueKind.Object)
+                if (TryGetObjectPayload(modDoc.RootElement, out var modData))
                 {
                     modName = FirstNonEmpty(TryGetString(modData, "name"), modName);
                     modSummary = FirstNonEmpty(TryGetString(modData, "summary"), TryGetString(modData, "description"));
@@ -3166,7 +3352,7 @@ public sealed class RemoteCatalogService
 
         await using var filesStream = await filesResponse.Content.ReadAsStreamAsync();
         using var filesDoc = await JsonDocument.ParseAsync(filesStream);
-        if (!filesDoc.RootElement.TryGetProperty("data", out var files) || files.ValueKind != JsonValueKind.Array)
+        if (!TryGetArrayPayload(filesDoc.RootElement, out var files, "data", "files", "results", "items"))
         {
             return new CatalogResourceDetails
             {
@@ -3252,7 +3438,14 @@ public sealed class RemoteCatalogService
             {
                 // 标题只保留 displayLabel，gameVersion 和 releaseType 通过元数据与频道徽标单独展示。
                 var optionPrefix = $"File {fileId}: {displayLabel}";
-                var directUrl = TryGetString(file, "downloadUrl");
+                var directUrlCandidate = FirstNonEmpty(
+                    TryGetString(file, "downloadUrl"),
+                    TryGetString(file, "download_url"),
+                    TryGetString(file, "fileUrl"),
+                    TryGetString(file, "file_url"));
+                var directUrl = IsLikelyCurseforgeDirectDownloadUrl(directUrlCandidate)
+                    ? directUrlCandidate
+                    : string.Empty;
                 var option = string.IsNullOrWhiteSpace(directUrl)
                     ? optionPrefix
                     : $"{optionPrefix} | {directUrl}";
@@ -3264,7 +3457,14 @@ public sealed class RemoteCatalogService
             }
             else
             {
-                var directUrl = TryGetString(file, "downloadUrl");
+                var directUrlCandidate = FirstNonEmpty(
+                    TryGetString(file, "downloadUrl"),
+                    TryGetString(file, "download_url"),
+                    TryGetString(file, "fileUrl"),
+                    TryGetString(file, "file_url"));
+                var directUrl = IsLikelyCurseforgeDirectDownloadUrl(directUrlCandidate)
+                    ? directUrlCandidate
+                    : string.Empty;
                 if (!string.IsNullOrWhiteSpace(directUrl))
                 {
                     var option = $"{displayLabel} | {directUrl}";
@@ -3331,18 +3531,22 @@ public sealed class RemoteCatalogService
         string fallbackUrl = "",
         CancellationToken cancellationToken = default)
     {
-        if (modId <= 0 || fileId <= 0)
+        if (modId <= 0)
         {
             return fallbackUrl ?? string.Empty;
         }
 
         var client = GetHttpClient();
-        var candidateEndpoints = new[]
+        var candidateEndpoints = new List<string>();
+        if (fileId > 0)
         {
-            $"https://api.curse.tools/v1/mods/{modId}/files/{fileId}/download-url",
-            $"https://api.curse.tools/v1/mods/{modId}/files/{fileId}",
-            $"https://api.curse.tools/v1/mods/{modId}/files?index=0&pageSize=60"
-        };
+            candidateEndpoints.Add($"https://api.curse.tools/v1/mods/{modId}/files/{fileId}/download-url");
+            candidateEndpoints.Add($"https://api.curse.tools/v1/mods/{modId}/files/{fileId}");
+        }
+
+        // 兼容仅记录 projectId 的旧来源凭证：列表接口返回的第一个可下载文件
+        // 作为当前版本回退，避免因为 fileId 为空导致整项 Mod 被判定为失败。
+        candidateEndpoints.Add($"https://api.curse.tools/v1/mods/{modId}/files?index=0&pageSize=60");
 
         foreach (var endpoint in candidateEndpoints)
         {
@@ -3354,11 +3558,24 @@ public sealed class RemoteCatalogService
                     continue;
                 }
 
-                var resolved = await TryExtractCurseforgeDownloadUrlAsync(response.Content, fileId, cancellationToken);
-                if (!string.IsNullOrWhiteSpace(resolved))
+                // 单文件接口已经由 URL 中的 fileId 定位，响应可能只返回
+                // {"downloadUrl":"..."} 或 {"data":{"downloadUrl":"..."}}，
+                // 不要求响应对象再次带 id；列表接口仍必须按 fileId 精确匹配。
+                var isFileSpecificEndpoint = fileId > 0 &&
+                    (endpoint.EndsWith("/download-url", StringComparison.OrdinalIgnoreCase) ||
+                     endpoint.EndsWith($"/{fileId}", StringComparison.OrdinalIgnoreCase));
+                var resolved = await TryExtractCurseforgeDownloadUrlAsync(
+                    response.Content, fileId, cancellationToken, isFileSpecificEndpoint);
+                if (IsLikelyCurseforgeDirectDownloadUrl(resolved))
                 {
                     return resolved;
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // 解析器允许多个接口互相回退，但不能吞掉用户取消；否则
+                // 上层会误把已取消的整合包安装继续推进到下一个步骤。
+                throw;
             }
             catch
             {
@@ -3366,18 +3583,30 @@ public sealed class RemoteCatalogService
             }
         }
 
-        return fallbackUrl ?? string.Empty;
+        return IsLikelyCurseforgeDirectDownloadUrl(fallbackUrl)
+            ? fallbackUrl
+            : string.Empty;
+    }
+
+    /// <summary>
+    /// CurseForge 文件页和 curse.tools API 都可能返回 HTTP 地址，但它们
+    /// 不是压缩包。统一在远端解析层过滤，避免不同安装入口各自把 HTML 保存成 zip。
+    /// </summary>
+    private static bool IsLikelyCurseforgeDirectDownloadUrl(string? value)
+    {
+        return DownloadUrlPolicy.IsLikelyCurseforgeDirectDownloadUrl(value);
     }
 
     private static async Task<string> TryExtractCurseforgeDownloadUrlAsync(
         HttpContent content,
         long fileId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowUnmatchedDirectUrl)
     {
         await using var stream = await content.ReadAsStreamAsync(cancellationToken);
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
 
-        var direct = FindDownloadUrlInElement(doc.RootElement, fileId);
+        var direct = FindDownloadUrlInElement(doc.RootElement, fileId, allowUnmatchedDirectUrl);
         if (!string.IsNullOrWhiteSpace(direct))
         {
             return direct;
@@ -3386,30 +3615,31 @@ public sealed class RemoteCatalogService
         return string.Empty;
     }
 
-    private static string FindDownloadUrlInElement(JsonElement element, long fileId)
+    private static string FindDownloadUrlInElement(JsonElement element, long fileId, bool allowUnmatchedDirectUrl = false)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
             {
-                if (TryReadDownloadUrl(element, out var directUrl))
-                {
-                    return directUrl;
-                }
-
                 if (fileId > 0 &&
                     element.TryGetProperty("id", out var idElement) &&
-                    idElement.ValueKind == JsonValueKind.Number &&
-                    idElement.TryGetInt64(out var currentId) &&
+                    TryGetJsonLong(idElement, out var currentId) &&
                     currentId == fileId &&
                     TryReadDownloadUrl(element, out var matchedUrl))
                 {
                     return matchedUrl;
                 }
 
+                // 文件 ID 已知时，列表接口必须先按 ID 匹配，不能拿第一个文件。
+                // 单文件接口由请求路径保证目标文件，可以接受没有 id 的直接 URL。
+                if ((fileId <= 0 || allowUnmatchedDirectUrl) && TryReadDownloadUrl(element, out var directUrl))
+                {
+                    return directUrl;
+                }
+
                 foreach (var property in element.EnumerateObject())
                 {
-                    var nested = FindDownloadUrlInElement(property.Value, fileId);
+                    var nested = FindDownloadUrlInElement(property.Value, fileId, allowUnmatchedDirectUrl);
                     if (!string.IsNullOrWhiteSpace(nested))
                     {
                         return nested;
@@ -3422,7 +3652,7 @@ public sealed class RemoteCatalogService
             {
                 foreach (var item in element.EnumerateArray())
                 {
-                    var nested = FindDownloadUrlInElement(item, fileId);
+                    var nested = FindDownloadUrlInElement(item, fileId, allowUnmatchedDirectUrl);
                     if (!string.IsNullOrWhiteSpace(nested))
                     {
                         return nested;
@@ -3431,9 +3661,31 @@ public sealed class RemoteCatalogService
 
                 return string.Empty;
             }
+            case JsonValueKind.String when allowUnmatchedDirectUrl:
+                // 部分 curse.tools 版本的 download-url 接口直接返回
+                // {"data":"https://..."}，而不是带 downloadUrl 字段的对象。
+                // 只有单文件接口允许接受无 ID 的字符串，列表接口仍必须按
+                // fileId 精确匹配，避免误选其它文件。
+                return element.GetString() ?? string.Empty;
             default:
                 return string.Empty;
         }
+    }
+
+    private static bool TryGetJsonLong(JsonElement element, out long value)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out value))
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String && long.TryParse(element.GetString(), out value))
+        {
+            return true;
+        }
+
+        value = 0;
+        return false;
     }
 
     private static bool TryReadDownloadUrl(JsonElement element, out string downloadUrl)
@@ -3441,7 +3693,8 @@ public sealed class RemoteCatalogService
         var candidateKeys = new[] { "downloadUrl", "download_url", "fileUrl", "file_url", "url" };
         foreach (var key in candidateKeys)
         {
-            if (!element.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String)
+            if (!TryGetPropertyIgnoreCase(element, key, out var value) ||
+                value.ValueKind != JsonValueKind.String)
             {
                 continue;
             }
@@ -3461,6 +3714,90 @@ public sealed class RemoteCatalogService
         }
 
         downloadUrl = string.Empty;
+        return false;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(
+        JsonElement element,
+        string propertyName,
+        out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static bool TryGetObjectPayload(JsonElement root, out JsonElement payload)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            payload = default;
+            return false;
+        }
+
+        // 不同 curse.tools 版本会把对象放在 data/result/mod/item 中；
+        // 兼容这些包装，同时允许接口直接返回对象本身。
+        foreach (var propertyName in new[] { "data", "result", "mod", "item" })
+        {
+            if (TryGetPropertyIgnoreCase(root, propertyName, out var nested) &&
+                nested.ValueKind == JsonValueKind.Object)
+            {
+                payload = nested;
+                return true;
+            }
+        }
+
+        payload = root;
+        return true;
+    }
+
+    private static bool TryGetArrayPayload(
+        JsonElement root,
+        out JsonElement payload,
+        params string[] propertyNames)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            payload = root;
+            return true;
+        }
+
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var propertyName in propertyNames
+                         .Concat(new[] { "data", "result", "files", "versions", "results", "items" })
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (TryGetPropertyIgnoreCase(root, propertyName, out var nested) &&
+                    nested.ValueKind == JsonValueKind.Array)
+                {
+                    payload = nested;
+                    return true;
+                }
+
+                // 兼容 {"data":{"files":[...]}} / {"result":{"items":[...]}}
+                // 这类二层包装，避免接口虽返回成功却被误判成“没有文件”。
+                if (TryGetPropertyIgnoreCase(root, propertyName, out nested) &&
+                    nested.ValueKind == JsonValueKind.Object &&
+                    TryGetArrayPayload(nested, out payload, propertyNames))
+                {
+                    return true;
+                }
+            }
+        }
+
+        payload = default;
         return false;
     }
 
@@ -4127,7 +4464,10 @@ public sealed class RemoteCatalogService
         };
     }
 
-    public async Task<List<SmapiVersionEntry>> GetSmapiVersionEntriesFromCurseForgeAsync(int page = 1, int perPage = 5)
+    public async Task<List<SmapiVersionEntry>> GetSmapiVersionEntriesFromCurseForgeAsync(
+        int page = 1,
+        int perPage = 5,
+        CancellationToken cancellationToken = default)
     {
         var result = new List<SmapiVersionEntry>();
 
@@ -4137,17 +4477,20 @@ public sealed class RemoteCatalogService
             const long smapiCurseforgeProjectId = 898372;
             var filesUrl = $"https://api.curse.tools/v1/mods/{smapiCurseforgeProjectId}/files?index=0&pageSize=50";
 
-            using var response = await GetWithRedirectAsync(filesUrl, maxRedirects: 2);
+            using var response = await GetWithRedirectAsync(
+                filesUrl,
+                maxRedirects: 2,
+                cancellationToken: cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 Debug.WriteLine($"[RemoteCatalogService] CurseForge SMAPI files request failed: {(int)response.StatusCode}");
                 return result;
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
 
-            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            if (!TryGetArrayPayload(doc.RootElement, out var data, "data", "files", "results", "items"))
             {
                 return result;
             }
@@ -4162,17 +4505,44 @@ public sealed class RemoteCatalogService
                 DateTime.TryParse(fileDate, out var parsed);
 
                 var version = !string.IsNullOrWhiteSpace(displayName) ? displayName : ExtractVersionFromName(fileName);
-                var downloadUrl = $"https://edge.forgecdn.net/files/{fileId / 1000}/{fileId % 1000}";
+                if (fileId <= 0)
+                {
+                    continue;
+                }
+
+                var rawDownloadUrl = FirstNonEmpty(
+                    TryGetString(file, "downloadUrl"),
+                    TryGetString(file, "download_url"),
+                    TryGetString(file, "fileUrl"),
+                    TryGetString(file, "file_url"));
+                var downloadUrl = IsLikelyCurseforgeDirectDownloadUrl(rawDownloadUrl)
+                    ? rawDownloadUrl
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(downloadUrl))
+                {
+                    // edge.forgecdn.net 的稳定路径包含文件名；仅使用两级数字路径
+                    // 在部分网络/CDN 节点上会返回 404 或 HTML 页面。
+                    var safeFileName = string.IsNullOrWhiteSpace(fileName)
+                        ? $"smapi-{fileId}.zip"
+                        : fileName;
+                    downloadUrl =
+                        $"https://edge.forgecdn.net/files/{fileId / 1000}/{fileId % 1000}/{Uri.EscapeDataString(safeFileName)}";
+                }
 
                 result.Add(new SmapiVersionEntry
                 {
                     Version = version,
                     Description = fileName ?? string.Empty,
-                    Source = "CurseForge",
+                    Source = "Curseforge",
                     DownloadUrl = downloadUrl,
-                    PublishedDate = parsed
+                    PublishedDate = parsed,
+                    FileId = fileId
                 });
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -4193,26 +4563,102 @@ public sealed class RemoteCatalogService
         return match.Success ? match.Value : name;
     }
 
-    public async Task<List<SmapiVersionEntry>> GetSmapiVersionEntriesAsync(int page = 1, int perPage = 5)
+    public async Task<List<SmapiVersionEntry>> GetSmapiVersionEntriesAsync(
+        int page = 1,
+        int perPage = 5,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // 先走用户配置的 HTTP 客户端；若代理、证书或 GitHub 线路单独失败，
+        // 再尝试一次不经过代理的只读目录请求。这样不会因为代理只拦截 GitHub
+        // 就直接导致整合包的 SMAPI 安装流程中止。
+        var result = await TryGetSmapiVersionsFromGithubAsync(GetHttpClient(), cancellationToken);
+        if (result.Count == 0)
+        {
+            var directResult = await TryGetSmapiVersionsFromGithubAsync(GetDirectHttpClient(), cancellationToken);
+            if (directResult.Count > 0)
+            {
+                result = directResult;
+            }
+        }
+
+        if (result.Count > 0)
+        {
+            return result
+            .OrderByDescending(item => item.PublishedDate)
+            .Skip(Math.Max(0, page - 1) * Math.Max(1, perPage))
+            .Take(Math.Max(1, perPage))
+            .ToList();
+        }
+
+        // 安装器和版本选择器请求第一页时，官方 latest 比“再请求一份完整目录”
+        // 更适合作为兜底：它请求体更小、不会受历史分页/字段差异影响，而且发布资产
+        // 仍会在下载阶段通过 install.dat 做最终校验。先尝试 latest 可以避免网络受限
+        // 时在 CurseForge 目录请求上等待很久，最后才得到同一个官方稳定版本。
+        if (page <= 1)
+        {
+            Debug.WriteLine("[RemoteCatalogService] GitHub returned no usable SMAPI release; trying official latest");
+            var latest = await GetLatestSmapiVersionEntryAsync(cancellationToken);
+            if (latest != null)
+            {
+                return [latest];
+            }
+        }
+
+        Debug.WriteLine("[RemoteCatalogService] Official latest unavailable; trying CurseForge fallback");
+        var curseforgeResult = await GetSmapiVersionEntriesFromCurseForgeAsync(page, perPage, cancellationToken);
+        if (curseforgeResult.Count > 0 || page > 1)
+        {
+            return curseforgeResult;
+        }
+
+        // 第 1 页的 latest 已在 CurseForge 之前尝试过；其它页不应该重复插入一条
+        // 不属于该页的“最新版”，因此此处明确返回空页。
+        return [];
+    }
+
+    /// <summary>
+    /// 获取 GitHub 上当前稳定版 SMAPI。
+    ///
+    /// 这是独立于“版本列表”的兜底入口：整合包可能没有写入
+    /// smapi_version，而目录接口又可能被代理或临时网络故障拦截。调用方
+    /// 仍会在下载后校验 install.dat，只有完整的官方安装包才会进入安装流程。
+    /// </summary>
+    public async Task<SmapiVersionEntry?> GetLatestSmapiVersionEntryAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var latest = await TryGetLatestSmapiReleaseAsync(GetHttpClient(), cancellationToken);
+        latest ??= await TryGetLatestSmapiReleaseAsync(GetDirectHttpClient(), cancellationToken);
+        return latest;
+    }
+
+    private static async Task<List<SmapiVersionEntry>> TryGetSmapiVersionsFromGithubAsync(
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
     {
         var result = new List<SmapiVersionEntry>();
-
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/repos/Pathoschild/SMAPI/releases");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                "https://api.github.com/repos/Pathoschild/SMAPI/releases?per_page=20");
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
 
-            using var response = await GetHttpClient().SendAsync(request);
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                Debug.WriteLine($"[RemoteCatalogService] GitHub SMAPI releases request failed: {(int)response.StatusCode}");
                 return result;
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
-
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
             {
+                Debug.WriteLine("[RemoteCatalogService] GitHub SMAPI releases response was not an array");
                 return result;
             }
 
@@ -4220,23 +4666,13 @@ public sealed class RemoteCatalogService
             {
                 var tag = TryGetString(release, "tag_name");
                 var publishedText = TryGetString(release, "published_at");
-                var published = DateTime.TryParse(publishedText, out var parsed) ? parsed : DateTime.MinValue;
+                var published = DateTime.TryParse(publishedText, out var parsed)
+                    ? parsed
+                    : DateTime.MinValue;
 
-                string downloadUrl = string.Empty;
-                if (release.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var asset in assets.EnumerateArray())
-                    {
-                        var assetName = TryGetString(asset, "name");
-                        var assetUrl = TryGetString(asset, "browser_download_url");
-                        if (!string.IsNullOrWhiteSpace(assetName) && !string.IsNullOrWhiteSpace(assetUrl) &&
-                            assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                        {
-                            downloadUrl = assetUrl;
-                            break;
-                        }
-                    }
-                }
+                var downloadUrl = TryGetPropertyIgnoreCase(release, "assets", out var assets)
+                    ? SelectSmapiInstallerDownloadUrl(assets)
+                    : string.Empty;
 
                 if (string.IsNullOrWhiteSpace(downloadUrl))
                 {
@@ -4244,8 +4680,8 @@ public sealed class RemoteCatalogService
                 }
 
                 var version = string.IsNullOrWhiteSpace(tag) ? "unknown" : tag.TrimStart('v', 'V');
-                var prerelease = release.TryGetProperty("prerelease", out var pre) && pre.ValueKind == JsonValueKind.True;
-
+                var prerelease = TryGetPropertyIgnoreCase(release, "prerelease", out var pre) &&
+                                 pre.ValueKind == JsonValueKind.True;
                 result.Add(new SmapiVersionEntry
                 {
                     Version = version,
@@ -4257,31 +4693,223 @@ public sealed class RemoteCatalogService
                 });
             }
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[RemoteCatalogService] GetSmapiVersionEntriesAsync failed: {ex.Message}");
+            Debug.WriteLine($"[RemoteCatalogService] GitHub SMAPI releases request failed: {ex.Message}");
         }
 
-        return result
-            .OrderByDescending(item => item.PublishedDate)
-            .Skip(Math.Max(0, page - 1) * Math.Max(1, perPage))
-            .Take(Math.Max(1, perPage))
-            .ToList();
+        return result;
     }
 
-    private static string TryGetString(JsonElement element, string propertyName)
+    private static async Task<SmapiVersionEntry?> TryGetLatestSmapiReleaseAsync(
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
     {
-        if (!element.TryGetProperty(propertyName, out var value))
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                "https://api.github.com/repos/Pathoschild/SMAPI/releases/latest");
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var tag = TryGetString(doc.RootElement, "tag_name");
+            var downloadUrl = TryGetPropertyIgnoreCase(doc.RootElement, "assets", out var assets)
+                ? SelectSmapiInstallerDownloadUrl(assets)
+                : string.Empty;
+            if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(downloadUrl))
+            {
+                return null;
+            }
+
+            var publishedText = TryGetString(doc.RootElement, "published_at");
+            return new SmapiVersionEntry
+            {
+                Version = tag.TrimStart('v', 'V'),
+                Description = TryGetString(doc.RootElement, "name") ?? tag,
+                Source = "GitHub",
+                DownloadUrl = downloadUrl,
+                PublishedDate = DateTime.TryParse(publishedText, out var published)
+                    ? published
+                    : DateTime.MinValue,
+                IsPrerelease = false
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[RemoteCatalogService] GitHub latest SMAPI request failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 选择 GitHub SMAPI 发布包。当前发布同时包含普通 installer.zip 和
+    /// installer-double-zipped.zip；后者是给特定下载链路准备的外层包，不能
+    /// 作为独立安装器直接交给 SMAPI 安装服务，因此必须优先选普通包。
+    /// </summary>
+    internal static string SelectSmapiInstallerDownloadUrl(JsonElement assets)
+    {
+        if (assets.ValueKind != JsonValueKind.Array)
         {
             return string.Empty;
         }
 
-        return value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
+        var candidates = assets.EnumerateArray()
+            .Select(asset => new
+            {
+                Name = TryGetString(asset, "name"),
+                Url = TryGetString(asset, "browser_download_url")
+            })
+            .Where(asset => !string.IsNullOrWhiteSpace(asset.Name) &&
+                            !string.IsNullOrWhiteSpace(asset.Url) &&
+                            asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return candidates.FirstOrDefault(asset =>
+                   asset.Name.EndsWith("-installer.zip", StringComparison.OrdinalIgnoreCase) &&
+                   !asset.Name.Contains("double-zipped", StringComparison.OrdinalIgnoreCase))?.Url
+               ?? candidates.FirstOrDefault()?.Url
+               ?? string.Empty;
+    }
+
+    private static string TryGetString(JsonElement element, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
+        {
+            return string.Empty;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? string.Empty,
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => string.Empty
+        };
+    }
+
+    private async Task<SearchCandidateFetchResult> FetchNexusSearchCandidatesAsync(
+        string keyword,
+        AppUserSettings settings,
+        int requiredCount,
+        int sourceOffset,
+        bool useLocalPaging,
+        Func<RemoteSearchItem, bool>? candidateFilter)
+    {
+        if (!useLocalPaging)
+        {
+            var page = await SearchNexusModsAsync(keyword, settings, requiredCount, sourceOffset);
+            return new SearchCandidateFetchResult(page, page.Count >= requiredCount);
+        }
+
+        return await FetchSearchCandidatesAsync(
+            async (offset, count) => await SearchNexusModsAsync(keyword, settings, count, offset),
+            requiredCount,
+            MaxNexusSearchBatch,
+            candidateFilter);
+    }
+
+    private async Task<SearchCandidateFetchResult> FetchCurseforgeSearchCandidatesAsync(
+        string keyword,
+        int requiredCount,
+        int sourceOffset,
+        bool useLocalPaging,
+        Func<RemoteSearchItem, bool>? candidateFilter)
+    {
+        if (!useLocalPaging)
+        {
+            var page = await SearchCurseforgeModsAsync(keyword, requiredCount, sourceOffset);
+            return new SearchCandidateFetchResult(page, page.Count >= requiredCount);
+        }
+
+        return await FetchSearchCandidatesAsync(
+            async (offset, count) => await SearchCurseforgeModsAsync(keyword, count, offset),
+            requiredCount,
+            MaxCurseforgeSearchBatch,
+            candidateFilter);
+    }
+
+    private static async Task<SearchCandidateFetchResult> FetchSearchCandidatesAsync(
+        Func<int, int, Task<List<RemoteSearchItem>>> fetchBatch,
+        int requiredCount,
+        int batchSize,
+        Func<RemoteSearchItem, bool>? candidateFilter)
+    {
+        var allItems = new List<RemoteSearchItem>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rawOffset = 0;
+        var rawFetched = 0;
+        var hasMore = false;
+
+        while (rawFetched < MaxLocalSearchCandidates)
+        {
+            var requestCount = Math.Min(batchSize, MaxLocalSearchCandidates - rawFetched);
+            var batch = await fetchBatch(rawOffset, requestCount);
+            if (batch.Count == 0)
+            {
+                hasMore = false;
+                break;
+            }
+
+            foreach (var item in batch)
+            {
+                var key = item.ResourceId > 0
+                    ? $"id:{item.ResourceId}"
+                    : $"name:{item.Name}";
+                if (seenKeys.Add(key))
+                {
+                    allItems.Add(item);
+                }
+            }
+
+            rawFetched += batch.Count;
+            rawOffset += batch.Count;
+            var matchingCount = candidateFilter == null
+                ? allItems.Count
+                : allItems.Count(candidateFilter);
+            // 只有当前批次确实填满，且当前已过滤结果足以填充请求页时，
+            // 才能可靠地告诉 UI 还有下一页。达到本地候选上限后不能仅凭
+            // “请求数已填满”报告 HasMore，否则稀疏筛选会出现空的下一页。
+            hasMore = batch.Count >= requestCount &&
+                      rawFetched < MaxLocalSearchCandidates &&
+                      matchingCount >= requiredCount;
+
+            if (matchingCount >= requiredCount || batch.Count < requestCount)
+            {
+                break;
+            }
+        }
+
+        return new SearchCandidateFetchResult(allItems, hasMore);
     }
 
     private static string TryGetNestedString(JsonElement element, string objectPropertyName, string valuePropertyName)
     {
-        if (!element.TryGetProperty(objectPropertyName, out var nested) || nested.ValueKind != JsonValueKind.Object)
+        if (!TryGetPropertyIgnoreCase(element, objectPropertyName, out var nested) || nested.ValueKind != JsonValueKind.Object)
         {
             return string.Empty;
         }
@@ -4301,17 +4929,52 @@ public sealed class RemoteCatalogService
 
     private static long TryGetLong(JsonElement element, string propertyName)
     {
-        if (!element.TryGetProperty(propertyName, out var value))
+        if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
         {
             return 0;
         }
 
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+        return TryGetJsonLong(value, out var number) ? number : 0;
+    }
+
+    private sealed class SearchCandidateFetchResult
+    {
+        public static SearchCandidateFetchResult Empty { get; } =
+            new([], hasMore: false);
+
+        public SearchCandidateFetchResult(
+            List<RemoteSearchItem> items,
+            bool hasMore)
         {
-            return number;
+            Items = items;
+            HasMore = hasMore;
         }
 
-        return 0;
+        public List<RemoteSearchItem> Items { get; }
+
+        public bool HasMore { get; }
+    }
+
+    private sealed class NexusCollectionBatchResult
+    {
+        public static NexusCollectionBatchResult Empty { get; } =
+            new([], rawCount: 0, hasMoreRaw: false);
+
+        public NexusCollectionBatchResult(
+            List<RemoteSearchItem> items,
+            int rawCount,
+            bool hasMoreRaw)
+        {
+            Items = items;
+            RawCount = rawCount;
+            HasMoreRaw = hasMoreRaw;
+        }
+
+        public List<RemoteSearchItem> Items { get; }
+
+        public int RawCount { get; }
+
+        public bool HasMoreRaw { get; }
     }
 
     private sealed class RemoteSearchItem

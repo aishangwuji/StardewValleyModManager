@@ -6,4 +6,9 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>SVL.Core.Platform</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 7z 是 Nexus Collection 的标准归档格式；平台层直接解压，不能依赖用户另外安装 7-Zip。 -->
+    <PackageReference Include="SharpCompress" Version="0.49.1" />
+  </ItemGroup>
 </Project>

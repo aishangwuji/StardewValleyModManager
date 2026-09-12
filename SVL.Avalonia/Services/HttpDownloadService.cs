@@ -33,9 +33,10 @@ public sealed class HttpDownloadService
         string targetPath,
         Action<DownloadProgressSnapshot>? onProgress,
         CancellationToken cancellationToken = default,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        Func<string, bool>? cacheValidator = null)
     {
-        return DownloadAsync(url, targetPath, 0, onProgress, cancellationToken, log);
+        return DownloadAsync(url, targetPath, 0, onProgress, cancellationToken, log, cacheValidator);
     }
 
     /// <summary>下载文件（显式指定线程数；threadCount &lt;= 0 时读取设置项）。</summary>
@@ -45,7 +46,8 @@ public sealed class HttpDownloadService
         int threadCount,
         Action<DownloadProgressSnapshot>? onProgress,
         CancellationToken cancellationToken = default,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        Func<string, bool>? cacheValidator = null)
     {
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -56,6 +58,10 @@ public sealed class HttpDownloadService
         {
             throw new ArgumentException("目标文件路径不能为空", nameof(targetPath));
         }
+
+        // 即使命中本地缓存，也必须尊重已经发出的取消请求；否则取消按钮在
+        // 缓存复制路径上不会生效，任务会被错误地标记为完成。
+        cancellationToken.ThrowIfCancellationRequested();
 
         var settings = _settingsStore.Load();
         if (threadCount <= 0)
@@ -77,21 +83,60 @@ public sealed class HttpDownloadService
         if (settings.EnableDownloadCache)
         {
             var cachePath = DownloadFileCache.GetCachePath(url);
-            if (DownloadFileCache.TryHit(cachePath, out var cachedFile, out var cachedSize))
+            if (DownloadFileCache.TryHit(cachePath, out var cachedFile, out var cachedSize) &&
+                IsCacheArtifactValid(cachedFile, cacheValidator))
             {
                 log?.Invoke($"命中下载缓存，直接从缓存复制（{cachedSize} 字节）");
                 File.Copy(cachedFile, targetPath, true);
-                onProgress?.Invoke(new DownloadProgressSnapshot(100, cachedSize, cachedSize, 0));
+                onProgress?.Invoke(new DownloadProgressSnapshot(
+                    100,
+                    cachedSize,
+                    cachedSize,
+                    0,
+                    SegmentPercents: null,
+                    IsComplete: true));
                 return;
             }
 
+            if (File.Exists(cachePath) && cacheValidator != null)
+            {
+                // 通用 URL 缓存可能由旧版本写入过 HTML/错误页；发现调用方
+                // 提供的归档校验不通过时立即淘汰，避免每次重试都命中同一坏缓存。
+                TryDeleteFile(cachePath);
+                log?.Invoke("下载缓存校验失败，已清理后重新下载");
+            }
+
             await DownloadCoreAsync(url, targetPath, threadCount, onProgress, cancellationToken);
+
+            if (!IsCacheArtifactValid(targetPath, cacheValidator))
+            {
+                TryDeleteFile(targetPath);
+                throw new InvalidDataException("下载结果未通过文件校验");
+            }
+
             await DownloadFileCache.SaveAsync(cachePath, targetPath);
             log?.Invoke("下载完成，已写入下载缓存");
             return;
         }
 
         await DownloadCoreAsync(url, targetPath, threadCount, onProgress, cancellationToken);
+    }
+
+    private static bool IsCacheArtifactValid(string path, Func<string, bool>? cacheValidator)
+    {
+        if (cacheValidator == null)
+        {
+            return true;
+        }
+
+        try
+        {
+            return cacheValidator(path);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task DownloadCoreAsync(
@@ -148,7 +193,12 @@ public sealed class HttpDownloadService
         {
             TryDeleteFile(metaPath);
             File.Move(partPath, targetPath, true);
-            onProgress?.Invoke(CreateSnapshot(totalBytes, totalBytes, 0, totalBytes));
+            onProgress?.Invoke(CreateSnapshot(
+                totalBytes,
+                totalBytes,
+                0,
+                totalBytes,
+                completed: true));
             return;
         }
 
@@ -241,7 +291,12 @@ public sealed class HttpDownloadService
                     if (totalBytes > 0 && sw.ElapsedMilliseconds - lastReportMs >= 200)
                     {
                         lastReportMs = sw.ElapsedMilliseconds;
-                        onProgress?.Invoke(CreateSnapshot(downloaded, totalBytes, sw.Elapsed.TotalSeconds, sessionStartBytes));
+                        onProgress?.Invoke(CreateSnapshot(
+                            downloaded,
+                            totalBytes,
+                            sw.Elapsed.TotalSeconds,
+                            sessionStartBytes,
+                            completed: false));
                     }
 
                     // 周期性持久化断点（约 1 秒一次）
@@ -274,7 +329,12 @@ public sealed class HttpDownloadService
 
         File.Move(partPath, targetPath, true);
         var reportTotal = totalBytes > 0 ? totalBytes : downloaded;
-        onProgress?.Invoke(CreateSnapshot(downloaded, reportTotal, sw.Elapsed.TotalSeconds, sessionStartBytes));
+        onProgress?.Invoke(CreateSnapshot(
+            downloaded,
+            reportTotal,
+            sw.Elapsed.TotalSeconds,
+            sessionStartBytes,
+            completed: true));
     }
 
     private async Task DownloadMultiPartAsync(
@@ -327,6 +387,8 @@ public sealed class HttpDownloadService
         long totalDownloaded = sessionStartBytes;
         var sw = Stopwatch.StartNew();
         var lastReportMs = 0L;
+        var lastMetaFlushMs = 0L;
+        var resumeMetaLock = new object();
         var completed = false;
 
         try
@@ -398,7 +460,35 @@ public sealed class HttpDownloadService
                         {
                             Interlocked.Exchange(ref lastReportMs, elapsedMs);
                             onProgress?.Invoke(CreateSnapshot(
-                                current, totalBytes, sw.Elapsed.TotalSeconds, sessionStartBytes, segDownloaded, segmentRanges));
+                                current,
+                                totalBytes,
+                                sw.Elapsed.TotalSeconds,
+                                sessionStartBytes,
+                                segDownloaded,
+                                segmentRanges,
+                                completed: false));
+                        }
+
+                        // 多线程下载不能等到 WhenAll 失败/取消后才写断点：进程被
+                        // 直接终止时 finally 不一定有机会执行。按秒保存一次，且
+                        // 只允许一个分片写入共享元数据，避免 JSON 互相覆盖。
+                        var metaElapsedMs = sw.ElapsedMilliseconds;
+                        var lastMetaMs = Interlocked.Read(ref lastMetaFlushMs);
+                        if (metaElapsedMs - lastMetaMs >= 1000 &&
+                            Interlocked.CompareExchange(
+                                ref lastMetaFlushMs,
+                                metaElapsedMs,
+                                lastMetaMs) == lastMetaMs)
+                        {
+                            lock (resumeMetaLock)
+                            {
+                                FlushResumeMeta(
+                                    metaPath,
+                                    url,
+                                    totalBytes,
+                                    threadCount,
+                                    segDownloaded);
+                            }
                         }
                     }
                 }, cancellationToken));
@@ -421,7 +511,14 @@ public sealed class HttpDownloadService
         }
 
         File.Move(partPath, targetPath, true);
-        onProgress?.Invoke(CreateSnapshot(totalBytes, totalBytes, sw.Elapsed.TotalSeconds, sessionStartBytes));
+        onProgress?.Invoke(CreateSnapshot(
+            totalBytes,
+            totalBytes,
+            sw.Elapsed.TotalSeconds,
+            sessionStartBytes,
+            segmentDownloaded: segmentRanges.Select(range => range.End - range.Start + 1).ToArray(),
+            segmentRanges,
+            completed: true));
     }
 
     private async Task<(bool SupportsRange, long TotalBytes)> ProbeRangeSupportAsync(string url, CancellationToken cancellationToken)
@@ -448,6 +545,12 @@ public sealed class HttpDownloadService
             var length = response.Content.Headers.ContentLength ?? 0;
             return (false, length);
         }
+        catch (OperationCanceledException)
+        {
+            // Range 探测只是下载前置步骤，用户取消时不能静默降级为普通下载，
+            // 否则会再发起一次已知会失败的请求并延迟任务进入取消态。
+            throw;
+        }
         catch
         {
             return (false, 0);
@@ -460,7 +563,8 @@ public sealed class HttpDownloadService
         double elapsedSeconds,
         long sessionStartBytes,
         long[]? segmentDownloaded = null,
-        (long Start, long End)[]? segmentRanges = null)
+        (long Start, long End)[]? segmentRanges = null,
+        bool completed = false)
     {
         // 速度按本次会话增量计算（断点续传时避免速度虚高）
         var sessionBytes = Math.Max(0, downloadedBytes - sessionStartBytes);
@@ -468,6 +572,12 @@ public sealed class HttpDownloadService
         var percent = totalBytes > 0
             ? Math.Min(100, downloadedBytes * 100d / totalBytes)
             : 0;
+        if (!completed && totalBytes > 0 && downloadedBytes >= totalBytes)
+        {
+            // 最后一个分片可能已经写满预分配文件，但其它分片任务尚未全部
+            // 完成释放响应流；在 DownloadMultiPartAsync 返回前不能显示满格。
+            percent = 99;
+        }
 
         double[]? segmentPercents = null;
         if (segmentDownloaded != null && segmentRanges != null && segmentRanges.Length > 1)
@@ -481,10 +591,21 @@ public sealed class HttpDownloadService
                 segmentPercents[i] = segmentLength > 0
                     ? Math.Min(100, segmentDownloaded[i] * 100d / segmentLength)
                     : 0;
+                if (!completed && segmentPercents[i] >= 100)
+                {
+                    // 分块进度条会替代总进度条，同样不能在 await WhenAll 前填满。
+                    segmentPercents[i] = 99;
+                }
             }
         }
 
-        return new DownloadProgressSnapshot(percent, downloadedBytes, totalBytes, speed, segmentPercents);
+        return new DownloadProgressSnapshot(
+            percent,
+            downloadedBytes,
+            totalBytes,
+            speed,
+            segmentPercents,
+            completed);
     }
 
     private static void TryDeleteFile(string path)
@@ -564,7 +685,9 @@ public sealed class HttpDownloadService
                 ThreadCount = threadCount,
                 SegmentDownloaded = (long[])segmentDownloaded.Clone()
             };
-            File.WriteAllText(metaPath, JsonSerializer.Serialize(dto));
+            // 断点元数据会在多个分片下载线程运行期间周期性更新；原地覆盖时若进程
+            // 被终止，下一次启动可能读到半截 JSON，进而丢失整个文件的可恢复进度。
+            AtomicFileWriter.WriteUtf8(metaPath, JsonSerializer.Serialize(dto));
         }
         catch
         {
@@ -733,4 +856,48 @@ public readonly record struct DownloadProgressSnapshot(
     long DownloadedBytes,
     long TotalBytes,
     double BytesPerSecond,
-    double[]? SegmentPercents = null);
+    double[]? SegmentPercents = null,
+    bool IsComplete = false);
+
+/// <summary>
+/// 将下载快照转换为进度条显示值。
+/// 未达到总字节数时最高只显示 99%，避免浮点数/四舍五入让未完成任务提前填满。
+/// </summary>
+public static class DownloadProgressCalculator
+{
+    /// <summary>
+    /// 根据下载快照计算显示进度。即使字节数已经达到总大小，只要底层下载调用
+    /// 尚未正常返回，也保持 99%，避免最后一个分片回调提前填满进度条。
+    /// </summary>
+    public static int ToDisplayPercent(DownloadProgressSnapshot snapshot)
+    {
+        if (!snapshot.IsComplete &&
+            snapshot.TotalBytes > 0 &&
+            snapshot.DownloadedBytes >= snapshot.TotalBytes)
+        {
+            return 99;
+        }
+
+        return ToDisplayPercent(snapshot.Percent, snapshot.DownloadedBytes, snapshot.TotalBytes);
+    }
+
+    public static int ToDisplayPercent(double percent, long downloadedBytes, long totalBytes)
+    {
+        if (totalBytes <= 0)
+        {
+            return 0;
+        }
+
+        if (downloadedBytes >= totalBytes)
+        {
+            return 100;
+        }
+
+        if (!double.IsFinite(percent))
+        {
+            return 0;
+        }
+
+        return Math.Clamp((int)Math.Floor(Math.Clamp(percent, 0, 100)), 0, 99);
+    }
+}

@@ -16,16 +16,20 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="controls:IconPickerOption">
-            <Button Width="96"
+            <Button Classes="iconPickerOption"
+                    Width="96"
                     Height="96"
                     Margin="0,0,10,10"
+                    Background="{DynamicResource ColorBrushTransparent}"
+                    BorderBrush="{DynamicResource ColorBrushTransparent}"
+                    BorderThickness="0"
                     Command="{Binding SelectOptionCommand, ElementName=Root}"
                     CommandParameter="{Binding}">
               <Border CornerRadius="8"
                       Padding="10"
-                      BorderBrush="#66B89B7F"
+                      BorderBrush="{DynamicResource BorderBrush}"
                       BorderThickness="1"
-                      Background="#FFF9F3E5">
+                      Background="{DynamicResource ColorBrushTransparent}">
                 <Grid>
                   <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4" IsVisible="{Binding IsCustom}">
                     <TextBlock Text="+" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center" />

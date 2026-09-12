@@ -12,16 +12,22 @@ public sealed class InstanceRegistryStore
 
     private readonly string _registryPath;
 
-    public InstanceRegistryStore()
+    public InstanceRegistryStore(string? storageDirectory = null)
     {
-        var basePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SVL",
-            "Avalonia");
+        var basePath = string.IsNullOrWhiteSpace(storageDirectory)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SVL",
+                "Avalonia")
+            : Path.GetFullPath(storageDirectory);
 
         Directory.CreateDirectory(basePath);
         _registryPath = Path.Combine(basePath, "instances-registry.json");
     }
+
+    public bool Exists => File.Exists(_registryPath);
+
+    public string GetRegistryPath() => _registryPath;
 
     public List<ManualInstanceRecord> LoadManualInstances()
     {
@@ -44,7 +50,7 @@ public sealed class InstanceRegistryStore
     public void SaveManualInstances(IReadOnlyList<ManualInstanceRecord> records)
     {
         var json = JsonSerializer.Serialize(records, JsonOptions);
-        File.WriteAllText(_registryPath, json);
+        AtomicFileWriter.WriteUtf8(_registryPath, json);
     }
 }
 

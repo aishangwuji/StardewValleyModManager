@@ -396,7 +396,7 @@
                            Watermark="输入自定义 SteamCMD 指令，如 app_update 413150 或 download_depot 413150 413151"
                            FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="11"
                            VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="发送" Command="{Binding SteamCmdInputCommand}"
+                  <Button Grid.Column="1" Content="发送" Command="{Binding SendSteamCmdInputCommand}"
                           IsEnabled="{Binding CanSendSteamCmdInput}" MinWidth="72" Margin="8,0,0,0" />
                 </Grid>
                 <TextBlock Text="提示：指令会以 +指令 +quit 形式执行；登录建议在登录页填写以支持 Steam Guard。" FontSize="10.5" Opacity="0.6" TextWrapping="Wrap" />
