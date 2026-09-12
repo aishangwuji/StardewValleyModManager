@@ -19,6 +19,11 @@ public sealed class AvaloniaMigrationHardeningTests
     [TestMethod]
     public void ModInstallTargetOptions_ShouldListAllSmapiTargetsWithFullPaths()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("该断言使用 Windows 驱动器路径，仅在 Windows 上验证完整路径语义。");
+        }
+
         var options = ModInstallTargetOptions.Build(
         [
             new ModInstallTarget("SMAPI 4.5.2", @"D:\\Games\\Stardew Valley\\versions\\SMAPI 4.5.2", @"D:\\Games\\Stardew Valley", false, "4.5.2"),
