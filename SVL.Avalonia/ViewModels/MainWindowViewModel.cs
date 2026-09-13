@@ -59,6 +59,9 @@ public partial class MainWindowViewModel : ObservableObject
     private string _navLaunchText = "启动";
 
     [ObservableProperty]
+    private string _navLocalModManageText = "本地Mod管理";
+
+    [ObservableProperty]
     private string _navDownloadText = "下载";
 
     [ObservableProperty]
@@ -127,6 +130,8 @@ public partial class MainWindowViewModel : ObservableObject
     public string XboxPathPreview => _gameInstallPathLocator.TryLocateXboxStardewPath() ?? "未探测到（可手动选择）";
 
     public bool IsLaunchPage => string.Equals(CurrentPage, "启动", StringComparison.Ordinal);
+
+    public bool IsLocalModManagePage => string.Equals(CurrentPage, "本地Mod管理", StringComparison.Ordinal);
 
     public bool IsDownloadPage => string.Equals(CurrentPage, "下载", StringComparison.Ordinal);
 
@@ -392,6 +397,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         WindowTitle = _localizationService.Get("Window.Title");
         NavLaunchText = _localizationService.Get("Nav.Launch");
+        NavLocalModManageText = _localizationService.Get("Nav.LocalModManage");
         NavDownloadText = _localizationService.Get("Nav.Download");
         NavTasksText = _localizationService.Get("Nav.Tasks");
         NavSettingsText = _localizationService.Get("Nav.Settings");
@@ -415,6 +421,7 @@ public partial class MainWindowViewModel : ObservableObject
     partial void OnCurrentPageChanged(string value)
     {
         OnPropertyChanged(nameof(IsLaunchPage));
+        OnPropertyChanged(nameof(IsLocalModManagePage));
         OnPropertyChanged(nameof(IsDownloadPage));
         OnPropertyChanged(nameof(IsTasksPage));
         OnPropertyChanged(nameof(IsSettingsPage));
@@ -446,7 +453,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         VersionSettingsPage.SwitchToModManage();
-        NavigateToPage("版本设置", VersionSettingsPage, pushCurrentToBackStack: true);
+        NavigateToPage("本地Mod管理", VersionSettingsPage, pushCurrentToBackStack: true);
     }
 
     private void HandleInstanceContextChanged()
@@ -766,6 +773,14 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void NavigateToLocalModManage()
+    {
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
+        VersionSettingsPage.SwitchToModManage();
+        NavigateToPage("本地Mod管理", VersionSettingsPage, pushCurrentToBackStack: true);
+    }
+
+    [RelayCommand]
     private void NavigateToDownload()
     {
         NavigateToPage("下载", DownloadPage, clearBackStack: true);
@@ -1042,6 +1057,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         return string.Equals(page, "实例", StringComparison.Ordinal) ||
                string.Equals(page, "版本设置", StringComparison.Ordinal) ||
+               string.Equals(page, "本地Mod管理", StringComparison.Ordinal) ||
                string.Equals(page, "资源详情", StringComparison.Ordinal);
     }
 
