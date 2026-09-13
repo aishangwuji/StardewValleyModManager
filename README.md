@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="SVL.Desktop/Images/icon.png" alt="SVL Logo" width="128" height="128">
+  <img src="SVL.Avalonia/Assets/Icons/icon.png" alt="SVL Logo" width="128" height="128">
 </p>
 
 <h1 align="center">Stardew Valley Launcher</h1>
@@ -151,19 +151,7 @@ SVL/
 │   ├── Services/             #   应用服务层
 │   ├── Models/               #   数据模型
 │   └── Assets/               #   图标与图片资源
-├── SVL.Core/                 # 核心功能库（平台无关）
-│   ├── App/                  #   应用核心与生命周期
-│   ├── Config/               #   配置系统
-│   ├── Download/             #   下载管理器
-│   ├── IO/                   #   文件服务
-│   ├── Stardew/              #   星露谷核心
-│   │   ├── Instance/         #     实例管理与隔离
-│   │   ├── Launch/           #     游戏启动编排
-│   │   ├── Mod/              #     Mod 管理与依赖解析
-│   │   └── ResourceProject/  #     NexusMods / Modpack 集成
-│   └── Utils/                #   工具类
 ├── SVL.Core.Platform/        # 平台抽象层（Windows/macOS 实现）
-├── SVL.Desktop/              # 旧 WPF 架构（参考保留）
 ├── SVL.Migration.Tests/      # 迁移测试
 ├── build.ps1                 # 统一打包脚本
 ├── CHANGELOG.md

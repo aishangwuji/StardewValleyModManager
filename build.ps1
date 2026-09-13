@@ -135,7 +135,7 @@ function Build-MacOS {
     New-Item -ItemType Directory -Path $appResources -Force | Out-Null
     Copy-Item -Path (Join-Path $publishDir "*") -Destination $appMacos -Recurse -Force
 
-    $iconSrc = Join-Path $RootDir "SVL.Desktop\Images\icon.png"
+    $iconSrc = Join-Path $RootDir "SVL.Avalonia\Assets\Icons\icon.png"
     if (Test-Path $iconSrc) {
         $iconsetDir = Join-Path $env:TEMP "AppIcon.iconset"
         if (Test-Path $iconsetDir) { Remove-Item -Recurse -Force $iconsetDir }
