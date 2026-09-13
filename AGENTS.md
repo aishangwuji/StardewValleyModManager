@@ -84,3 +84,4 @@ dotnet run --project SVL.Avalonia -c Debug
 - `Tmds.DBus.Protocol 0.20.0` 的 `NU1903` 漏洞警告为上游公告（`migration-audit-report.md:73`），非本项目代码问题
 - 进程占用 `bin/Debug/net10.0/SVL.Avalonia.exe` 时 `dotnet build` 会报 `MSB3027`，需先关闭运行中的启动器
 - 已删除的旧目录勿再引用，历史参考仅存于 git 历史
+- 提交时使用中文描述
