@@ -30,7 +30,6 @@
         <StackPanel Grid.Row="2" Spacing="12" HorizontalAlignment="Stretch" Margin="20,0,20,20">
           <Button Classes="launchPrimary" Content="{Binding LaunchButtonText}" Command="{Binding LaunchGameCommand}" Height="48" FontSize="15" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" />
           <Button Classes="launchSecondary" Content="{Binding VersionSelectButtonText}" Command="{Binding NavigateToVersionSelectCommand}" Height="42" FontSize="14" HorizontalAlignment="Stretch" />
-          <Button Classes="launchSecondary" Content="{Binding VersionSettingsButtonText}" Command="{Binding OpenVersionSettingsCommand}" IsEnabled="{Binding CanOpenVersionSettings}" Height="42" FontSize="14" HorizontalAlignment="Stretch" />
         </StackPanel>
       </Grid>
     </Border>
