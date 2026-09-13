@@ -565,14 +565,14 @@
                     <Button Classes="toolbarAction" Content="检测汉化" Command="{Binding CheckAllModsLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
                     <Button Classes="toolbarAction" Content="刷新选中汉化" Command="{Binding RefreshSelectedLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
                     <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" />
+                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
                     <Button Classes="toolbarAction" Width="34" Padding="0" Content="+" ToolTip.Tip="从本地安装 Mod" Command="{Binding InstallModFromLocalCommand}" />
                   </WrapPanel>
 
                   <WrapPanel IsVisible="{Binding IsBackupTab}">
                     <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenBackupFolderCommand}" />
                     <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" />
+                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
                   </WrapPanel>
                 </StackPanel>
               </Border>
@@ -745,6 +745,17 @@
                     </StackPanel>
                     <TextBlock Text="{Binding LocalizationCheckProgressText}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
                   </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="hintCard" Padding="14,12" IsVisible="{Binding IsLoadingMods}">
+                <StackPanel Spacing="8">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
+                    <TextBlock Text="正在加载 Mod 列表…" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                  </StackPanel>
+                  <ProgressBar IsIndeterminate="True" Height="4" />
+                  <TextBlock Text="{Binding Status}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
 

@@ -4266,6 +4266,30 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     [ObservableProperty]
     private string _smapiInstallProgressText = string.Empty;
 
+    [ObservableProperty]
+    private bool _isLoadingMods;
+
+    // Session token 隔离：用于取消过期 Mod 扫描回调，防止旧扫描覆盖新实例状态（P0 红线）
+    private int _modsLoadGeneration;
+    private CancellationTokenSource? _modsLoadCts;
+    private Task? _modsLoadTask;
+
+    /// <summary>当前 Mod 加载任务（供测试等待，避免异步后断言竞态）。</summary>
+    public Task? CurrentModsLoadTask => _modsLoadTask;
+
+    public Task WaitForModsLoadAsync() => _modsLoadTask ?? Task.CompletedTask;
+
+    partial void OnIsLoadingModsChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowModsLoadingIndicator));
+        OnPropertyChanged(nameof(ShowEmptyModsHint));
+        OnPropertyChanged(nameof(ShowModsList));
+    }
+
+    public bool ShowModsLoadingIndicator => IsLoadingMods;
+
+    public bool ShowModsList => HasMods && !IsLoadingMods;
+
     partial void OnIsCheckingModUpdatesChanged(bool value)
     {
         OnPropertyChanged(nameof(HasRunningModTask));
@@ -4683,7 +4707,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             ? $"发现 {ModConflicts.Count} 项冲突，请按条目处理后重新检测"
             : "未发现启用 Mod 之间的明显冲突";
 
-    public bool ShowEmptyModsHint => !HasFilteredMods;
+    public bool ShowEmptyModsHint => !IsLoadingMods && !HasFilteredMods;
 
     public bool CanOperateSelectedMod => IsModsTab && SelectedMod is { IsBackupItem: false };
 
@@ -6652,56 +6676,20 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
     }
 
-    [RelayCommand]
-    private void ReloadMods()
+    private sealed class ModScanSnapshot
     {
-        InvalidateModConflictResults();
+        public List<ModManageItem> Mods { get; set; } = [];
+        public Dictionary<string, List<(string UniqueId, string MinimumVersion, bool IsRequired, string Note)>> DependencyEntriesByPath { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public string ModsPath { get; set; } = string.Empty;
+    }
 
-        foreach (var existingItem in Mods)
+    private ModScanSnapshot BuildModsSnapshot(string modsPath, CancellationToken token)
+    {
+        var snapshot = new ModScanSnapshot
         {
-            DetachModItem(existingItem);
-        }
-
-        foreach (var backupItem in BackupMods)
-        {
-            DetachModItem(backupItem);
-        }
-
-        foreach (var panelItem in TagPanelItems)
-        {
-            DetachTagPanelItem(panelItem);
-        }
-
-        Mods.Clear();
-        BackupMods.Clear();
-        FilteredMods.Clear();
-        _filteredSource.Clear();
-        TagFilters.Clear();
-        CustomTagDefinitions.Clear();
-        TagPanelItems.Clear();
-        SelectedTagFilter = null;
-        SelectedCustomTag = null;
-        SelectedMod = null;
-        SelectedCount = 0;
-        ShowSelectionActions = false;
-        CurrentPageIndex = 1;
-        TotalPages = 1;
-        TotalFilteredCount = 0;
-
-        var settings = _settingsStore.Load();
-        if (string.IsNullOrWhiteSpace(settings.PreferredInstancePath) || !Directory.Exists(settings.PreferredInstancePath))
-        {
-            Status = "当前未选择可用实例，请先在版本选择中选中实例";
-            RefreshModManageHint("未找到可用实例，无法加载 Mod 列表");
-            return;
-        }
-
-        var modsPath = Path.Combine(
-            Services.InstanceRuntimePathResolver.Resolve(settings.PreferredInstancePath),
-            "Mods");
-        Directory.CreateDirectory(modsPath);
-
-        var dependencyEntriesByPath = new Dictionary<string, List<(string UniqueId, string MinimumVersion, bool IsRequired, string Note)>>(StringComparer.OrdinalIgnoreCase);
+            ModsPath = modsPath,
+            DependencyEntriesByPath = new Dictionary<string, List<(string UniqueId, string MinimumVersion, bool IsRequired, string Note)>>(StringComparer.OrdinalIgnoreCase)
+        };
 
         var modDirectories = EnumerateCandidateModDirectories(modsPath)
             .OrderBy(path =>
@@ -6725,6 +6713,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         foreach (var modDirectory in modDirectories)
         {
+            token.ThrowIfCancellationRequested();
+
             var folderName = Path.GetFileName(modDirectory);
             if (string.IsNullOrWhiteSpace(folderName))
             {
@@ -6774,8 +6764,6 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             var sourceCredential = TryReadSourceCredential(modDirectory);
             var isCompositeParent = sourceCredential?.IsParentMod == true;
             var parentReference = sourceCredential?.ParentMod;
-            // 保留 manifest 的原始文本，不能只把汉化结果写进 DisplayName/Description；
-            // 否则用户切换回英文时已经没有可恢复的源站内容。
             var sourceDisplayName = displayName;
             var sourceDescription = description;
             ApplySourceCredentialToModItem(
@@ -6789,9 +6777,6 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 ref nexusModsProjectId,
                 ref localizationUpdatedAt);
 
-            // 部分发行包的 manifest 没有标准 Version 字段，或只在文件名中携带
-            // 版本号（例如“Content Patcher 2.9.0 2.9.0.zip”）。保留清单优先级，
-            // 再用来源凭证文件名和实际安装目录补齐，避免管理页/导出页长期显示未知版本。
             if (IsUnknownVersion(version))
             {
                 version = FirstNonEmpty(
@@ -6800,10 +6785,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                     version);
             }
 
-            dependencyEntriesByPath[modDirectory] = dependencyEntries;
+            snapshot.DependencyEntriesByPath[modDirectory] = dependencyEntries;
 
-            // 旧版复合 Mod 可能只有 svl-source.json 而没有自己的 manifest.json。
-            // 仍然把它作为分组头加载，避免子 Mod 被当成互不相关的顶层项目。
             if (isCompositeParent && string.IsNullOrWhiteSpace(manifestPath))
             {
                 displayName = FirstNonEmpty(sourceCredential?.ModName, displayName);
@@ -6843,15 +6826,59 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 item.FolderTags.Add(tag);
             }
 
+            snapshot.Mods.Add(item);
+        }
+
+        return snapshot;
+    }
+
+    private void ApplyModsSnapshot(ModScanSnapshot snapshot)
+    {
+        // Business Rule: 切换实例或刷新前清空旧状态，避免旧 Mod 残留导致筛选计数错乱
+        InvalidateModConflictResults();
+
+        foreach (var existingItem in Mods)
+        {
+            DetachModItem(existingItem);
+        }
+
+        foreach (var backupItem in BackupMods)
+        {
+            DetachModItem(backupItem);
+        }
+
+        foreach (var panelItem in TagPanelItems)
+        {
+            DetachTagPanelItem(panelItem);
+        }
+
+        Mods.Clear();
+        BackupMods.Clear();
+        FilteredMods.Clear();
+        _filteredSource.Clear();
+        TagFilters.Clear();
+        CustomTagDefinitions.Clear();
+        TagPanelItems.Clear();
+        SelectedTagFilter = null;
+        SelectedCustomTag = null;
+        SelectedMod = null;
+        SelectedCount = 0;
+        ShowSelectionActions = false;
+        CurrentPageIndex = 1;
+        TotalPages = 1;
+        TotalFilteredCount = 0;
+
+        foreach (var item in snapshot.Mods)
+        {
             AttachModItem(item);
             Mods.Add(item);
         }
 
-        BuildModHierarchy(modsPath);
-        BuildDisplayDependenciesForMods(dependencyEntriesByPath);
+        BuildModHierarchy(snapshot.ModsPath);
+        BuildDisplayDependenciesForMods(snapshot.DependencyEntriesByPath);
 
-        LoadAndApplyTags(modsPath);
-        LoadBackups(modsPath);
+        LoadAndApplyTags(snapshot.ModsPath);
+        LoadBackups(snapshot.ModsPath);
         ApplyTagFilter();
         SyncExportModItemsFromCurrentMods();
 
@@ -6859,6 +6886,160 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             ? "当前实例 Mods 目录为空"
             : $"已加载 {Mods.Count} 个 Mod（启用 {Mods.Count(item => item.IsEnabled)} / 禁用 {Mods.Count(item => !item.IsEnabled)}）";
         RefreshModManageHint();
+    }
+
+    private async Task ReloadModsAsync()
+    {
+        var generation = Interlocked.Increment(ref _modsLoadGeneration);
+        _modsLoadCts?.Cancel();
+        _modsLoadCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _modsLoadCts = cts;
+        var token = cts.Token;
+
+        // 切换到后台前立即进入加载态，保证 tab 切换无阻塞（先渲染后加载）
+        IsLoadingMods = true;
+        Status = "正在加载 Mod 列表…";
+
+        var settings = _settingsStore.Load();
+        if (string.IsNullOrWhiteSpace(settings.PreferredInstancePath) || !Directory.Exists(settings.PreferredInstancePath))
+        {
+            if (generation != _modsLoadGeneration || token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            void ApplyEmptyOnUi()
+            {
+                InvalidateModConflictResults();
+                foreach (var existingItem in Mods) DetachModItem(existingItem);
+                foreach (var backupItem in BackupMods) DetachModItem(backupItem);
+                foreach (var panelItem in TagPanelItems) DetachTagPanelItem(panelItem);
+                Mods.Clear();
+                BackupMods.Clear();
+                FilteredMods.Clear();
+                _filteredSource.Clear();
+                TagFilters.Clear();
+                CustomTagDefinitions.Clear();
+                TagPanelItems.Clear();
+                SelectedTagFilter = null;
+                SelectedCustomTag = null;
+                SelectedMod = null;
+                SelectedCount = 0;
+                ShowSelectionActions = false;
+                CurrentPageIndex = 1;
+                TotalPages = 1;
+                TotalFilteredCount = 0;
+                Status = "当前未选择可用实例，请先在版本选择中选中实例";
+                RefreshModManageHint("未找到可用实例，无法加载 Mod 列表");
+                IsLoadingMods = false;
+            }
+
+            var dispatcher = global::Avalonia.Threading.Dispatcher.UIThread;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                await dispatcher.InvokeAsync(ApplyEmptyOnUi);
+            }
+            else
+            {
+                ApplyEmptyOnUi();
+            }
+
+            return;
+        }
+
+        var modsPath = Path.Combine(
+            Services.InstanceRuntimePathResolver.Resolve(settings.PreferredInstancePath),
+            "Mods");
+        try
+        {
+            Directory.CreateDirectory(modsPath);
+        }
+        catch
+        {
+            // 创建失败交由后续扫描处理，状态保持加载中直到下一次尝试
+        }
+
+        ModScanSnapshot? snapshot = null;
+        var hasDispatcher = global::Avalonia.Threading.Dispatcher.UIThread != null;
+        // 无 Dispatcher 的单元测试环境直接同步执行，避免测试竞态
+        if (!hasDispatcher)
+        {
+            snapshot = BuildModsSnapshot(modsPath, CancellationToken.None);
+            if (generation == _modsLoadGeneration && !token.IsCancellationRequested)
+            {
+                ApplyModsSnapshot(snapshot);
+                IsLoadingMods = false;
+            }
+
+            return;
+        }
+
+        try
+        {
+            snapshot = await Task.Run(() => BuildModsSnapshot(modsPath, token), token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[VersionSettings] Mod 扫描失败: {ex.Message}");
+            void ApplyErrorOnUi()
+            {
+                if (generation != _modsLoadGeneration) return;
+                Status = $"Mod 列表加载失败: {ex.Message}";
+                IsLoadingMods = false;
+            }
+
+            var dispatcher = global::Avalonia.Threading.Dispatcher.UIThread;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                await dispatcher.InvokeAsync(ApplyErrorOnUi);
+            }
+            else
+            {
+                ApplyErrorOnUi();
+            }
+
+            return;
+        }
+
+        if (token.IsCancellationRequested || generation != _modsLoadGeneration || snapshot == null)
+        {
+            return;
+        }
+
+        void ApplySnapshotOnUi()
+        {
+            if (generation != _modsLoadGeneration || token.IsCancellationRequested) return;
+            ApplyModsSnapshot(snapshot);
+            IsLoadingMods = false;
+        }
+
+        var uiDispatcher = global::Avalonia.Threading.Dispatcher.UIThread;
+        if (uiDispatcher != null && !uiDispatcher.CheckAccess())
+        {
+            await uiDispatcher.InvokeAsync(ApplySnapshotOnUi);
+        }
+        else
+        {
+            ApplySnapshotOnUi();
+        }
+    }
+
+    [RelayCommand]
+    private void ReloadMods()
+    {
+        // Fire-and-forget with session token 隔离；同步返回保证导航不阻塞
+        var task = ReloadModsAsync();
+        _modsLoadTask = task;
+        // 同步上下文无 Dispatcher 时（单元测试）阻塞等待以保持原有同步语义，避免测试竞态
+        if (global::Avalonia.Threading.Dispatcher.UIThread == null)
+        {
+            task.GetAwaiter().GetResult();
+        }
     }
 
     private void ReloadExportModItems()

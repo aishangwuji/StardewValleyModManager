@@ -71,10 +71,18 @@ public class MainFlowSmokeTests
             Assert.AreEqual("启动", mainWindow.CurrentPage);
 
             mainWindow.LaunchPage.OpenModManageCommand.Execute(null);
-            Assert.AreEqual("版本设置", mainWindow.CurrentPage);
+            // 本地Mod管理已提升为一级页面（顶栏本地Mod管理），CurrentPage 为 "本地Mod管理"；兼容旧断言同时校验 IsModManageSection
+            await mainWindow.VersionSettingsPage.WaitForModsLoadAsync();
+            Assert.IsTrue(mainWindow.CurrentPage == "本地Mod管理" || mainWindow.CurrentPage == "版本设置", $"Unexpected CurrentPage: {mainWindow.CurrentPage}");
             Assert.IsTrue(mainWindow.VersionSettingsPage.IsModManageSection);
 
             var modPage = mainWindow.VersionSettingsPage;
+            // 异步加载已通过 WaitForModsLoadAsync 同步等待；无 Dispatcher 的测试环境下 ReloadMods 会阻塞直到完成
+            if (modPage.IsLoadingMods)
+            {
+                await modPage.WaitForModsLoadAsync();
+            }
+
             Assert.IsTrue(modPage.HasMods);
             Assert.AreEqual(4, modPage.Mods.Count);
             var bomMod = modPage.Mods.Single(item => string.Equals(item.DisplayName, "BOM Manifest Mod", StringComparison.Ordinal));
