@@ -453,7 +453,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         VersionSettingsPage.SwitchToModManage();
-        NavigateToPage("本地Mod管理", VersionSettingsPage, pushCurrentToBackStack: true);
+        NavigateToPage("本地Mod管理", VersionSettingsPage, clearBackStack: true);
     }
 
     private void HandleInstanceContextChanged()
@@ -777,7 +777,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         VersionSettingsPage.SwitchToModManage();
-        NavigateToPage("本地Mod管理", VersionSettingsPage, pushCurrentToBackStack: true);
+        NavigateToPage("本地Mod管理", VersionSettingsPage, clearBackStack: true);
     }
 
     [RelayCommand]
@@ -1057,7 +1057,6 @@ public partial class MainWindowViewModel : ObservableObject
     {
         return string.Equals(page, "实例", StringComparison.Ordinal) ||
                string.Equals(page, "版本设置", StringComparison.Ordinal) ||
-               string.Equals(page, "本地Mod管理", StringComparison.Ordinal) ||
                string.Equals(page, "资源详情", StringComparison.Ordinal);
     }
 

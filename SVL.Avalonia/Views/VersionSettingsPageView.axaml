@@ -161,8 +161,8 @@
     </Style>
   </UserControl.Styles>
 
-  <Grid ColumnDefinitions="260,1,*">
-    <Border Grid.Column="0" Classes="panel" Margin="12" Padding="12">
+  <Grid ColumnDefinitions="280,1,*">
+    <Border Grid.Column="0" Classes="panel" Padding="12">
       <Grid RowDefinitions="Auto,*,Auto,Auto">
         <Border Grid.Row="0" Classes="hintCard" Padding="14,10" Margin="0,0,0,10">
           <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" />
@@ -242,7 +242,7 @@
 
     <Border Grid.Column="1" Background="{DynamicResource PanelBorderBrush}" Margin="0,16" />
 
-    <Grid Grid.Column="2" Margin="12,12,12,12" RowDefinitions="*,Auto">
+    <Grid Grid.Column="2" Margin="12,0,0,0" RowDefinitions="*,Auto">
       <ScrollViewer Grid.Row="0"
                     HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto"
