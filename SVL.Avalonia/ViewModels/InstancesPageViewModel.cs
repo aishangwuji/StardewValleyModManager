@@ -83,6 +83,10 @@ public sealed partial class InstanceItem : ObservableObject
     }
 }
 
+/// <summary>
+/// 实例（版本选择）页 ViewModel。二栏布局：左路径列表 / 右版本卡片。
+/// <para>导航：选中实例触发 InstanceActivated → MainWindow 切回启动页；设置按钮触发 InstanceSettingsRequested → 版本设置页。</para>
+/// </summary>
 public partial class InstancesPageViewModel : ObservableObject
 {
     private readonly IGameInstallPathLocator _gameInstallPathLocator;
@@ -92,10 +96,13 @@ public partial class InstancesPageViewModel : ObservableObject
     private readonly ImageResourceService _imageResourceService;
     private readonly LocalizationService _localizationService;
 
+    /// <summary>请求激活实例（由 MainWindow 订阅后刷新启动页并返回启动页）。</summary>
     public event Action<InstanceItem>? InstanceActivated;
 
+    /// <summary>请求打开该实例的版本设置/Mod 管理二级页面。</summary>
     public event Action<InstanceItem>? InstanceSettingsRequested;
 
+    /// <summary>请求导入整合包（跳转到下载页的导入流程）。</summary>
     public event Action? ModpackImportRequested;
 
     [ObservableProperty]

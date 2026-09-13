@@ -7,6 +7,12 @@ using SVL.Core.Platform.Services;
 
 namespace SVL.Avalonia.ViewModels;
 
+/// <summary>
+/// 主窗口导航中枢（Navigation Hub）。
+/// <para>职责：管理顶栏 5 个一级页面（启动/本地Mod管理/下载/任务/设置）与 3 个二级页面（实例/版本设置/资源详情）的栈式导航。</para>
+/// <para>Business Rule: 一级页面切换需清空返回栈（clearBackStack），二级页面需压栈（pushCurrentToBackStack），确保左上角 Logo/返回按钮与面包屑一致。</para>
+/// <para>Reason: Avalonia 无内置导航框架，手动维护 CurrentPage + CurrentPageViewModel + _backStack 避免页面状态丢失。</para>
+/// </summary>
 public partial class MainWindowViewModel : ObservableObject
 {
     private readonly IPlatformInfoService _platformInfoService;
@@ -46,21 +52,26 @@ public partial class MainWindowViewModel : ObservableObject
 
     public InstanceSettingsPageViewModel InstanceSettingsPage { get; }
 
+    /// <summary>当前页面标识（启动/本地Mod管理/下载/任务/设置/实例/资源详情），驱动 Is*Page 与 Header 状态。</summary>
     [ObservableProperty]
     private string _currentPage = "启动";
 
+    /// <summary>当前页面对应的 ViewModel 实例，由 DataTemplates 映射到具体 View。</summary>
     [ObservableProperty]
     private ObservableObject? _currentPageViewModel;
 
     [ObservableProperty]
     private string _windowTitle = "Stardew Valley Launcher";
 
+    /// <summary>顶栏“启动”文案（来自 LocalizationService Nav.Launch）。</summary>
     [ObservableProperty]
     private string _navLaunchText = "启动";
 
+    /// <summary>顶栏“本地Mod管理”文案（Nav.LocalModManage），位于启动与下载之间。</summary>
     [ObservableProperty]
     private string _navLocalModManageText = "本地Mod管理";
 
+    /// <summary>顶栏“下载”文案。</summary>
     [ObservableProperty]
     private string _navDownloadText = "下载";
 
@@ -129,22 +140,31 @@ public partial class MainWindowViewModel : ObservableObject
 
     public string XboxPathPreview => _gameInstallPathLocator.TryLocateXboxStardewPath() ?? "未探测到（可手动选择）";
 
+    /// <summary>是否为一级页面“启动”，用于顶栏高亮与 Logo 显示判定。</summary>
     public bool IsLaunchPage => string.Equals(CurrentPage, "启动", StringComparison.Ordinal);
 
+    /// <summary>是否为一级页面“本地Mod管理”（复用 VersionSettingsPage 视图），顶栏位于启动与下载之间。</summary>
     public bool IsLocalModManagePage => string.Equals(CurrentPage, "本地Mod管理", StringComparison.Ordinal);
 
+    /// <summary>是否为一级页面“下载”。</summary>
     public bool IsDownloadPage => string.Equals(CurrentPage, "下载", StringComparison.Ordinal);
 
+    /// <summary>是否为一级页面“任务”。</summary>
     public bool IsTasksPage => string.Equals(CurrentPage, "任务", StringComparison.Ordinal);
 
+    /// <summary>是否为一级页面“设置”。</summary>
     public bool IsSettingsPage => string.Equals(CurrentPage, "设置", StringComparison.Ordinal);
 
+    /// <summary>是否显示 Windows 标题栏控制按钮（仅 Windows）。</summary>
     public bool ShowWindowControlButtons => OperatingSystem.IsWindows();
 
+    /// <summary>是否显示左上角返回按钮。Reason: 仅二级页面（实例/版本设置/资源详情）且返回栈非空时显示，一级页面始终显示 Logo 避免跳动。</summary>
     public bool ShowBackButton => IsBackPage(CurrentPage) && _backStack.Count > 0;
 
+    /// <summary>是否显示资源详情专用标题（替代 Logo）。</summary>
     public bool ShowResourceDetailHeaderTitle => IsResourceDetailsPage;
 
+    /// <summary>是否显示品牌 Logo（Junimo + SVL）。Business Rule: 非返回页且非资源详情页时显示。</summary>
     public bool ShowBrandIdentity => !ShowBackButton && !ShowResourceDetailHeaderTitle;
 
     private bool IsResourceDetailsPage => string.Equals(CurrentPage, "资源详情", StringComparison.Ordinal);
@@ -765,6 +785,7 @@ public partial class MainWindowViewModel : ObservableObject
         NavigateToPage("任务", TaskStatusPage);
     }
 
+    /// <summary>导航到一级页面“启动”，清空返回栈并刷新本机实例状态。</summary>
     [RelayCommand]
     private void NavigateToLaunch()
     {
@@ -772,6 +793,11 @@ public partial class MainWindowViewModel : ObservableObject
         NavigateToPage("启动", LaunchPage, clearBackStack: true);
     }
 
+    /// <summary>
+    /// 导航到一级页面“本地Mod管理”。
+    /// Business Rule: 复用 VersionSettingsPage 的 Mod 管理分栏，需先 Reload 并 SwitchToModManage，避免显示旧实例缓存。
+    /// Reason: 一级页面需 clearBackStack，保证顶栏显示 Logo 而非返回按钮，避免布局跳动。
+    /// </summary>
     [RelayCommand]
     private void NavigateToLocalModManage()
     {
@@ -780,6 +806,7 @@ public partial class MainWindowViewModel : ObservableObject
         NavigateToPage("本地Mod管理", VersionSettingsPage, clearBackStack: true);
     }
 
+    /// <summary>导航到一级页面“下载”。</summary>
     [RelayCommand]
     private void NavigateToDownload()
     {
@@ -1002,10 +1029,10 @@ public partial class MainWindowViewModel : ObservableObject
         await HandleModpackDropAsync(path);
     }
 
+    /// <summary>导航到一级页面“任务”，进入前同步 DownloadPage 的任务列表以显示历史任务。</summary>
     [RelayCommand]
     private void NavigateToTasks()
     {
-        // 进入任务页前同步任务列表，确保历史任务能显示
         TaskStatusPage.SyncTasks(DownloadPage.DownloadTasks);
         NavigateToPage("任务", TaskStatusPage, clearBackStack: true);
     }
@@ -1016,12 +1043,14 @@ public partial class MainWindowViewModel : ObservableObject
         NavigateToTasks();
     }
 
+    /// <summary>导航到一级页面“设置”。</summary>
     [RelayCommand]
     private void NavigateToSettings()
     {
         NavigateToPage("设置", SettingsPage, clearBackStack: true);
     }
 
+    /// <summary>返回上一级二级页面（从返回栈弹出）。仅当二级页面（IsBackPage）有栈时可用。</summary>
     [RelayCommand]
     private void NavigateBack()
     {
@@ -1034,6 +1063,13 @@ public partial class MainWindowViewModel : ObservableObject
         NavigateToPage(previous.Page, previous.ViewModel);
     }
 
+    /// <summary>
+    /// 核心导航方法。Reason: 统一维护 CurrentPage/CurrentPageViewModel 与 _backStack，避免各处分散修改导致返回逻辑不一致。
+    /// </summary>
+    /// <param name="page">页面标识（与 Is*Page 判定一致）。</param>
+    /// <param name="viewModel">目标 ViewModel。</param>
+    /// <param name="pushCurrentToBackStack">是否为二级页面跳转（压栈）。</param>
+    /// <param name="clearBackStack">是否为一级页面切换（清空栈）。Business Rule: 一级页面间切换必须清空，否则会误显示返回按钮。</param>
     private void NavigateToPage(string page, ObservableObject viewModel, bool pushCurrentToBackStack = false, bool clearBackStack = false)
     {
         if (clearBackStack)
@@ -1053,6 +1089,10 @@ public partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowBrandIdentity));
     }
 
+    /// <summary>
+    /// 判定是否为二级页面（需显示返回按钮且支持返回栈）。
+    /// Business Rule: 仅 实例/版本设置/资源详情 为二级页面；本地Mod管理 已提升为一级页面，需显示 Logo 而非返回箭头。
+    /// </summary>
     private static bool IsBackPage(string page)
     {
         return string.Equals(page, "实例", StringComparison.Ordinal) ||

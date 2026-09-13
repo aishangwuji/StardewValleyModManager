@@ -10,6 +10,10 @@ using System.IO;
 
 namespace SVL.Avalonia.ViewModels;
 
+/// <summary>
+/// 启动页 ViewModel（左侧实例卡 + 底部操作区）。
+/// <para>导航职责：通过事件将“版本选择/版本设置/本地Mod管理”委托给 MainWindowViewModel 统一入栈，避免子 ViewModel 直接操作导航栈。</para>
+/// </summary>
 public partial class LaunchPageViewModel : ObservableObject
 {
     private readonly IGameInstallPathLocator _gameInstallPathLocator;
@@ -20,8 +24,11 @@ public partial class LaunchPageViewModel : ObservableObject
     private string _currentGamePath = string.Empty;
     private string _preferredLaunchModeToken = "auto";
 
+    /// <summary>请求导航到“实例”二级页面（由 MainWindow 订阅后压栈）。</summary>
     public event Action? NavigateToInstancesRequested;
+    /// <summary>请求导航到“版本设置”二级页面。</summary>
     public event Action? NavigateToVersionSettingsRequested;
+    /// <summary>请求导航到“本地Mod管理”一级页面（顶栏本地Mod管理，复用 VersionSettingsPage Mod 分栏）。</summary>
     public event Action? NavigateToModManageRequested;
 
     [ObservableProperty]
@@ -635,6 +642,7 @@ public partial class LaunchPageViewModel : ObservableObject
             : normalized;
     }
 
+    /// <summary>跳转到版本选择（实例列表）二级页面。</summary>
     [RelayCommand]
     private void NavigateToVersionSelect()
     {
@@ -642,6 +650,7 @@ public partial class LaunchPageViewModel : ObservableObject
         NavigateToInstancesRequested?.Invoke();
     }
 
+    /// <summary>跳转到本地Mod管理（顶栏一级页面）。前置校验实例有效性，避免空路径进入 Mod 管理。</summary>
     [RelayCommand]
     private void OpenModManage()
     {
@@ -655,6 +664,7 @@ public partial class LaunchPageViewModel : ObservableObject
         NavigateToModManageRequested?.Invoke();
     }
 
+    /// <summary>跳转到版本设置（二级页面，需已选实例）。</summary>
     [RelayCommand]
     private void OpenVersionSettings()
     {
