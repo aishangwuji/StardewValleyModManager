@@ -352,6 +352,7 @@ public partial class MainWindowViewModel : ObservableObject
         TaskStatusPage.ClearCompletedRequested += HandleClearCompletedRequested;
 
         ModpackSearchPage.OpenDetailsRequested += HandleOpenDetailsFromSearch;
+        ModpackSearchPage.ReturnRequested += () => NavigateBack();
         SettingsPage.PropertyChanged += HandleSettingsPropertyChanged;
         SettingsPage.TakeoverDownloadRequested += HandleTakeoverDownloadRequested;
         SettingsPage.NexusLoggedOut += HandleSettingsNexusLoggedOut;
@@ -734,7 +735,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void HandleNavigateToModpackSearch()
     {
-        NavigateToPage("Modpack搜索", ModpackSearchPage);
+        NavigateToPage("Modpack搜索", ModpackSearchPage, pushCurrentToBackStack: true);
         _ = ModpackSearchPage.InitializeAsync();
     }
 
@@ -1090,13 +1091,14 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     /// 判定是否为二级页面（需显示返回按钮且支持返回栈）。
-    /// Business Rule: 仅 实例/版本设置/资源详情 为二级页面；"Mod管理"(内部 key "本地Mod管理")已提升为一级页面，需显示 Logo 而非返回箭头。
+    /// Business Rule: 实例/版本设置/资源详情/Modpack搜索 为二级页面；"Mod管理"(内部 key "本地Mod管理")已提升为一级页面，需显示 Logo 而非返回箭头。
     /// </summary>
     private static bool IsBackPage(string page)
     {
         return string.Equals(page, "实例", StringComparison.Ordinal) ||
                string.Equals(page, "版本设置", StringComparison.Ordinal) ||
-               string.Equals(page, "资源详情", StringComparison.Ordinal);
+               string.Equals(page, "资源详情", StringComparison.Ordinal) ||
+               string.Equals(page, "Modpack搜索", StringComparison.Ordinal);
     }
 
     private void RefreshTaskNavNotification()

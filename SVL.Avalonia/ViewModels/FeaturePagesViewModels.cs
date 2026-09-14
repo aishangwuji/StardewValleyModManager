@@ -835,6 +835,13 @@ public sealed partial class ModpackSearchPageViewModel : FeaturePageViewModelBas
     public override string Description => "对应 WPF ModpackSearchView，承载整合包搜索与导入流程。";
 
     public event Action<Models.CatalogResourceIdentity>? OpenDetailsRequested;
+    public event Action? ReturnRequested;
+
+    [RelayCommand]
+    private void Return()
+    {
+        ReturnRequested?.Invoke();
+    }
 
     public ObservableCollection<string> Sources { get; } = ["全部", "NexusMods", "Curseforge"];
 

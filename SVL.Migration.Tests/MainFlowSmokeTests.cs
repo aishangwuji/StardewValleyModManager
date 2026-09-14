@@ -159,4 +159,58 @@ public class MainFlowSmokeTests
             }
         }
     }
+
+    [TestMethod]
+    public void MainFlow_ModpackSearch_ShouldSupportBackStackAndReturn()
+    {
+        var mainWindow = new MainWindowViewModel();
+
+        Assert.AreEqual("启动", mainWindow.CurrentPage);
+        Assert.IsFalse(mainWindow.ShowBackButton);
+
+        // 1. 启动 -> 实例
+        mainWindow.LaunchPage.NavigateToVersionSelectCommand.Execute(null);
+        Assert.AreEqual("实例", mainWindow.CurrentPage);
+        Assert.IsTrue(mainWindow.ShowBackButton);
+
+        // 2. 实例 -> 导入 Modpack (Modpack搜索)
+        mainWindow.InstancesPage.ImportModpackCommand.Execute(null);
+        Assert.AreEqual("Modpack搜索", mainWindow.CurrentPage);
+        Assert.IsTrue(mainWindow.ShowBackButton, "进入 Modpack 搜索页后，顶栏应显示返回按钮");
+
+        // 3. 测试页内返回按钮返回实例页
+        mainWindow.ModpackSearchPage.ReturnCommand.Execute(null);
+        Assert.AreEqual("实例", mainWindow.CurrentPage, "通过页内返回按钮应回到实例页");
+        Assert.IsTrue(mainWindow.ShowBackButton);
+
+        // 4. 再次进入 Modpack 搜索页
+        mainWindow.InstancesPage.ImportModpackCommand.Execute(null);
+        Assert.AreEqual("Modpack搜索", mainWindow.CurrentPage);
+        Assert.IsTrue(mainWindow.ShowBackButton);
+
+        // 5. 测试多级跳转：Modpack搜索 -> 资源详情
+        var testItem = new ModSearchResultItem
+        {
+            Identity = new CatalogResourceIdentity(12345, "TestModpack", CatalogSource.NexusMods, true, string.Empty),
+            Name = "TestModpack"
+        };
+        mainWindow.ModpackSearchPage.OpenDetailsCommand.Execute(testItem);
+        Assert.AreEqual("资源详情", mainWindow.CurrentPage);
+        Assert.IsTrue(mainWindow.ShowBackButton);
+
+        // 6. 详情页返回 -> Modpack搜索页
+        mainWindow.NavigateBackCommand.Execute(null);
+        Assert.AreEqual("Modpack搜索", mainWindow.CurrentPage);
+        Assert.IsTrue(mainWindow.ShowBackButton, "从详情页返回 Modpack 搜索页后，仍应显示返回按钮");
+
+        // 7. Modpack搜索页顶栏返回 -> 实例页
+        mainWindow.NavigateBackCommand.Execute(null);
+        Assert.AreEqual("实例", mainWindow.CurrentPage);
+        Assert.IsTrue(mainWindow.ShowBackButton);
+
+        // 8. 实例页顶栏返回 -> 启动页
+        mainWindow.NavigateBackCommand.Execute(null);
+        Assert.AreEqual("启动", mainWindow.CurrentPage);
+        Assert.IsFalse(mainWindow.ShowBackButton);
+    }
 }

@@ -5,7 +5,10 @@
              x:DataType="vm:ModpackSearchPageViewModel">
   <Border Classes="panel">
     <StackPanel Spacing="8">
-      <TextBlock Text="{Binding Title}" Classes="heroTitle" />
+      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <TextBlock Grid.Column="0" Text="{Binding Title}" Classes="heroTitle" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="返回" Command="{Binding ReturnCommand}" Padding="12,4" VerticalAlignment="Center" />
+      </Grid>
       <TextBlock Text="{Binding Description}" TextWrapping="Wrap" />
       <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
         <TextBox Grid.Column="0" Text="{Binding Query}" Watermark="输入 Modpack 关键词" Margin="0,0,8,0" />
