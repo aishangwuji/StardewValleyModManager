@@ -67,9 +67,9 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _navLaunchText = "启动";
 
-    /// <summary>顶栏“本地Mod管理”文案（Nav.LocalModManage），位于启动与下载之间。</summary>
+    /// <summary>顶栏“Mod管理”文案（Nav.LocalModManage），位于启动与下载之间。</summary>
     [ObservableProperty]
-    private string _navLocalModManageText = "本地Mod管理";
+    private string _navLocalModManageText = "Mod管理";
 
     /// <summary>顶栏“下载”文案。</summary>
     [ObservableProperty]
