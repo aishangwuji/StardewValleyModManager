@@ -4758,7 +4758,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
 
     [ObservableProperty]
-    private string _selectedSection = "Overview";
+    private string _selectedSection = "ModManage";
 
     [ObservableProperty]
     private string _detectedGamePath = "未探测到";
@@ -4791,7 +4791,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private string _status = "就绪";
 
     [ObservableProperty]
-    private bool _isModManageSection;
+    private bool _isModManageSection = true;
 
     [ObservableProperty]
     private ModManageItem? _selectedMod;
@@ -5145,7 +5145,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         };
 
         ReloadFromSettings();
-        SelectedSection = "Overview";
+        SelectedSection = "ModManage";
+        IsModManageSection = true;
     }
 
     public void ReloadFromSettings(bool reloadModsWhenActive = false)
@@ -5188,8 +5189,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private void ApplyLocalizedTexts()
     {
-        _titleText = L("VersionSettings.Title", "版本设置");
-        _descriptionText = L("VersionSettings.Description", "实例级配置。");
+        _titleText = L("VersionSettings.Title", "Mod管理");
+        _descriptionText = L("VersionSettings.Description", "实例级配置与Mod管理。");
         OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(Description));
 
@@ -5217,10 +5218,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         UpdateColumnTitleText = L("VersionSettings.ModManage.Column.Update", "更新");
         ModDescriptionLabelText = L("VersionSettings.ModManage.DescriptionLabel", "描述：");
 
-        OverviewNavText = L("VersionSettings.Nav.Overview", "概览");
-        AutoInstallNavText = L("VersionSettings.Nav.AutoInstall", "自动安装");
-        ModManageNavText = L("VersionSettings.Nav.ModManage", "Mod管理");
-        InstanceSettingsNavText = L("VersionSettings.Nav.Settings", "设置");
+        OverviewNavText = L("VersionSettings.Nav.Overview", "实例概览");
+        AutoInstallNavText = L("VersionSettings.Nav.AutoInstall", "SMAPI管理");
+        ModManageNavText = L("VersionSettings.Nav.ModManage", "Mod列表");
+        InstanceSettingsNavText = L("VersionSettings.Nav.Settings", "实例设置");
         ExportNavText = L("VersionSettings.Nav.Modpack", "整合包");
         ModpackNavText = L("VersionSettings.Nav.Modpack", "整合包");
         ModpackSectionTitleText = L("VersionSettings.Modpack.Title", "整合包管理");
@@ -5416,7 +5417,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     {
         SelectedSection = "Overview";
         IsModManageSection = false;
-        Status = "当前处于版本设置";
+        Status = "当前处于实例概览";
     }
 
     public void SwitchToOverview()

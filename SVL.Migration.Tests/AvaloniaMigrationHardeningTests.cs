@@ -3786,6 +3786,70 @@ public sealed class AvaloniaMigrationHardeningTests
     }
 
     [TestMethod]
+    public void VersionSettingsPage_TitleAndNavigationHierarchy_ShouldBeOptimized()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "svl-version-settings-nav-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new AppUserSettingsStore(root);
+            var localization = new LocalizationService(settings);
+
+            // 1. 本地化文案断言：彻底消除“版本设置”，优化侧边栏层级
+            localization.SetLanguage("zh-CN");
+            Assert.AreEqual("Mod管理", localization.Get("VersionSettings.Title"));
+            Assert.AreEqual("Mod列表", localization.Get("VersionSettings.Nav.ModManage"));
+            Assert.AreEqual("整合包", localization.Get("VersionSettings.Nav.Modpack"));
+            Assert.AreEqual("SMAPI管理", localization.Get("VersionSettings.Nav.AutoInstall"));
+            Assert.AreEqual("实例概览", localization.Get("VersionSettings.Nav.Overview"));
+            Assert.AreEqual("实例设置", localization.Get("VersionSettings.Nav.Settings"));
+
+            localization.SetLanguage("en-US");
+            Assert.AreEqual("Mod Management", localization.Get("VersionSettings.Title"));
+            Assert.AreEqual("Mod List", localization.Get("VersionSettings.Nav.ModManage"));
+            Assert.AreEqual("Modpack", localization.Get("VersionSettings.Nav.Modpack"));
+            Assert.AreEqual("SMAPI", localization.Get("VersionSettings.Nav.AutoInstall"));
+            Assert.AreEqual("Instance Overview", localization.Get("VersionSettings.Nav.Overview"));
+            Assert.AreEqual("Instance Settings", localization.Get("VersionSettings.Nav.Settings"));
+
+            // 2. ViewModel 状态机与默认落地点断言
+            localization.SetLanguage("zh-CN");
+            var vm = (VersionSettingsPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(VersionSettingsPageViewModel));
+            SetPrivateField(vm, "_localizationService", localization);
+            SetPrivateField(vm, "_selectedSection", "ModManage");
+            SetPrivateField(vm, "_isModManageSection", true);
+
+            Assert.AreEqual("ModManage", vm.SelectedSection);
+            Assert.IsTrue(vm.IsModManageSection);
+
+            // 切换到实例概览
+            vm.SwitchToGeneral();
+            Assert.AreEqual("Overview", vm.SelectedSection);
+            Assert.IsTrue(vm.IsOverviewSection);
+            Assert.IsFalse(vm.IsModManageSection);
+            Assert.AreEqual("当前处于实例概览", vm.Status);
+
+            // 切换到实例设置
+            vm.SwitchToSettings();
+            Assert.AreEqual("Settings", vm.SelectedSection);
+            Assert.IsTrue(vm.IsSettingsSection);
+            Assert.AreEqual("当前处于实例设置", vm.Status);
+
+            // 切换回 Mod 列表
+            vm.SwitchToModManage();
+            Assert.AreEqual("ModManage", vm.SelectedSection);
+            Assert.IsTrue(vm.IsModManageSection);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task SvlModpackInstall_ShouldRejectMissingManifest()
     {
         var root = Path.Combine(Path.GetTempPath(), "svl-missing-modpack-manifest-test-" + Guid.NewGuid().ToString("N"));

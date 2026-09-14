@@ -462,8 +462,8 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void HandleNavigateToVersionSettings()
     {
-        VersionSettingsPage.ReloadFromSettings();
-        VersionSettingsPage.SwitchToGeneral();
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
+        VersionSettingsPage.SwitchToModManage();
         // 预加载版本选择页面的路径列表，确保 SMAPI 安装对话框能获取所有 Base 路径
         if (!InstancesPage.HasPathEntries)
         {
@@ -536,8 +536,8 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void HandleInstanceSettingsRequested(InstanceItem _)
     {
-        VersionSettingsPage.ReloadFromSettings();
-        VersionSettingsPage.SwitchToOverview();
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
+        VersionSettingsPage.SwitchToModManage();
         NavigateToPage("版本设置", VersionSettingsPage, pushCurrentToBackStack: true);
     }
 

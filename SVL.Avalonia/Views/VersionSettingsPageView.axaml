@@ -171,11 +171,19 @@
         <Border Grid.Row="1" Classes="hintCard" Padding="8" Margin="0,0,0,10">
           <StackPanel Spacing="4">
             <Button Classes="navButton"
-                    Classes.selected="{Binding IsOverviewSection}"
-                    Command="{Binding SwitchToGeneralSectionCommand}">
+                    Classes.selected="{Binding IsModManageSection}"
+                    Command="{Binding SwitchToModManageSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/BarChart.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="1" Text="{Binding OverviewNavText}" VerticalAlignment="Center" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="1" Text="{Binding ModManageNavText}" VerticalAlignment="Center" />
+              </Grid>
+            </Button>
+            <Button Classes="navButton"
+                    Classes.selected="{Binding IsModpackSection}"
+                    Command="{Binding SwitchToModpackSectionCommand}">
+              <Grid ColumnDefinitions="Auto,*">
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="1" Text="{Binding ModpackNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
             <Button Classes="navButton"
@@ -187,11 +195,11 @@
               </Grid>
             </Button>
             <Button Classes="navButton"
-                    Classes.selected="{Binding IsModManageSection}"
-                    Command="{Binding SwitchToModManageSectionCommand}">
+                    Classes.selected="{Binding IsOverviewSection}"
+                    Command="{Binding SwitchToGeneralSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="1" Text="{Binding ModManageNavText}" VerticalAlignment="Center" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/BarChart.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="1" Text="{Binding OverviewNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
             <Button Classes="navButton"
@@ -200,14 +208,6 @@
               <Grid ColumnDefinitions="Auto,*">
                 <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Settings.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
                 <TextBlock Grid.Column="1" Text="{Binding InstanceSettingsNavText}" VerticalAlignment="Center" />
-              </Grid>
-            </Button>
-            <Button Classes="navButton"
-                    Classes.selected="{Binding IsModpackSection}"
-                    Command="{Binding SwitchToModpackSectionCommand}">
-              <Grid ColumnDefinitions="Auto,*">
-                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="1" Text="{Binding ModpackNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
           </StackPanel>
@@ -339,6 +339,22 @@
               </Border>
 
               <Border Classes="hintCard" Padding="16,12">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Mod 状态概览" Classes="sectionTitle" />
+                    <TextBlock Text="{Binding ModsSummary}" FontSize="13" Opacity="0.85" />
+                    <TextBlock Text="{Binding ModsFolderPath}" FontSize="11" Opacity="0.6" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <Button Grid.Column="1"
+                          Content="{Binding ModManageNavText}"
+                          Command="{Binding SwitchToModManageSectionCommand}"
+                          Classes="toolbarAction"
+                          VerticalAlignment="Center"
+                          Margin="12,0,0,0" />
+                </Grid>
+              </Border>
+
+              <Border Classes="hintCard" Padding="16,12">
                 <StackPanel Spacing="8">
                   <TextBlock Text="{Binding OverviewAdvancedCardTitleText}" Classes="sectionTitle" />
                   <Border Background="{DynamicResource WarningBg}"
@@ -355,11 +371,6 @@
                     </StackPanel>
                   </Border>
 
-                  <Button Content="{Binding UninstallBaseSmapiButtonText}"
-                          Command="{Binding UninstallBaseSmapiCommand}"
-                          Height="42"
-                          HorizontalAlignment="Stretch"
-                          IsVisible="{Binding CanUninstallBaseSmapi}" />
                   <Button Content="{Binding DeleteCurrentVersionButtonText}"
                           Command="{Binding DeleteCurrentVersionCommand}"
                           Height="42"
@@ -475,6 +486,21 @@
                       Height="32"
                       Margin="8,0,0,0" />
                 </Grid>
+              </Border>
+
+              <!-- 卸载 SMAPI 操作区（SMAPI 管理生命周期闭环） -->
+              <Border Classes="hintCard" Padding="16,12" IsVisible="{Binding CanUninstallBaseSmapi}">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding UninstallBaseSmapiButtonText}" Classes="sectionTitle" />
+                  <TextBlock Text="卸载当前版本的 SMAPI，恢复为纯净原版星露谷运行环境。"
+                             FontSize="12"
+                             Opacity="0.75"
+                             TextWrapping="Wrap" />
+                  <Button Content="{Binding UninstallBaseSmapiButtonText}"
+                          Command="{Binding UninstallBaseSmapiCommand}"
+                          Height="40"
+                          HorizontalAlignment="Stretch" />
+                </StackPanel>
               </Border>
             </StackPanel>
           </Border>
