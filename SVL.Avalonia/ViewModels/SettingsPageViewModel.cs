@@ -35,6 +35,39 @@ public partial class SettingsPageViewModel : ObservableObject
     private string _pageTitleText = "设置";
 
     [ObservableProperty]
+    private string _pageSubtitleText = "参数与行为配置中心";
+
+    [ObservableProperty]
+    private string _openSettingsJsonButtonText = "打开 JSON";
+
+    [ObservableProperty]
+    private string _resetSettingsButtonText = "恢复默认设置";
+
+    [ObservableProperty]
+    private string _basicCardTitleText = "基本设置";
+
+    [ObservableProperty]
+    private string _basicSectionSubtitleText = "以下字段会影响窗口标题、应用名称和启动标识。";
+
+    [ObservableProperty]
+    private string _gameWindowTitleLabelText = "游戏窗口标题";
+
+    [ObservableProperty]
+    private string _windowTitleHelpTipText = "查看窗口标题占位符说明";
+
+    [ObservableProperty]
+    private string _launcherTitleLabelText = "启动器标题";
+
+    [ObservableProperty]
+    private string _launcherAppNameLabelText = "启动器简称";
+
+    [ObservableProperty]
+    private string _themeStyleLabelText = "配色方案";
+
+    [ObservableProperty]
+    private string _savePromptText = "修改完成后请保存，语言与主题会立即影响界面。";
+
+    [ObservableProperty]
     private string _tabBasicText = "基本设置";
 
     [ObservableProperty]
@@ -552,6 +585,17 @@ public partial class SettingsPageViewModel : ObservableObject
     private void ApplyLocalizedTexts()
     {
         PageTitleText = _localizationService.Get("Settings.Title");
+        PageSubtitleText = _localizationService.Get("Settings.Subtitle");
+        OpenSettingsJsonButtonText = _localizationService.Get("Settings.OpenJson");
+        ResetSettingsButtonText = _localizationService.Get("Settings.ResetDefault");
+        BasicCardTitleText = _localizationService.Get("Settings.Card.Basic");
+        BasicSectionSubtitleText = _localizationService.Get("Settings.Basic.Subtitle");
+        GameWindowTitleLabelText = _localizationService.Get("Settings.Basic.GameWindowTitle");
+        WindowTitleHelpTipText = _localizationService.Get("Settings.Basic.WindowTitleHelpTip");
+        LauncherTitleLabelText = _localizationService.Get("Settings.Basic.LauncherTitle");
+        LauncherAppNameLabelText = _localizationService.Get("Settings.Basic.LauncherAppName");
+        ThemeStyleLabelText = _localizationService.Get("Settings.Personalization.ThemeStyle");
+        SavePromptText = _localizationService.Get("Settings.SavePrompt");
         TabBasicText = _localizationService.Get("Settings.Tab.Basic");
         TabDownloadText = _localizationService.Get("Settings.Tab.Download");
         TabPersonalizationText = _localizationService.Get("Settings.Tab.Personalization");

@@ -14,7 +14,7 @@
           <Image Source="avares://SVL.Avalonia/Assets/Icons/Junimo2.png" Width="22" Height="22" VerticalAlignment="Center" />
           <TextBlock Text="{Binding PageTitleText}" Classes="heroTitle" VerticalAlignment="Center" />
         </StackPanel>
-        <TextBlock Text="参数与行为配置中心" Opacity="0.75" />
+        <TextBlock Text="{Binding PageSubtitleText}" Opacity="0.75" />
         <Border Classes="hintCard">
           <StackPanel Spacing="6">
             <Button Classes="settingsNav" Classes.selected="{Binding IsBasicTab}" Command="{Binding SelectTabCommand}" CommandParameter="0" Margin="0,0,0,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" MinHeight="36">
@@ -73,13 +73,13 @@
               <Button Grid.Column="0" Content="{Binding SaveButtonText}"
                       Command="{Binding SaveSettingsCommand}"
                       MinWidth="100" Height="30" Padding="14,0" />
-              <Button Grid.Column="1" Content="打开 JSON"
+              <Button Grid.Column="1" Content="{Binding OpenSettingsJsonButtonText}"
                       Command="{Binding OpenSettingsJsonCommand}"
                       MinWidth="90" Height="30" Padding="14,0" Margin="8,0,0,0" />
               <TextBlock Grid.Column="2" Text="{Binding StatusMessage}"
                          VerticalAlignment="Center" Opacity="0.75" FontSize="12"
                          Margin="12,0,12,0" TextWrapping="Wrap" />
-              <Button Grid.Column="3" Content="恢复默认设置"
+              <Button Grid.Column="3" Content="{Binding ResetSettingsButtonText}"
                       Command="{Binding ResetSettingsCommand}"
                       MinWidth="112" Height="30" Padding="12,0" />
             </Grid>
@@ -89,10 +89,10 @@
             <StackPanel Spacing="8">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <Image Source="{Binding BasicCardIconSource, Converter={StaticResource AssetImageConverter}}" Width="14" Height="14" VerticalAlignment="Center" />
-                <TextBlock Text="基本设置" Classes="hintTitle" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding BasicCardTitleText}" Classes="hintTitle" VerticalAlignment="Center" />
               </StackPanel>
-              <TextBlock Text="以下字段会影响窗口标题、应用名称和启动标识。" Opacity="0.72" TextWrapping="Wrap" />
-              <TextBlock Text="游戏窗口标题" />
+              <TextBlock Text="{Binding BasicSectionSubtitleText}" Opacity="0.72" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding GameWindowTitleLabelText}" />
               <Grid ColumnDefinitions="*,Auto">
                 <TextBox Text="{Binding GameWindowTitle}" />
                 <Button Grid.Column="1"
@@ -106,11 +106,11 @@
                         FontWeight="Bold"
                         HorizontalContentAlignment="Center"
                         VerticalContentAlignment="Center"
-                        ToolTip.Tip="查看窗口标题占位符说明" />
+                        ToolTip.Tip="{Binding WindowTitleHelpTipText}" />
               </Grid>
-              <TextBlock Text="启动器标题" />
+              <TextBlock Text="{Binding LauncherTitleLabelText}" />
               <TextBox Text="{Binding LauncherTitle}" />
-              <TextBlock Text="启动器简称" />
+              <TextBlock Text="{Binding LauncherAppNameLabelText}" />
               <TextBox Text="{Binding LauncherAppName}" />
               <CheckBox Content="{Binding InstanceAutoConnectLabelText}" IsChecked="{Binding InstanceAutoConnectServer}" Margin="0,6,0,0" />
               <TextBlock Text="{Binding InstanceServerAddressLabelText}" />
@@ -281,7 +281,7 @@
               </StackPanel>
               <TextBlock Text="{Binding ThemeModeLabelText}" />
               <ComboBox ItemsSource="{Binding ThemeModes}" SelectedItem="{Binding SelectedThemeMode}" />
-              <TextBlock Text="配色方案" />
+              <TextBlock Text="{Binding ThemeStyleLabelText}" />
               <ComboBox ItemsSource="{Binding ThemeStyleOptions}" SelectedItem="{Binding SelectedThemeStyle}" />
               <TextBlock Text="{Binding UiLanguageLabelText}" />
               <ComboBox ItemsSource="{Binding UiLanguages}" SelectedItem="{Binding SelectedUiLanguage}" />
@@ -369,7 +369,7 @@
 
           <Border Classes="hintCard">
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="修改完成后请保存，语言与主题会立即影响界面。" VerticalAlignment="Center" Opacity="0.75" />
+              <TextBlock Text="{Binding SavePromptText}" VerticalAlignment="Center" Opacity="0.75" />
               <Button Grid.Column="1" Content="{Binding SaveButtonText}" Command="{Binding SaveSettingsCommand}" HorizontalAlignment="Right" MinWidth="120" />
             </Grid>
           </Border>
