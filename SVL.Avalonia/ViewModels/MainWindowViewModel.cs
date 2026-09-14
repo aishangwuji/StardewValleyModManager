@@ -43,7 +43,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     public TaskStatusPageViewModel TaskStatusPage { get; }
 
-    public ModSearchPageViewModel ModSearchPage { get; }
 
     public ModpackSearchPageViewModel ModpackSearchPage { get; }
 
@@ -240,7 +239,7 @@ public partial class MainWindowViewModel : ObservableObject
         SettingsPage = new SettingsPageViewModel(_settingsStore, dialogService, nexusAuthService, nexusOAuthService, launcherUpdateService, externalProcessService, nxmProtocolRegistrationService, _localizationService, _imageResourceService);
         InstancesPage = new InstancesPageViewModel(_gameInstallPathLocator, dialogService, instanceRegistryStore, _settingsStore, _imageResourceService, _localizationService);
         TaskStatusPage = new TaskStatusPageViewModel(_localizationService);
-        ModSearchPage = new ModSearchPageViewModel(remoteCatalogService);
+
         ModpackSearchPage = new ModpackSearchPageViewModel(remoteCatalogService);
         ModDetailsPage = new ModDetailsPageViewModel(remoteCatalogService, dialogService);
         ModDetailsPage.QueueDownloadRequested += HandleQueueDownload;
@@ -334,7 +333,7 @@ public partial class MainWindowViewModel : ObservableObject
         DownloadPage.TaskLogGenerated += HandleTaskLogGenerated;
         DownloadPage.NavigateToTaskStatusRequested += HandleNavigateToTaskStatus;
         DownloadPage.NavigateToInstancesRequested += HandleNavigateToInstances;
-        DownloadPage.NavigateToModSearchRequested += HandleNavigateToModSearch;
+
         DownloadPage.NavigateToModpackSearchRequested += HandleNavigateToModpackSearch;
         DownloadPage.NavigateToSettingsRequested += HandleNavigateToSettingsForNexusLogin;
         DownloadPage.OpenDetailsRequested += HandleOpenDetails;
@@ -351,7 +350,7 @@ public partial class MainWindowViewModel : ObservableObject
         TaskStatusPage.OpenReportRequested += HandleOpenReportRequested;
         TaskStatusPage.OpenRetryReportRequested += HandleOpenRetryReportRequested;
         TaskStatusPage.ClearCompletedRequested += HandleClearCompletedRequested;
-        ModSearchPage.OpenDetailsRequested += HandleOpenDetailsFromSearch;
+
         ModpackSearchPage.OpenDetailsRequested += HandleOpenDetailsFromSearch;
         SettingsPage.PropertyChanged += HandleSettingsPropertyChanged;
         SettingsPage.TakeoverDownloadRequested += HandleTakeoverDownloadRequested;
@@ -732,11 +731,6 @@ public partial class MainWindowViewModel : ObservableObject
         NavigateToPage("设置", SettingsPage, clearBackStack: true);
     }
 
-    private void HandleNavigateToModSearch()
-    {
-        NavigateToPage("Mod搜索", ModSearchPage);
-        _ = ModSearchPage.InitializeAsync();
-    }
 
     private void HandleNavigateToModpackSearch()
     {

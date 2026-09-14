@@ -164,7 +164,7 @@ public sealed class LocalizationService
                 ["Download.Search.SelectFirst"] = "选择首条结果",
                 ["Download.Search.ModTitle"] = "搜索 Mod",
                 ["Download.Search.ModWatermark"] = "输入 Mod 关键词",
-                ["Download.Search.OpenMod"] = "进入 Mod 搜索页",
+
                 ["Download.Modpack.Title"] = "Modpack 导入",
                 ["Download.Modpack.Description"] = "可通过搜索页选择整合包，或直接输入 URL 进入真实下载队列。",
                 ["Download.Modpack.UrlWatermark"] = "https://example.com/modpack.zip",
@@ -564,7 +564,7 @@ public sealed class LocalizationService
                 ["Download.Search.SelectFirst"] = "Select First Result",
                 ["Download.Search.ModTitle"] = "Search Mods",
                 ["Download.Search.ModWatermark"] = "Enter mod keyword",
-                ["Download.Search.OpenMod"] = "Open Mod Search",
+
                 ["Download.Modpack.Title"] = "Modpack Import",
                 ["Download.Modpack.Description"] = "Pick a collection from search, or import by URL into the real download queue.",
                 ["Download.Modpack.UrlWatermark"] = "https://example.com/modpack.zip",

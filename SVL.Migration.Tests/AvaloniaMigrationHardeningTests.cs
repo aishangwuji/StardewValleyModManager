@@ -42,7 +42,7 @@ public sealed class AvaloniaMigrationHardeningTests
     }
 
     [TestMethod]
-    public void SearchPages_ShouldExposeWpfFiltersAndConfiguredDefaultSource()
+    public void ModpackSearchPage_ShouldUseConfiguredDefaultSource()
     {
         var root = Path.Combine(Path.GetTempPath(), "svl-search-page-filter-test-" + Guid.NewGuid().ToString("N"));
         try
@@ -50,11 +50,6 @@ public sealed class AvaloniaMigrationHardeningTests
             var settingsStore = new AppUserSettingsStore(root);
             settingsStore.Save(new AppUserSettings { DefaultModSource = "Curseforge" });
             var catalog = new RemoteCatalogService(settingsStore);
-
-            var modPage = new ModSearchPageViewModel(catalog);
-            Assert.AreEqual("Curseforge", modPage.SelectedSource);
-            CollectionAssert.Contains(modPage.GameVersions.ToList(), "全部");
-            CollectionAssert.Contains(modPage.ModTypes.ToList(), "游戏内容");
 
             var modpackPage = new ModpackSearchPageViewModel(catalog);
             Assert.AreEqual("Curseforge", modpackPage.SelectedSource);

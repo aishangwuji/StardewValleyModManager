@@ -139,7 +139,6 @@ public partial class DownloadPageViewModel : ObservableObject
 
     public event Action? NavigateToTaskStatusRequested;
 
-    public event Action? NavigateToModSearchRequested;
 
     public event Action? NavigateToModpackSearchRequested;
 
@@ -345,9 +344,7 @@ public partial class DownloadPageViewModel : ObservableObject
     private string _modSearchWatermarkText = "输入 Mod 关键词";
 
     [ObservableProperty]
-    private string _openModSearchButtonText = "进入 Mod 搜索页";
 
-    [ObservableProperty]
     private string _modpackImportTitleText = "Modpack 导入";
 
     [ObservableProperty]
@@ -1331,7 +1328,7 @@ public partial class DownloadPageViewModel : ObservableObject
         SelectFirstResultButtonText = _localizationService.Get("Download.Search.SelectFirst");
         ModSearchTitleText = _localizationService.Get("Download.Search.ModTitle");
         ModSearchWatermarkText = _localizationService.Get("Download.Search.ModWatermark");
-        OpenModSearchButtonText = _localizationService.Get("Download.Search.OpenMod");
+
         ModpackImportTitleText = _localizationService.Get("Download.Modpack.Title");
         ModpackImportDescriptionText = _localizationService.Get("Download.Modpack.Description");
         ModpackUrlWatermarkText = _localizationService.Get("Download.Modpack.UrlWatermark");
@@ -2100,12 +2097,7 @@ public partial class DownloadPageViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void OpenModSearchPage()
-    {
-        NavigateToModSearchRequested?.Invoke();
-    }
 
-    [RelayCommand]
     private void OpenModpackSearchPage()
     {
         NavigateToModpackSearchRequested?.Invoke();

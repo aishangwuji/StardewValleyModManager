@@ -41,9 +41,7 @@
     <DataTemplate DataType="vm:TaskStatusPageViewModel">
       <views:TaskStatusPageView />
     </DataTemplate>
-    <DataTemplate DataType="vm:ModSearchPageViewModel">
-      <views:ModSearchPageView />
-    </DataTemplate>
+
     <DataTemplate DataType="vm:ModpackSearchPageViewModel">
       <views:ModpackSearchPageView />
     </DataTemplate>
