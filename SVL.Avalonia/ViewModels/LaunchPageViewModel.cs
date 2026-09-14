@@ -286,7 +286,7 @@ public partial class LaunchPageViewModel : ObservableObject
         {
             HasInstances = true;
             _currentGamePath = preferredPath;
-            InstanceName = string.IsNullOrWhiteSpace(settings.InstanceName)
+            var rawName = string.IsNullOrWhiteSpace(settings.InstanceName)
                 ? Path.GetFileName(preferredPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
                 : settings.InstanceName;
             GameVersion = Text("Launch.Instance.SelectedLoaded");
@@ -300,6 +300,20 @@ public partial class LaunchPageViewModel : ObservableObject
                                   (isIsolatedInstance ||
                                    string.Equals(selectedModeToken, "smapi", StringComparison.OrdinalIgnoreCase) ||
                                    string.Equals(selectedModeToken, "auto", StringComparison.OrdinalIgnoreCase));
+
+            if (!isIsolatedInstance && preferredHasSmapi)
+            {
+                if (selectedIsSmapi && !rawName.EndsWith("(SMAPI)", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawName = $"{rawName} (SMAPI)";
+                }
+                else if (!selectedIsSmapi && rawName.EndsWith("(SMAPI)", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawName = rawName.Substring(0, rawName.Length - 7).TrimEnd();
+                }
+            }
+
+            InstanceName = rawName;
             var gameVersion = DetectGameVersion(preferredPath);
             var smapiVersion = preferredHasSmapi ? DetectSmapiVersion(preferredPath) : "未安装";
 
@@ -529,6 +543,11 @@ public partial class LaunchPageViewModel : ObservableObject
 
         var key = isSmapiInstance ? "launch.instance.modded" : "launch.instance.vanilla";
         var fallback = InstanceIconResolver.ResolveDefaultPresetIcon(isSmapiInstance, isAnomaly);
+        if (_imageResourceService == null)
+        {
+            return fallback;
+        }
+
         var resolved = _imageResourceService.Get(key);
         return string.IsNullOrWhiteSpace(resolved) ? fallback : resolved;
     }

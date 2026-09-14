@@ -3850,6 +3850,97 @@ public sealed class AvaloniaMigrationHardeningTests
     }
 
     [TestMethod]
+    public void GlobalVersionConsistency_WhenSwitchingToSmapi_ShouldSynchronizeAllPages()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "svl-global-version-consistency-test-" + Guid.NewGuid().ToString("N"));
+        var gamePath = Path.Combine(root, "Stardew Valley");
+        Directory.CreateDirectory(gamePath);
+        File.WriteAllText(Path.Combine(gamePath, "Stardew Valley.dll"), "fake");
+        File.WriteAllText(Path.Combine(gamePath, "StardewModdingAPI.dll"), "fake");
+
+        try
+        {
+            var settingsStore = new AppUserSettingsStore(root);
+            var localization = new LocalizationService(settingsStore);
+
+            // 1. 模拟用户在版本选择页选中了“原版”
+            var initialSettings = settingsStore.Load();
+            initialSettings.PreferredInstancePath = gamePath;
+            initialSettings.PreferredLaunchMode = "Vanilla";
+            initialSettings.InstanceName = "Stardew Valley";
+            settingsStore.Save(initialSettings);
+
+            // 2. 构造 VersionSettingsPageViewModel 并触发 SwitchToSmapiVersionCommand
+            var vsVm = (VersionSettingsPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(VersionSettingsPageViewModel));
+            SetPrivateField(vsVm, "_settingsStore", settingsStore);
+            SetPrivateField(vsVm, "_localizationService", localization);
+            SetPrivateField(vsVm, "_instanceName", "Stardew Valley");
+            SetPrivateField(vsVm, "_hasInstalledSmapi", true);
+            SetPrivateField(vsVm, "_isSmapiInstance", false);
+            SetPrivateField(vsVm, "_detectedGamePath", gamePath);
+
+            // 确认当前状态为可切换
+            Assert.IsTrue(vsVm.ShowSwitchToSmapiHint);
+
+            // 执行切换到 SMAPI
+            vsVm.SwitchToSmapiVersionCommand.Execute(null);
+
+            // 3. 断言配置中心 settingsStore 已更新为 SMAPI 模式和对应的实例名称
+            var savedSettings = settingsStore.Load();
+            Assert.AreEqual("SMAPI", savedSettings.PreferredLaunchMode);
+            Assert.IsTrue(savedSettings.InstanceName.Contains("SMAPI"));
+
+            // 4. 断言 InstancesPageViewModel 恢复逻辑能够准确匹配选中 SMAPI 实例
+            var instancesVm = (InstancesPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(InstancesPageViewModel));
+            SetPrivateField(instancesVm, "_settingsStore", settingsStore);
+            SetPrivateField(instancesVm, "_localizationService", localization);
+
+            var vanillaItem = new InstanceItem
+            {
+                Name = "Stardew Valley",
+                Path = gamePath,
+                IsSmapiInstance = false
+            };
+            var smapiItem = new InstanceItem
+            {
+                Name = "Stardew Valley (SMAPI)",
+                Path = gamePath,
+                IsSmapiInstance = true
+            };
+
+            var resolveMethod = typeof(InstancesPageViewModel).GetMethod("ResolveRestoredInstance",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Assert.IsNotNull(resolveMethod);
+
+            var restored = (InstanceItem)resolveMethod.Invoke(null,
+                new object[] { new[] { vanillaItem, smapiItem }, savedSettings, "Stardew Valley", false });
+
+            Assert.IsNotNull(restored);
+            Assert.IsTrue(restored.IsSmapiInstance);
+            Assert.AreEqual("Stardew Valley (SMAPI)", restored.Name);
+
+            // 5. 断言 LaunchPageViewModel 刷新后展示为 SMAPI 实例
+            var launchVm = (LaunchPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(LaunchPageViewModel));
+            SetPrivateField(launchVm, "_settingsStore", settingsStore);
+            SetPrivateField(launchVm, "_localizationService", localization);
+            launchVm.RefreshFromSettingsAndEnvironment();
+
+            Assert.IsTrue(launchVm.InstanceName.Contains("SMAPI"));
+            Assert.IsTrue(launchVm.VersionStatus.Contains("SMAPI"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task SvlModpackInstall_ShouldRejectMissingManifest()
     {
         var root = Path.Combine(Path.GetTempPath(), "svl-missing-modpack-manifest-test-" + Guid.NewGuid().ToString("N"));

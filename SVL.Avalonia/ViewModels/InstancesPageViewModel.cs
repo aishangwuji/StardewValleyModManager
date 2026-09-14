@@ -301,14 +301,11 @@ public partial class InstancesPageViewModel : ObservableObject
         {
             SelectedPathEntry = restorePath;
 
-            var restoreInstance = SelectedPathInstances.FirstOrDefault(item =>
-                !string.IsNullOrWhiteSpace(previousInstanceName) &&
-                string.Equals(item.Name, previousInstanceName, StringComparison.OrdinalIgnoreCase) &&
-                item.IsSmapiInstance == previousIsSmapi)
-                ?? SelectedPathInstances.FirstOrDefault(item =>
-                    !string.IsNullOrWhiteSpace(settings.InstanceName) &&
-                    string.Equals(item.Name, settings.InstanceName, StringComparison.OrdinalIgnoreCase))
-                ?? SelectedPathInstances.FirstOrDefault();
+            var restoreInstance = ResolveRestoredInstance(
+                SelectedPathInstances,
+                settings,
+                previousInstanceName,
+                previousIsSmapi);
 
             if (restoreInstance != null)
             {
@@ -536,11 +533,12 @@ public partial class InstancesPageViewModel : ObservableObject
         if (ReferenceEquals(SelectedPathEntry, entry))
         {
             OnSelectedPathEntryChanged(entry);
-            SelectedInstance = SelectedPathInstances.FirstOrDefault(item =>
-                !string.IsNullOrWhiteSpace(previousName) &&
-                string.Equals(item.Name, previousName, StringComparison.OrdinalIgnoreCase) &&
-                item.IsSmapiInstance == previousIsSmapi)
-                ?? SelectedPathInstances.FirstOrDefault();
+            var settings = _settingsStore.Load();
+            SelectedInstance = ResolveRestoredInstance(
+                SelectedPathInstances,
+                settings,
+                previousName,
+                previousIsSmapi);
         }
 
         Status = string.Format(L("Instances.Status.PathRefreshed", "已刷新路径信息: {0}"), entry.DisplayName);
@@ -1333,5 +1331,70 @@ public partial class InstancesPageViewModel : ObservableObject
             .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
             .ToList();
         _settingsStore.Save(settings);
+    }
+
+    private static InstanceItem? ResolveRestoredInstance(
+        IReadOnlyList<InstanceItem> candidates,
+        Models.AppUserSettings settings,
+        string? previousName,
+        bool previousIsSmapi)
+    {
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+
+        var prefersSmapi = string.Equals(settings.PreferredLaunchMode, "smapi", StringComparison.OrdinalIgnoreCase);
+        var prefersVanilla = string.Equals(settings.PreferredLaunchMode, "vanilla", StringComparison.OrdinalIgnoreCase);
+
+        // 1. 优先满足配置中的启动模式 (SMAPI / Vanilla) + 名称匹配 settings.InstanceName
+        if (prefersSmapi || prefersVanilla)
+        {
+            var byModeAndSettingsName = candidates.FirstOrDefault(item =>
+                item.IsSmapiInstance == prefersSmapi &&
+                !string.IsNullOrWhiteSpace(settings.InstanceName) &&
+                string.Equals(item.Name, settings.InstanceName, StringComparison.OrdinalIgnoreCase));
+            if (byModeAndSettingsName != null)
+            {
+                return byModeAndSettingsName;
+            }
+
+            var byModeAndPrevName = candidates.FirstOrDefault(item =>
+                item.IsSmapiInstance == prefersSmapi &&
+                !string.IsNullOrWhiteSpace(previousName) &&
+                string.Equals(item.Name, previousName, StringComparison.OrdinalIgnoreCase));
+            if (byModeAndPrevName != null)
+            {
+                return byModeAndPrevName;
+            }
+
+            var byModeFirst = candidates.FirstOrDefault(item => item.IsSmapiInstance == prefersSmapi);
+            if (byModeFirst != null)
+            {
+                return byModeFirst;
+            }
+        }
+
+        // 2. 匹配之前的实例项 (名称 + IsSmapiInstance)
+        var byPrev = candidates.FirstOrDefault(item =>
+            !string.IsNullOrWhiteSpace(previousName) &&
+            string.Equals(item.Name, previousName, StringComparison.OrdinalIgnoreCase) &&
+            item.IsSmapiInstance == previousIsSmapi);
+        if (byPrev != null)
+        {
+            return byPrev;
+        }
+
+        // 3. 匹配 settings.InstanceName
+        var bySettingsName = candidates.FirstOrDefault(item =>
+            !string.IsNullOrWhiteSpace(settings.InstanceName) &&
+            string.Equals(item.Name, settings.InstanceName, StringComparison.OrdinalIgnoreCase));
+        if (bySettingsName != null)
+        {
+            return bySettingsName;
+        }
+
+        // 4. 兜底
+        return candidates.FirstOrDefault();
     }
 }

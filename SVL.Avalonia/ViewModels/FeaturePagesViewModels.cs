@@ -12231,6 +12231,16 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         SelectedLaunchMode = "SMAPI";
+
+        var currentName = InstanceName?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(currentName) &&
+            !currentName.EndsWith("(SMAPI)", StringComparison.OrdinalIgnoreCase))
+        {
+            var smapiPattern = L("Instances.Name.SmapiPattern", "{0} (SMAPI)");
+            InstanceName = string.Format(smapiPattern, currentName);
+            InstanceDisplayName = InstanceName;
+        }
+
         SaveVersionSettings();
         Status = "已切换到 SMAPI 启动模式";
     }
@@ -13060,6 +13070,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private void SaveVersionSettings()
     {
         var settings = _settingsStore.Load();
+        if (!string.IsNullOrWhiteSpace(InstanceName))
+        {
+            settings.InstanceName = InstanceName.Trim();
+        }
         settings.PreferredLaunchMode = SelectedLaunchMode;
         settings.EnableSafeLaunch = EnableSafeLaunch;
         _settingsStore.Save(settings);
@@ -13828,6 +13842,11 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private string GetImageResource(string key, string fallback)
     {
+        if (_imageResourceService == null)
+        {
+            return fallback;
+        }
+
         var value = _imageResourceService.Get(key);
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
