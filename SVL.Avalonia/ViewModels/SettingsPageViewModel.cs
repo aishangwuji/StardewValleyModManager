@@ -370,6 +370,23 @@ public partial class SettingsPageViewModel : ObservableObject
 
     public ObservableCollection<string> UiLanguages { get; } = ["zh-CN", "en-US"];
 
+    public ObservableCollection<UiLanguageOption> UiLanguageOptions { get; } =
+    [
+        new("zh-CN", "简体中文 (zh-CN)"),
+        new("en-US", "English (en-US)")
+    ];
+
+    [ObservableProperty]
+    private UiLanguageOption? _selectedUiLanguageOption;
+
+    partial void OnSelectedUiLanguageOptionChanged(UiLanguageOption? value)
+    {
+        if (value != null && !string.Equals(SelectedUiLanguage, value.Code, StringComparison.OrdinalIgnoreCase))
+        {
+            SelectedUiLanguage = value.Code;
+        }
+    }
+
     public ObservableCollection<string> CollectionConflictStrategies { get; } = ["覆盖", "跳过", "仅备份"];
 
     public ObservableCollection<string> UpdateChannels { get; } = ["稳定版", "预览版"];
@@ -742,7 +759,19 @@ public partial class SettingsPageViewModel : ObservableObject
 
     partial void OnSelectedUiLanguageChanged(string value)
     {
-        StatusMessage = $"界面语言切换为：{value}（已自动保存）";
+        var matched = UiLanguageOptions.FirstOrDefault(o => string.Equals(o.Code, value, StringComparison.OrdinalIgnoreCase));
+        if (matched != null && _selectedUiLanguageOption != matched)
+        {
+            _selectedUiLanguageOption = matched;
+            OnPropertyChanged(nameof(SelectedUiLanguageOption));
+        }
+
+        var displayName = matched?.DisplayName ?? value;
+        StatusMessage = string.Equals(value, "zh-CN", StringComparison.OrdinalIgnoreCase)
+            ? $"界面语言切换为：{displayName}（已自动保存）"
+            : $"UI Language changed to: {displayName} (Auto-saved)";
+
+        _localizationService.SetLanguage(value);
         ScheduleAutoSave();
     }
 
@@ -1654,3 +1683,23 @@ public partial class SettingsPageViewModel : ObservableObject
         };
     }
 }
+
+/// <summary>
+/// 界面语言选项：提供自称（Endonym）与语言代码，方便不同语言母语者识别。
+/// </summary>
+public sealed class UiLanguageOption
+{
+    public string Code { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+
+    public UiLanguageOption() { }
+
+    public UiLanguageOption(string code, string displayName)
+    {
+        Code = code;
+        DisplayName = displayName;
+    }
+
+    public override string ToString() => DisplayName;
+}
+
