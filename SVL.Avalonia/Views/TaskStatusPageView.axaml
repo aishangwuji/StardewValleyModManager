@@ -4,7 +4,7 @@
              xmlns:models="using:SVL.Avalonia.Models"
              x:Class="SVL.Avalonia.Views.TaskStatusPageView"
              x:DataType="vm:TaskStatusPageViewModel">
-  <Grid ColumnDefinitions="320,*">
+  <Grid ColumnDefinitions="280,*">
     <!-- 左栏：多任务列表 -->
     <Border Grid.Column="0" Classes="panel">
       <Grid RowDefinitions="Auto,*">

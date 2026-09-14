@@ -7,7 +7,7 @@
              mc:Ignorable="d"
              x:Class="SVL.Avalonia.Views.LaunchPageView"
              x:DataType="vm:LaunchPageViewModel">
-  <Grid ColumnDefinitions="300,*">
+  <Grid ColumnDefinitions="280,*">
     <Border Grid.Column="0" Classes="panel">
       <Grid RowDefinitions="Auto,*,Auto">
         <StackPanel Grid.Row="0" Margin="20,20,20,10" Spacing="8">
