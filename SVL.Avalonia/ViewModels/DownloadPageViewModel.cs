@@ -266,28 +266,7 @@ public partial class DownloadPageViewModel : ObservableObject
     private string _noActiveTasksText = "当前无进行中任务";
 
     [ObservableProperty]
-    private string _historyTasksTitleText = "历史任务";
-
-    [ObservableProperty]
-    private string _noHistoryTasksText = "当前无历史任务";
-
-    [ObservableProperty]
-    private string _taskCancelButtonText = "取消";
-
-    [ObservableProperty]
-    private string _taskRetryButtonText = "重试";
-
-    [ObservableProperty]
-    private string _taskOpenReportButtonText = "打开报告";
-
-    [ObservableProperty]
-    private string _taskOpenBackupButtonText = "打开备份";
-
-    [ObservableProperty]
-    private string _taskCopyFailedButtonText = "复制失败明细";
-
-    [ObservableProperty]
-    private string _taskOpenRetryReportButtonText = "打开重试报告";
+    private string _viewAllTasksButtonText = "查看全部 ›";
 
     [ObservableProperty]
     private string _statusPrefixText = "状态: ";
@@ -752,11 +731,7 @@ public partial class DownloadPageViewModel : ObservableObject
 
     public bool HasActiveTasks => ActiveTasks.Count > 0;
 
-    public bool HasFinishedTasks => FinishedTasks.Count > 0;
-
     public bool HasNoActiveTasks => !HasActiveTasks;
-
-    public bool HasNoFinishedTasks => !HasFinishedTasks;
 
     public bool HasNoCategoryItems => !IsCatalogLoading && CategoryItems.Count == 0;
 
@@ -1302,14 +1277,7 @@ public partial class DownloadPageViewModel : ObservableObject
         CategoryModpacksSubText = _localizationService.Get("Download.Category.ModpacksSub");
         ActiveTasksTitleText = _localizationService.Get("Download.ActiveTasks");
         NoActiveTasksText = _localizationService.Get("Download.NoActiveTasks");
-        HistoryTasksTitleText = _localizationService.Get("Download.HistoryTasks");
-        NoHistoryTasksText = _localizationService.Get("Download.NoHistoryTasks");
-        TaskCancelButtonText = _localizationService.Get("Download.Task.Cancel");
-        TaskRetryButtonText = _localizationService.Get("Download.Task.Retry");
-        TaskOpenReportButtonText = _localizationService.Get("Download.Task.OpenReport");
-        TaskOpenBackupButtonText = _localizationService.Get("Download.Task.OpenBackup");
-        TaskCopyFailedButtonText = _localizationService.Get("Download.Task.CopyFailed");
-        TaskOpenRetryReportButtonText = _localizationService.Get("Download.Task.OpenRetryReport");
+        ViewAllTasksButtonText = _localizationService.Get("Download.ActiveTasks.ViewAll");
         StatusPrefixText = _localizationService.Get("Download.StatusPrefix");
         NxmCardTitleText = _localizationService.Get("Download.Nxm.Title");
         NxmInputWatermarkText = _localizationService.Get("Download.Nxm.Watermark");
@@ -1459,9 +1427,7 @@ public partial class DownloadPageViewModel : ObservableObject
         }
 
         OnPropertyChanged(nameof(HasActiveTasks));
-        OnPropertyChanged(nameof(HasFinishedTasks));
         OnPropertyChanged(nameof(HasNoActiveTasks));
-        OnPropertyChanged(nameof(HasNoFinishedTasks));
     }
 
     partial void OnSelectedCategoryChanged(DownloadCategory value)
@@ -2006,6 +1972,12 @@ public partial class DownloadPageViewModel : ObservableObject
 
         SelectedTaskHint = $"已选择任务: {task.Name} ({task.Status})";
         TaskSelected?.Invoke(task);
+        NavigateToTaskStatusRequested?.Invoke();
+    }
+
+    [RelayCommand]
+    private void OpenTaskStatus()
+    {
         NavigateToTaskStatusRequested?.Invoke();
     }
 

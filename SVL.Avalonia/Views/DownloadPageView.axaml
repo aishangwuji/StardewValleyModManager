@@ -11,156 +11,103 @@
              x:DataType="vm:DownloadPageViewModel">
   <Grid ColumnDefinitions="280,*">
     <Border Grid.Column="0" Classes="panel">
-      <ScrollViewer>
-        <StackPanel Spacing="8">
-        <TextBlock Text="{Binding DownloadCategoryTitleText}" Classes="sectionTitle" />
-        <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Game}">
-          <Grid ColumnDefinitions="4,Auto,*">
-            <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsGameCategory}" />
-            <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsGameCategory}" />
-            <Image Grid.Column="1" Source="{Binding CategoryGameIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
-            <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-              <TextBlock Text="{Binding CategoryGameText}" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding CategoryGameSubText}" FontSize="11" Opacity="0.72" />
-            </StackPanel>
-          </Grid>
-        </Button>
-        <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Smapi}">
-          <Grid ColumnDefinitions="4,Auto,*">
-            <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsSmapiCategory}" />
-            <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsSmapiCategory}" />
-            <Image Grid.Column="1" Source="{Binding CategorySmapiIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
-            <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-              <TextBlock Text="{Binding CategorySmapiText}" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding CategorySmapiSubText}" FontSize="11" Opacity="0.72" />
-            </StackPanel>
-          </Grid>
-        </Button>
-        <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Mods}">
-          <Grid ColumnDefinitions="4,Auto,*">
-            <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModsCategory}" />
-            <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsModsCategory}" />
-            <Image Grid.Column="1" Source="{Binding CategoryModsIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
-            <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-              <TextBlock Text="{Binding CategoryModsText}" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding CategoryModsSubText}" FontSize="11" Opacity="0.72" />
-            </StackPanel>
-          </Grid>
-        </Button>
-        <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Modpacks}">
-          <Grid ColumnDefinitions="4,Auto,*">
-            <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModpacksCategory}" />
-            <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsModpacksCategory}" />
-            <Image Grid.Column="1" Source="{Binding CategoryModpacksIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
-            <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-              <TextBlock Text="{Binding CategoryModpacksText}" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding CategoryModpacksSubText}" FontSize="11" Opacity="0.72" />
-            </StackPanel>
-          </Grid>
-        </Button>
-
-        <Separator Margin="0,8,0,8" />
-        <TextBlock Text="{Binding ActiveTasksTitleText}" Classes="sectionTitle" />
-        <TextBlock Text="{Binding NoActiveTasksText}" Opacity="0.65" IsVisible="{Binding HasNoActiveTasks}" />
-        <ItemsControl ItemsSource="{Binding ActiveTasks}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <Border Classes="hintCard" Margin="0,0,0,6" Padding="10,6">
-                <StackPanel Spacing="4">
-                  <Grid ColumnDefinitions="*,Auto">
-                    <Button Grid.Column="0" Classes="flatTask activeTask"
-                            Command="{Binding DataContext.SelectTaskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}">
-                      <StackPanel Orientation="Horizontal" Spacing="6">
-                        <Image Source="{Binding StatusIconSource, Converter={StaticResource AssetImageConverter}}" Width="12" Height="12" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                      </StackPanel>
-                    </Button>
-                    <Border Grid.Column="1" Background="{DynamicResource PillBg}" CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding DisplayStatusText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    </Border>
-                  </Grid>
-                  <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" Height="5" Margin="0,2,0,0" />
-                  <TextBlock Text="{Binding FailedDetails}" FontSize="11" Opacity="0.8" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="2" IsVisible="{Binding HasFailedDetails}" />
-                  <WrapPanel Orientation="Horizontal" Margin="0,2,0,0">
-                    <Button Content="{Binding DataContext.TaskCancelButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          Classes="taskAction"
-                          Command="{Binding DataContext.CancelTaskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding}"
-                          IsVisible="{Binding CanCancel}" />
-                    <Button Content="{Binding DataContext.TaskRetryButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          Classes="taskAction"
-                          Command="{Binding DataContext.RetryTaskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding}"
-                          IsVisible="{Binding CanRetry}" />
-                    <Button Content="{Binding DataContext.TaskOpenReportButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          Classes="taskAction"
-                          Command="{Binding DataContext.OpenTaskReportCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding}"
-                          IsVisible="{Binding HasReportPath}" />
-                  </WrapPanel>
-                </StackPanel>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-
-        <Separator Margin="0,8,0,8" />
-        <TextBlock Text="{Binding HistoryTasksTitleText}" Classes="sectionTitle" />
-        <TextBlock Text="{Binding NoHistoryTasksText}" Opacity="0.65" IsVisible="{Binding HasNoFinishedTasks}" />
-        <ItemsControl ItemsSource="{Binding FinishedTasks}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <Border Classes="hintCard historyCard" Margin="0,0,0,4" Padding="10,6">
-                <Grid RowDefinitions="Auto,Auto">
-                  <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-                    <Button Grid.Column="0" Classes="flatTask historyTask"
-                            Command="{Binding DataContext.SelectTaskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}">
-                      <StackPanel Orientation="Horizontal" Spacing="6">
-                        <Image Source="{Binding StatusIconSource, Converter={StaticResource AssetImageConverter}}" Width="12" Height="12" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                      </StackPanel>
-                    </Button>
-                    <Border Grid.Column="1" Background="{DynamicResource PillBg}" CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding DisplayStatusText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
-                    </Border>
-                  </Grid>
-                  <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,0">
-                    <Button Content="{Binding DataContext.TaskRetryButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            Classes="taskAction"
-                            Command="{Binding DataContext.RetryTaskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}"
-                            IsVisible="{Binding CanRetry}" />
-                    <Button Content="{Binding DataContext.TaskOpenReportButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            Classes="taskAction"
-                            Command="{Binding DataContext.OpenTaskReportCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}"
-                            IsVisible="{Binding HasReportPath}" />
-                    <Button Content="{Binding DataContext.TaskOpenBackupButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            Classes="taskAction"
-                            Command="{Binding DataContext.OpenTaskBackupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}"
-                            IsVisible="{Binding HasBackupPath}" />
-                    <Button Content="{Binding DataContext.TaskCopyFailedButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            Classes="taskAction"
-                            Command="{Binding DataContext.CopyTaskFailedDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}"
-                            IsVisible="{Binding HasFailedDetails}" />
-                    <Button Content="{Binding DataContext.TaskOpenRetryReportButtonText, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            Classes="taskAction"
-                            Command="{Binding DataContext.OpenTaskRetryReportCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}"
-                            IsVisible="{Binding HasRetryReportPath}" />
-                  </WrapPanel>
-                </Grid>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-        <TextBlock Text="{Binding SelectedTaskHint}" Opacity="0.75" TextWrapping="Wrap" />
+      <Grid RowDefinitions="Auto,*">
+        <!-- 上区（Auto）：4 类别卡，永远完整可见，不被挤走 -->
+        <StackPanel Grid.Row="0" Spacing="8">
+          <TextBlock Text="{Binding DownloadCategoryTitleText}" Classes="sectionTitle" />
+          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Game}">
+            <Grid ColumnDefinitions="4,Auto,*">
+              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsGameCategory}" />
+              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsGameCategory}" />
+              <Image Grid.Column="1" Source="{Binding CategoryGameIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
+                <TextBlock Text="{Binding CategoryGameText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CategoryGameSubText}" FontSize="11" Opacity="0.72" />
+              </StackPanel>
+            </Grid>
+          </Button>
+          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Smapi}">
+            <Grid ColumnDefinitions="4,Auto,*">
+              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsSmapiCategory}" />
+              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsSmapiCategory}" />
+              <Image Grid.Column="1" Source="{Binding CategorySmapiIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
+                <TextBlock Text="{Binding CategorySmapiText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CategorySmapiSubText}" FontSize="11" Opacity="0.72" />
+              </StackPanel>
+            </Grid>
+          </Button>
+          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Mods}">
+            <Grid ColumnDefinitions="4,Auto,*">
+              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModsCategory}" />
+              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsModsCategory}" />
+              <Image Grid.Column="1" Source="{Binding CategoryModsIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
+                <TextBlock Text="{Binding CategoryModsText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CategoryModsSubText}" FontSize="11" Opacity="0.72" />
+              </StackPanel>
+            </Grid>
+          </Button>
+          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Modpacks}">
+            <Grid ColumnDefinitions="4,Auto,*">
+              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModpacksCategory}" />
+              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsModpacksCategory}" />
+              <Image Grid.Column="1" Source="{Binding CategoryModpacksIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
+                <TextBlock Text="{Binding CategoryModpacksText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CategoryModpacksSubText}" FontSize="11" Opacity="0.72" />
+              </StackPanel>
+            </Grid>
+          </Button>
         </StackPanel>
-      </ScrollViewer>
+
+        <!-- 下区（*，占剩余空间）：进行中任务监控，内部单独滚动，类别区约250px + 剩余~250px展示2-3卡 -->
+        <Grid Grid.Row="1" RowDefinitions="Auto,*" Margin="0,12,0,0">
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <TextBlock Grid.Column="0" Text="{Binding ActiveTasksTitleText}" Classes="sectionTitle" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="taskAction" Content="{Binding ViewAllTasksButtonText}" Command="{Binding OpenTaskStatusCommand}" />
+          </Grid>
+          <ScrollViewer Grid.Row="1" Margin="0,8,0,0">
+            <StackPanel Spacing="8">
+              <TextBlock Text="{Binding NoActiveTasksText}" Opacity="0.65" IsVisible="{Binding HasNoActiveTasks}" />
+              <ItemsControl ItemsSource="{Binding ActiveTasks}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="hintCard" Margin="0,0,0,6" Padding="10,6">
+                      <StackPanel Spacing="4">
+                        <Grid ColumnDefinitions="*,Auto">
+                          <Button Grid.Column="0" Classes="flatTask activeTask"
+                                  Command="{Binding DataContext.SelectTaskCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                              <Image Source="{Binding StatusIconSource, Converter={StaticResource AssetImageConverter}}" Width="12" Height="12" VerticalAlignment="Center" />
+                              <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                          </Button>
+                          <Border Grid.Column="1" Background="{DynamicResource PillBg}" CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding DisplayStatusText}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+                          </Border>
+                        </Grid>
+                        <ProgressBar Value="{Binding Progress}" Minimum="0" Maximum="100" Height="5" Margin="0,2,0,0" />
+                        <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding HasSpeedInfo}" Margin="0,1,0,0">
+                          <TextBlock Grid.Column="0" FontSize="11" Opacity="0.65" TextTrimming="CharacterEllipsis">
+                            <Run Text="{Binding SpeedText}" />
+                            <Run Text=" · " />
+                            <Run Text="{Binding DownloadedSizeText}" />
+                            <Run Text=" / " />
+                            <Run Text="{Binding TotalSizeText}" />
+                          </TextBlock>
+                          <TextBlock Grid.Column="1" Text="{Binding EtaText}" FontSize="11" Opacity="0.65" Margin="8,0,0,0" />
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Grid>
     </Border>
 
     <Border Grid.Column="1" Classes="panel" Margin="12,0,0,0">
