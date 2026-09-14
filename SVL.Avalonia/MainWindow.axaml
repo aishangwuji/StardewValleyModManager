@@ -51,9 +51,6 @@
     <DataTemplate DataType="vm:VersionSettingsPageViewModel">
       <views:VersionSettingsPageView />
     </DataTemplate>
-    <DataTemplate DataType="vm:InstanceSettingsPageViewModel">
-      <views:InstanceSettingsPageView />
-    </DataTemplate>
     <!-- 浮窗通知卡片：由 NotificationContainer ItemsControl 使用 -->
     <DataTemplate DataType="models:NotificationItem">
       <controls:FloatingNotificationControl />

@@ -50,8 +50,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     public VersionSettingsPageViewModel VersionSettingsPage { get; }
 
-    public InstanceSettingsPageViewModel InstanceSettingsPage { get; }
-
     /// <summary>当前页面标识（启动/本地Mod管理[显示为"Mod管理"]/下载/任务/设置/实例/资源详情），驱动 Is*Page 与 Header 状态。</summary>
     /// <remarks>显示名与内部 key 分离：UI 显示取自 LocalizationService(Nav.LocalModManage) 的 "Mod管理"，此处 "本地Mod管理" 仅为稳定的内部导航 key，勿与显示文本混用；IsLocalModManagePage 亦基于此 key 判定。</remarks>
     [ObservableProperty]
@@ -318,7 +316,6 @@ public partial class MainWindowViewModel : ObservableObject
         };
         VersionSettingsPage.OpenDetailsRequested += HandleOpenDetailsFromModManage;
         VersionSettingsPage.BatchUpdateModsRequested += HandleBatchUpdateModsRequested;
-        InstanceSettingsPage = new InstanceSettingsPageViewModel(_settingsStore, dialogService);
         LaunchPage.NavigateToInstancesRequested += HandleNavigateToInstances;
         LaunchPage.NavigateToVersionSettingsRequested += HandleNavigateToVersionSettings;
         LaunchPage.NavigateToModManageRequested += HandleNavigateToModManage;
