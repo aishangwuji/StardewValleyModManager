@@ -37,14 +37,20 @@ public abstract partial class FeaturePageViewModelBase : ObservableObject
     public abstract string Description { get; }
 }
 
+/// <summary>
+/// 任务页 ViewModel：左栏任务列表 + 右栏详情/操作/日志。
+/// <para>2026-01 i18n 补齐：此前 TaskStatusPageView 几乎全部硬编码中文，现通过 LocalizationService 统一管理，支持 LanguageChanged 动态刷新。</para>
+/// </summary>
 public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
 {
     private readonly Services.LocalizationService? _localizationService;
 
+    /// <summary>无参构造保留用于设计时/单元测试；运行时请使用带 LocalizationService 的构造以启用国际化。</summary>
     public TaskStatusPageViewModel()
     {
     }
 
+    /// <summary>注入 LocalizationService 的构造，订阅 LanguageChanged 并立即应用当前语言。</summary>
     public TaskStatusPageViewModel(Services.LocalizationService localizationService)
     {
         _localizationService = localizationService;
@@ -52,6 +58,7 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
         ApplyLocalizedTexts();
     }
 
+    /// <summary>根据当前语言刷新所有本地化文本；未注入服务时保持中文 fallback。</summary>
     private void ApplyLocalizedTexts()
     {
         TasksListTitleText = L("Tasks.List.Title", "任务列表");
@@ -4691,6 +4698,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     [ObservableProperty]
     private string _openExportFolderButtonText = "打开导出目录";
 
+    // 2026-01 i18n 补齐：以下为原硬编码中文的本地化属性，均通过 LocalizationService 驱动，ApplyLocalizedTexts 中根据当前语言刷新
+    // 覆盖范围：概览卡片、Mod 搜索/标签/冲突/表格头、设置/导出表单、批量操作栏等；格式化文本（如 StardewVersionFormat）通过计算属性暴露显示值
     [ObservableProperty]
     private string _iconLabelText = "图标";
 

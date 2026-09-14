@@ -9,7 +9,8 @@ namespace SVL.Avalonia.ViewModels;
 
 /// <summary>
 /// 主窗口导航中枢（Navigation Hub）。
-/// <para>职责：管理顶栏 5 个一级页面（启动/本地Mod管理/下载/任务/设置）与 3 个二级页面（实例/版本设置/资源详情）的栈式导航。</para>
+/// <para>职责：管理顶栏 5 个一级页面（启动/Mod管理/下载/任务/设置）与 3 个二级页面（实例/版本设置/资源详情）的栈式导航。</para>
+/// <para>历史重命名：顶栏“Mod管理”在 2026-01 前显示为“本地Mod管理”，为保持导航标识稳定，内部 CurrentPage 仍沿用 "本地Mod管理" 作为一级页面 key，显示文本通过 LocalizationService(Nav.LocalModManage) 控制，zh-CN 现为 "Mod管理"，en-US 为 "Local Mods"。</para>
 /// <para>Business Rule: 一级页面切换需清空返回栈（clearBackStack），二级页面需压栈（pushCurrentToBackStack），确保左上角 Logo/返回按钮与面包屑一致。</para>
 /// <para>Reason: Avalonia 无内置导航框架，手动维护 CurrentPage + CurrentPageViewModel + _backStack 避免页面状态丢失。</para>
 /// </summary>
@@ -52,7 +53,8 @@ public partial class MainWindowViewModel : ObservableObject
 
     public InstanceSettingsPageViewModel InstanceSettingsPage { get; }
 
-    /// <summary>当前页面标识（启动/本地Mod管理/下载/任务/设置/实例/资源详情），驱动 Is*Page 与 Header 状态。</summary>
+    /// <summary>当前页面标识（启动/本地Mod管理[显示为"Mod管理"]/下载/任务/设置/实例/资源详情），驱动 Is*Page 与 Header 状态。</summary>
+    /// <remarks>显示名与内部 key 分离：UI 显示取自 LocalizationService(Nav.LocalModManage) 的 "Mod管理"，此处 "本地Mod管理" 仅为稳定的内部导航 key，勿与显示文本混用；IsLocalModManagePage 亦基于此 key 判定。</remarks>
     [ObservableProperty]
     private string _currentPage = "启动";
 
@@ -68,6 +70,7 @@ public partial class MainWindowViewModel : ObservableObject
     private string _navLaunchText = "启动";
 
     /// <summary>顶栏“Mod管理”文案（Nav.LocalModManage），位于启动与下载之间。</summary>
+    /// <remarks>2026-01 由 "本地Mod管理" 精简为 "Mod管理"；实际显示由 LocalizationService 决定，此处仅为 fallback 默认值。</remarks>
     [ObservableProperty]
     private string _navLocalModManageText = "Mod管理";
 
@@ -143,7 +146,8 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>是否为一级页面“启动”，用于顶栏高亮与 Logo 显示判定。</summary>
     public bool IsLaunchPage => string.Equals(CurrentPage, "启动", StringComparison.Ordinal);
 
-    /// <summary>是否为一级页面“本地Mod管理”（复用 VersionSettingsPage 视图），顶栏位于启动与下载之间。</summary>
+    /// <summary>是否为一级页面“Mod管理”（内部 key 仍为 "本地Mod管理"，复用 VersionSettingsPage 视图），顶栏位于启动与下载之间。</summary>
+    /// <remarks>显示名已改为 "Mod管理"(Nav.LocalModManage)，但为保持 IsLocalModManagePage 与历史测试/导航逻辑兼容，判定仍使用稳定的内部 key "本地Mod管理"。</remarks>
     public bool IsLocalModManagePage => string.Equals(CurrentPage, "本地Mod管理", StringComparison.Ordinal);
 
     /// <summary>是否为一级页面“下载”。</summary>
@@ -794,9 +798,10 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 导航到一级页面“本地Mod管理”。
+    /// 导航到一级页面“Mod管理”（显示名已精简，内部 key 仍为 "本地Mod管理"）。
     /// Business Rule: 复用 VersionSettingsPage 的 Mod 管理分栏，需先 Reload 并 SwitchToModManage，避免显示旧实例缓存。
     /// Reason: 一级页面需 clearBackStack，保证顶栏显示 Logo 而非返回按钮，避免布局跳动。
+    /// Note: 显示文本通过 _navLocalModManageText(LocalizationService) 呈现，此处字符串为稳定的导航标识，勿改为显示文本。
     /// </summary>
     [RelayCommand]
     private void NavigateToLocalModManage()
@@ -1091,7 +1096,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     /// 判定是否为二级页面（需显示返回按钮且支持返回栈）。
-    /// Business Rule: 仅 实例/版本设置/资源详情 为二级页面；本地Mod管理 已提升为一级页面，需显示 Logo 而非返回箭头。
+    /// Business Rule: 仅 实例/版本设置/资源详情 为二级页面；"Mod管理"(内部 key "本地Mod管理")已提升为一级页面，需显示 Logo 而非返回箭头。
     /// </summary>
     private static bool IsBackPage(string page)
     {

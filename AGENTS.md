@@ -67,8 +67,8 @@ dotnet run --project SVL.Avalonia -c Debug
 5. **Git 原子提交**：一逻辑一 commit，提交前扫敏感信息（密钥/.env），受保护分支需人工执行。
 
 ## 重要约定
-- **语言**：默认 `zh-CN`，本地化在 `Services/LocalizationService.cs` 字典 `zh-CN/en-US`，Key 如 `Nav.Launch`/`Launch.ModManage`（已更名为 `本地Mod管理`，顶栏位于 `启动` 与 `下载` 之间）。
-- **导航**：`MainWindowViewModel` 管理 `CurrentPage`（`启动/本地Mod管理/下载/任务/设置`），`DownloadPageViewModel.SelectedCategory` 为 `Smapi/Mods/Modpacks/Game`，`Game` 走 `SteamCmdService`，其余走 `RemoteCatalogService`（`api.curse.tools` / Nexus GraphQL / `api.github.com/repos/Pathoschild/SMAPI`）。
+- **语言**：默认 `zh-CN`，本地化在 `Services/LocalizationService.cs` 字典 `zh-CN/en-US`，Key 如 `Nav.Launch`/`Launch.ModManage`（显示已由“本地Mod管理”精简为“Mod管理”，内部导航 key 仍为“本地Mod管理”以兼容历史，顶栏位于 `启动` 与 `下载` 之间）。
+- **导航**：`MainWindowViewModel` 管理 `CurrentPage`（`启动/本地Mod管理[显示"Mod管理"]/下载/任务/设置`），`DownloadPageViewModel.SelectedCategory` 为 `Smapi/Mods/Modpacks/Game`，`Game` 走 `SteamCmdService`，其余走 `RemoteCatalogService`（`api.curse.tools` / Nexus GraphQL / `api.github.com/repos/Pathoschild/SMAPI`）。
 - **图标**：统一 `avares://SVL.Avalonia/Assets/Icons/` + `AssetImageConverter`，`ApplicationIcon=Assets/Icons/icon.ico`，`build.ps1` 的 `iconSrc` 已指向该路径。
 - **配置持久化**：`%LocalAppData%\SVL\Avalonia\` 下 `usersettings.json` / `download-tasks-state.json` 等，`AppUserSettingsStore` / `DownloadTaskStateStore` 负责原子写入。
 - **平台**：Windows 注册表探测 Steam/GOG/Xbox，`SingleInstanceService` 命名管道转发 `nxm://`，非 Windows 跳过窗口标题 API。

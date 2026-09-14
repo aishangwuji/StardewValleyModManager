@@ -365,6 +365,7 @@ public partial class DownloadPageViewModel : ObservableObject
     [ObservableProperty]
     private string _openModpackSearchButtonText = "进入 Modpack 搜索页";
 
+    // 2026-01 i18n 补齐：原 XAML 硬编码的游戏本体/筛选器/SteamCMD 三步流程等文本，改为 ViewModel 本地化属性以支持 LanguageChanged 动态刷新
     [ObservableProperty]
     private string _categoryGameText = "游戏本体";
 

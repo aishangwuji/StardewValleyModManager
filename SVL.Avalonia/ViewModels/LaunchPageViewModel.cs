@@ -12,7 +12,8 @@ namespace SVL.Avalonia.ViewModels;
 
 /// <summary>
 /// 启动页 ViewModel（左侧实例卡 + 底部操作区）。
-/// <para>导航职责：通过事件将“版本选择/版本设置/本地Mod管理”委托给 MainWindowViewModel 统一入栈，避免子 ViewModel 直接操作导航栈。</para>
+/// <para>导航职责：通过事件将“版本选择/版本设置/Mod管理”委托给 MainWindowViewModel 统一入栈，避免子 ViewModel 直接操作导航栈。</para>
+/// <para>历史：顶栏“Mod管理”曾显示为“本地Mod管理”，2026-01 精简为“Mod管理”，显示文本由 LocalizationService(Nav.LocalModManage/Launch.ModManage) 提供。</para>
 /// </summary>
 public partial class LaunchPageViewModel : ObservableObject
 {
@@ -28,7 +29,7 @@ public partial class LaunchPageViewModel : ObservableObject
     public event Action? NavigateToInstancesRequested;
     /// <summary>请求导航到“版本设置”二级页面。</summary>
     public event Action? NavigateToVersionSettingsRequested;
-    /// <summary>请求导航到“本地Mod管理”一级页面（顶栏本地Mod管理，复用 VersionSettingsPage Mod 分栏）。</summary>
+    /// <summary>请求导航到“Mod管理”一级页面（顶栏 Mod管理，复用 VersionSettingsPage Mod 分栏；显示名已由“本地Mod管理”精简，内部 key 仍兼容）。</summary>
     public event Action? NavigateToModManageRequested;
 
     [ObservableProperty]
@@ -650,7 +651,7 @@ public partial class LaunchPageViewModel : ObservableObject
         NavigateToInstancesRequested?.Invoke();
     }
 
-    /// <summary>跳转到本地Mod管理（顶栏一级页面）。前置校验实例有效性，避免空路径进入 Mod 管理。</summary>
+    /// <summary>跳转到 Mod管理（顶栏一级页面，原“本地Mod管理”）。前置校验实例有效性，避免空路径进入 Mod 管理。</summary>
     [RelayCommand]
     private void OpenModManage()
     {

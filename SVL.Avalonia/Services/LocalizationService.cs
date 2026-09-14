@@ -3,6 +3,11 @@ using System.Collections.ObjectModel;
 
 namespace SVL.Avalonia.Services;
 
+/// <summary>
+/// 本地化服务：集中管理 zh-CN/en-US 双语字典，ViewModel 通过 Get(key) 获取显示文本，LanguageChanged 事件驱动 UI 刷新。
+/// <para>命名约定：Key 按 "页面.分区.文案" 层级，如 Nav.LocalModManage / VersionSettings.ModManage.Title / Download.Game.Title。</para>
+/// <para>重命名记录：Nav.LocalModManage 与 Launch.ModManage 在 2026-01 由 "本地Mod管理" 精简为 "Mod管理"（en-US 保持 "Local Mods" 兼容显示），字典同步更新；ViewModel 内部导航 key 仍保留 "本地Mod管理" 以兼容历史判定。</para>
+/// </summary>
 public sealed class LocalizationService
 {
     private readonly AppUserSettingsStore _settingsStore;
@@ -14,6 +19,7 @@ public sealed class LocalizationService
             {
                 ["Window.Title"] = "Stardew Valley Launcher",
                 ["Nav.Launch"] = "启动",
+                // 2026-01 精简：由 "本地Mod管理" 改为 "Mod管理"，保持与启动页按钮一致
                 ["Nav.LocalModManage"] = "Mod管理",
                 ["Nav.Download"] = "下载",
                 ["Nav.Tasks"] = "任务",
@@ -30,6 +36,7 @@ public sealed class LocalizationService
                 ["Launch.Status"] = "状态",
                 ["Launch.Refresh"] = "刷新本机探测",
                 ["Launch.VersionSelect"] = "版本选择",
+                // 2026-01 精简：与 Nav.LocalModManage 同步由 "本地Mod管理" 改为 "Mod管理"（启动页入口按钮）
                 ["Launch.ModManage"] = "Mod管理",
                 ["Launch.VersionSettings"] = "版本设置",
                 ["Launch.Welcome"] = "欢迎使用星露谷物语启动器",
@@ -81,6 +88,7 @@ public sealed class LocalizationService
                 ["Launch.Guide.UsageTitle"] = "使用提示",
                 ["Launch.Guide.UsageLine1"] = "点击左侧启动游戏按钮即可开始游玩 Stardew Valley。",
                 ["Launch.Guide.UsageLine2"] = "使用版本选择可切换不同游戏版本；版本设置可配置启动参数和 Mod 选项。",
+                // 2026-01 同步：引导文案中顶栏入口名称由「本地Mod管理」改为「Mod管理」，与导航显示保持一致
                 ["Launch.Guide.UsageModManage"] = "顶栏「Mod管理」或左下角按钮可直接跳转到该版本的 Mod 管理页面。",
                 ["Settings.Title"] = "设置",
                 ["Settings.Tab.Basic"] = "基本设置",
