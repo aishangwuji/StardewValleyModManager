@@ -322,6 +322,8 @@ public partial class MainWindowViewModel : ObservableObject
         VersionSettingsPage.InstanceContextChanged += HandleInstanceContextChanged;
         VersionSettingsPage.SmapiInstallTaskCreated += HandleSmapiInstallTaskCreated;
         VersionSettingsPage.RequestReturnToLaunch += () => NavigateToPage("启动", LaunchPage, clearBackStack: true);
+        VersionSettingsPage.ModpackFileImportRequested += HandleModpackDropAsync;
+        VersionSettingsPage.NavigateToModpackSearchRequested += HandleNavigateToModpackSearch;
         InstancesPage.InstanceActivated += HandleInstanceActivated;
         InstancesPage.InstanceSettingsRequested += HandleInstanceSettingsRequested;
         InstancesPage.ModpackImportRequested += HandleModpackImportRequested;

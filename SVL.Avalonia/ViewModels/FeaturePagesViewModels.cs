@@ -4347,7 +4347,51 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private string _instanceSettingsNavText = "设置";
 
     [ObservableProperty]
-    private string _exportNavText = "导出";
+    private string _exportNavText = "整合包";
+
+    [ObservableProperty]
+    private string _modpackNavText = "整合包";
+
+    [ObservableProperty]
+    private string _modpackSectionTitleText = "整合包管理";
+
+    [ObservableProperty]
+    private string _modpackImportTabText = "导入整合包";
+
+    [ObservableProperty]
+    private string _modpackExportTabText = "导出整合包";
+
+    [ObservableProperty]
+    private string _modpackImportTitleText = "从本地文件导入";
+
+    [ObservableProperty]
+    private string _modpackImportDescText = "支持导入 SVL 原生整合包（.zip）、CurseForge 整合包（.zip / .cfmodpack）以及 Nexus Collection（.7z）。";
+
+    [ObservableProperty]
+    private string _modpackPickButtonText = "选择整合包文件 (.zip / .cfmodpack / .7z)...";
+
+    [ObservableProperty]
+    private string _modpackDropHintText = "提示：您也可以直接将整合包文件拖拽到窗口任意区域快速导入";
+
+    [ObservableProperty]
+    private string _modpackOnlineTitleText = "在线搜索整合包";
+
+    [ObservableProperty]
+    private string _modpackOnlineDescText = "浏览并下载来自 NexusMods 与 CurseForge 社区的大型整合包及合集。";
+
+    [ObservableProperty]
+    private string _modpackOnlineButtonText = "前往在线整合包搜索 ›";
+
+    [ObservableProperty]
+    private bool _isModpackImportTab;
+
+    public bool IsModpackExportTab => !IsModpackImportTab;
+
+    /// <summary>请求从本地文件导入整合包：携带选中的文件路径交给 MainWindow 处理。</summary>
+    public event Func<string, Task>? ModpackFileImportRequested;
+
+    /// <summary>请求跳转至在线 Modpack 搜索页面。</summary>
+    public event Action? NavigateToModpackSearchRequested;
 
     [ObservableProperty]
     private string _instanceSettingsTitleText = "实例设置";
@@ -4377,7 +4421,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private string _saveInstanceSettingsButtonText = "保存实例设置";
 
     [ObservableProperty]
-    private string _exportSectionTitleText = "导出";
+    private string _exportSectionTitleText = "导出整合包";
 
     [ObservableProperty]
     private string _modpackName = "我的整合包";
@@ -4843,6 +4887,13 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     public bool IsExportSection => string.Equals(SelectedSection, "Export", StringComparison.Ordinal);
 
+    public bool IsModpackSection => IsExportSection;
+
+    partial void OnIsModpackImportTabChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsModpackExportTab));
+    }
+
     public bool ShowSmapiVersion => IsSmapiInstance;
 
     public bool ShowNoSmapiHint => !IsSmapiInstance;
@@ -5170,7 +5221,18 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         AutoInstallNavText = L("VersionSettings.Nav.AutoInstall", "自动安装");
         ModManageNavText = L("VersionSettings.Nav.ModManage", "Mod管理");
         InstanceSettingsNavText = L("VersionSettings.Nav.Settings", "设置");
-        ExportNavText = L("VersionSettings.Nav.Export", "导出");
+        ExportNavText = L("VersionSettings.Nav.Modpack", "整合包");
+        ModpackNavText = L("VersionSettings.Nav.Modpack", "整合包");
+        ModpackSectionTitleText = L("VersionSettings.Modpack.Title", "整合包管理");
+        ModpackImportTabText = L("VersionSettings.Modpack.Tab.Import", "导入整合包");
+        ModpackExportTabText = L("VersionSettings.Modpack.Tab.Export", "导出整合包");
+        ModpackImportTitleText = L("VersionSettings.Modpack.Import.Title", "从本地文件导入");
+        ModpackImportDescText = L("VersionSettings.Modpack.Import.Description", "支持导入 SVL 原生整合包（.zip）、CurseForge 整合包（.zip / .cfmodpack）以及 Nexus Collection（.7z）。");
+        ModpackPickButtonText = L("VersionSettings.Modpack.Import.PickButton", "选择整合包文件 (.zip / .cfmodpack / .7z)...");
+        ModpackDropHintText = L("VersionSettings.Modpack.Import.DropHint", "提示：您也可以直接将整合包文件拖拽到窗口任意区域快速导入");
+        ModpackOnlineTitleText = L("VersionSettings.Modpack.Import.OnlineTitle", "在线搜索整合包");
+        ModpackOnlineDescText = L("VersionSettings.Modpack.Import.OnlineDescription", "浏览并下载来自 NexusMods 与 CurseForge 社区的大型整合包及合集。");
+        ModpackOnlineButtonText = L("VersionSettings.Modpack.Import.OnlineButton", "前往在线整合包搜索 ›");
         OverviewVersionCardTitleText = L("VersionSettings.Overview.VersionInfoTitle", "版本信息");
         OverviewPersonalizationCardTitleText = L("VersionSettings.Overview.PersonalizationTitle", "个性化");
         InstanceNameLabelText = L("VersionSettings.Overview.InstanceNameLabel", "版本名称");
@@ -5194,7 +5256,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         SwitchToSmapiTipText = L("VersionSettings.AutoInstall.SwitchTip", "检测到该路径已安装SMAPI，切换到SMAPI版本以启用Mod管理功能。");
         InstanceSettingsTitleText = L("VersionSettings.Settings.Title", "实例设置");
         SaveInstanceSettingsButtonText = L("VersionSettings.Settings.Save", "保存实例设置");
-        ExportSectionTitleText = L("VersionSettings.Export.Title", "导出");
+        ExportSectionTitleText = L("VersionSettings.Export.Title", "导出整合包");
         ExportCurrentModsButtonText = L("VersionSettings.Export.CurrentMods", "导出当前整合包");
         OpenExportFolderButtonText = L("VersionSettings.Export.OpenFolder", "打开导出目录");
 
@@ -5380,7 +5442,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         SelectedSection = "Export";
         IsModManageSection = false;
         ReloadExportModItems();
-        Status = "当前处于导出页面";
+        Status = "当前处于整合包管理";
     }
 
     public void SwitchToAutoInstall()
@@ -5396,6 +5458,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         OnPropertyChanged(nameof(IsAutoInstallSection));
         OnPropertyChanged(nameof(IsSettingsSection));
         OnPropertyChanged(nameof(IsExportSection));
+        OnPropertyChanged(nameof(IsModpackSection));
         OnPropertyChanged(nameof(IsGeneralSection));
 
         if (string.Equals(value, "ModManage", StringComparison.Ordinal))
@@ -5830,6 +5893,45 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private void SwitchToExportSection()
     {
         SwitchToExport();
+    }
+
+    [RelayCommand]
+    private void SwitchToModpackSection()
+    {
+        SwitchToExport();
+    }
+
+    [RelayCommand]
+    private void SwitchModpackImportTab()
+    {
+        IsModpackImportTab = true;
+    }
+
+    [RelayCommand]
+    private void SwitchModpackExportTab()
+    {
+        IsModpackImportTab = false;
+    }
+
+    [RelayCommand]
+    private async Task PickAndImportModpackAsync()
+    {
+        var path = await _dialogService.PickModpackFileAsync();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        if (ModpackFileImportRequested != null)
+        {
+            await ModpackFileImportRequested(path);
+        }
+    }
+
+    [RelayCommand]
+    private void NavigateToOnlineModpackSearch()
+    {
+        NavigateToModpackSearchRequested?.Invoke();
     }
 
     [RelayCommand]
@@ -7361,6 +7463,11 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private void ReloadExportModItems()
     {
+        if (Mods == null || ExportModItems == null)
+        {
+            return;
+        }
+
         if (Mods.Count == 0 && TryGetCurrentModsPath(out var modsPath) && Directory.Exists(modsPath))
         {
             ReloadMods();

@@ -452,7 +452,7 @@ public partial class InstancesPageViewModel : ObservableObject
     private void ImportModpack()
     {
         ModpackImportRequested?.Invoke();
-        Status = L("Instances.Status.ImportModpack", "正在进入整合包导入流程");
+        Status = L("Instances.Status.ImportModpack", "正在打开整合包搜索");
     }
 
     [RelayCommand]

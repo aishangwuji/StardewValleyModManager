@@ -203,11 +203,11 @@
               </Grid>
             </Button>
             <Button Classes="navButton"
-                    Classes.selected="{Binding IsExportSection}"
-                    Command="{Binding SwitchToExportSectionCommand}">
+                    Classes.selected="{Binding IsModpackSection}"
+                    Command="{Binding SwitchToModpackSectionCommand}">
               <Grid ColumnDefinitions="Auto,*">
-                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Upload.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
-                <TextBlock Grid.Column="1" Text="{Binding ExportNavText}" VerticalAlignment="Center" />
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="1" Text="{Binding ModpackNavText}" VerticalAlignment="Center" />
               </Grid>
             </Button>
           </StackPanel>
@@ -1104,115 +1104,212 @@
             </Border>
           </StackPanel>
 
-          <Border Classes="hintCard" IsVisible="{Binding IsExportSection}" Padding="14,12">
-            <StackPanel Spacing="10">
-              <TextBlock Text="{Binding ExportSectionTitleText}" Classes="sectionTitle" />
-
-              <Grid ColumnDefinitions="110,*" RowDefinitions="Auto,Auto,Auto">
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding ExportModpackNameLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
-                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding ModpackName}" Margin="0,0,0,8" />
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding ExportVersionLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ModpackVersion}" Margin="0,0,0,8" />
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding ExportAuthorLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
-                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ModpackAuthor}" />
-              </Grid>
-
-              <TextBlock Text="{Binding ExportContentTitleText}" FontWeight="SemiBold" />
-              <StackPanel Spacing="6">
-                <CheckBox Content="{Binding IncludeModsText}"
-                          IsChecked="{Binding IncludeMods}" />
-                <CheckBox Content="{Binding IncludeModFilesText}"
-                          IsChecked="{Binding IncludeModFiles}"
-                          IsEnabled="{Binding IncludeMods}"
-                          Margin="24,0,0,0" />
-                <CheckBox Content="{Binding IncludeSettingsText}"
-                          IsChecked="{Binding IncludeModSettings}" />
-                <CheckBox Content="{Binding IncludeLauncherText}"
-                          IsChecked="{Binding IncludeSvlLauncher}" />
-              </StackPanel>
-
-              <Border BorderBrush="{DynamicResource PanelBorderBrush}"
-                      BorderThickness="1"
-                      CornerRadius="8"
-                      Padding="8"
-                      IsVisible="{Binding ShowExportModList}">
-                <StackPanel Spacing="6">
-                  <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                    <Button Grid.Column="0"
-                            Content="{Binding ExportSelectAllText}"
-                            Command="{Binding ToggleSelectAllExportModsCommand}"
-                            Padding="8,4"
-                            Margin="0,0,8,0" />
-                    <TextBlock Grid.Column="1"
-                               Text="{Binding ExportProgressText}"
-                               VerticalAlignment="Center"
-                               Opacity="0.82" />
-                    <TextBlock Grid.Column="2"
-                               Text="{Binding ExportSourcePriorityHintText}"
-                               FontSize="11"
-                               Opacity="0.68"
-                               VerticalAlignment="Center" />
-                  </Grid>
-
-                  <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="4">
-                    <ItemsControl ItemsSource="{Binding ExportModItems}" MaxHeight="260">
-                      <ItemsControl.Template>
-                        <ControlTemplate TargetType="ItemsControl">
-                          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <ItemsPresenter />
-                          </ScrollViewer>
-                        </ControlTemplate>
-                      </ItemsControl.Template>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                          <Grid ColumnDefinitions="30,*,110" Margin="2,2,2,4">
-                            <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <StackPanel Grid.Column="1" Spacing="1">
-                              <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="12" />
-                              <TextBlock FontSize="11" Opacity="0.65" TextTrimming="CharacterEllipsis">
-                                <Run Text="{Binding Version}" />
-                                <Run Text=" · " />
-                                <Run Text="{Binding Author}" />
-                              </TextBlock>
-                            </StackPanel>
-                            <TextBlock Grid.Column="2"
-                                       Text="{Binding SourceDescription}"
-                                       FontSize="11"
-                                       Opacity="0.78"
-                                       VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" />
-                          </Grid>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                  </Border>
-                </StackPanel>
+          <Border Classes="hintCard" IsVisible="{Binding IsModpackSection}" Padding="14,12">
+            <StackPanel Spacing="12">
+              <!-- 顶部分段切换栏：导入整合包 / 导出整合包 -->
+              <Border BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Background="{DynamicResource CardHighlightBg}">
+                <Grid ColumnDefinitions="*,1,*">
+                  <Button Grid.Column="0"
+                          Classes="segmentMain"
+                          Classes.selected="{Binding IsModpackImportTab}"
+                          Command="{Binding SwitchModpackImportTabCommand}"
+                          Content="{Binding ModpackImportTabText}" />
+                  <Border Grid.Column="1" Background="{DynamicResource PanelBorderBrush}" />
+                  <Button Grid.Column="2"
+                          Classes="segmentMain"
+                          Classes.selected="{Binding IsModpackExportTab}"
+                          Command="{Binding SwitchModpackExportTabCommand}"
+                          Content="{Binding ModpackExportTabText}" />
+                </Grid>
               </Border>
 
-              <TextBlock Text="{Binding ExportStrategyText}"
-                         Opacity="0.75"
-                         TextWrapping="Wrap" />
+              <!-- 【导入整合包】分栏视图 -->
+              <StackPanel Spacing="12" IsVisible="{Binding IsModpackImportTab}">
+                <!-- 本地文件导入主卡片 -->
+                <Border Classes="hintCard" Padding="16,14">
+                  <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="Auto,*">
+                      <Border Width="44"
+                              Height="44"
+                              CornerRadius="8"
+                              Background="{DynamicResource CardHighlightBg}"
+                              BorderBrush="{DynamicResource PanelBorderBrush}"
+                              BorderThickness="1"
+                              Margin="0,0,12,0">
+                        <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Package.png"
+                               Width="26" Height="26"
+                               Stretch="Uniform"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                      </Border>
+                      <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ModpackImportTitleText}" Classes="sectionTitle" />
+                        <TextBlock Text="{Binding ModpackImportDescText}"
+                                   FontSize="12"
+                                   Opacity="0.75"
+                                   TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Grid>
 
-              <ProgressBar Minimum="0"
-                           Maximum="100"
-                           Value="{Binding ExportProgress}"
-                           Height="6"
-                           IsVisible="{Binding IsExporting}" />
+                    <Button Classes="pathAction primary"
+                            Content="{Binding ModpackPickButtonText}"
+                            Command="{Binding PickAndImportModpackCommand}"
+                            Height="40"
+                            Margin="0,6,0,0" />
 
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="{Binding ExportStatusMessage}" Opacity="0.75" VerticalAlignment="Center" TextWrapping="Wrap" />
-                <Button Grid.Column="1" Content="{Binding SaveConfigText}" Command="{Binding SaveExportConfigCommand}" Margin="8,0,0,0" />
-                <Button Grid.Column="2" Content="{Binding LoadConfigText}" Command="{Binding LoadExportConfigCommand}" Margin="8,0,0,0" />
-                <Button Grid.Column="3"
-                        Content="{Binding ExportCurrentModsButtonText}"
-                        Command="{Binding ExportCurrentModsCommand}"
-                        Margin="8,0,0,0"
-                        IsEnabled="{Binding CanStartExport}" />
-              </Grid>
+                    <Border Background="{DynamicResource CardHighlightBg}"
+                            BorderBrush="{DynamicResource PanelBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="12,10">
+                      <Grid ColumnDefinitions="Auto,*">
+                        <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Upload.png"
+                               Width="18" Height="18"
+                               Stretch="Uniform"
+                               VerticalAlignment="Center"
+                               Opacity="0.75"
+                               Margin="0,0,8,0" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding ModpackDropHintText}"
+                                   FontSize="12"
+                                   Opacity="0.75"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap" />
+                      </Grid>
+                    </Border>
+                  </StackPanel>
+                </Border>
 
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="{Binding OpenExportFolderButtonText}" Command="{Binding OpenExportFolderCommand}" />
-                <TextBlock Text="{Binding ExportHint}" Opacity="0.75" VerticalAlignment="Center" TextWrapping="Wrap" />
+                <!-- 在线搜索整合包次级卡片 -->
+                <Border Classes="hintCard" Padding="16,14">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding ModpackOnlineTitleText}" Classes="sectionTitle" />
+                      <TextBlock Text="{Binding ModpackOnlineDescText}"
+                                 FontSize="12"
+                                 Opacity="0.75"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Classes="toolbarAction"
+                            Content="{Binding ModpackOnlineButtonText}"
+                            Command="{Binding NavigateToOnlineModpackSearchCommand}"
+                            VerticalAlignment="Center"
+                            Margin="12,0,0,0" />
+                  </Grid>
+                </Border>
+              </StackPanel>
+
+              <!-- 【导出整合包】分栏视图 -->
+              <StackPanel Spacing="10" IsVisible="{Binding IsModpackExportTab}">
+                <TextBlock Text="{Binding ExportSectionTitleText}" Classes="sectionTitle" />
+
+                <Grid ColumnDefinitions="110,*" RowDefinitions="Auto,Auto,Auto">
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding ExportModpackNameLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                  <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding ModpackName}" Margin="0,0,0,8" />
+                  <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding ExportVersionLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                  <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ModpackVersion}" Margin="0,0,0,8" />
+                  <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding ExportAuthorLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                  <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ModpackAuthor}" />
+                </Grid>
+
+                <TextBlock Text="{Binding ExportContentTitleText}" FontWeight="SemiBold" />
+                <StackPanel Spacing="6">
+                  <CheckBox Content="{Binding IncludeModsText}"
+                            IsChecked="{Binding IncludeMods}" />
+                  <CheckBox Content="{Binding IncludeModFilesText}"
+                            IsChecked="{Binding IncludeModFiles}"
+                            IsEnabled="{Binding IncludeMods}"
+                            Margin="24,0,0,0" />
+                  <CheckBox Content="{Binding IncludeSettingsText}"
+                            IsChecked="{Binding IncludeModSettings}" />
+                  <CheckBox Content="{Binding IncludeLauncherText}"
+                            IsChecked="{Binding IncludeSvlLauncher}" />
+                </StackPanel>
+
+                <Border BorderBrush="{DynamicResource PanelBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="8"
+                        IsVisible="{Binding ShowExportModList}">
+                  <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                      <Button Grid.Column="0"
+                              Content="{Binding ExportSelectAllText}"
+                              Command="{Binding ToggleSelectAllExportModsCommand}"
+                              Padding="8,4"
+                              Margin="0,0,8,0" />
+                      <TextBlock Grid.Column="1"
+                                 Text="{Binding ExportProgressText}"
+                                 VerticalAlignment="Center"
+                                 Opacity="0.82" />
+                      <TextBlock Grid.Column="2"
+                                 Text="{Binding ExportSourcePriorityHintText}"
+                                 FontSize="11"
+                                 Opacity="0.68"
+                                 VerticalAlignment="Center" />
+                    </Grid>
+
+                    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="4">
+                      <ItemsControl ItemsSource="{Binding ExportModItems}" MaxHeight="260">
+                        <ItemsControl.Template>
+                          <ControlTemplate TargetType="ItemsControl">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                              <ItemsPresenter />
+                            </ScrollViewer>
+                          </ControlTemplate>
+                        </ItemsControl.Template>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Grid ColumnDefinitions="30,*,110" Margin="2,2,2,4">
+                              <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                              <StackPanel Grid.Column="1" Spacing="1">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="12" />
+                                <TextBlock FontSize="11" Opacity="0.65" TextTrimming="CharacterEllipsis">
+                                  <Run Text="{Binding Version}" />
+                                  <Run Text=" · " />
+                                  <Run Text="{Binding Author}" />
+                                </TextBlock>
+                              </StackPanel>
+                              <TextBlock Grid.Column="2"
+                                         Text="{Binding SourceDescription}"
+                                         FontSize="11"
+                                         Opacity="0.78"
+                                         VerticalAlignment="Center"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </Border>
+                  </StackPanel>
+                </Border>
+
+                <TextBlock Text="{Binding ExportStrategyText}"
+                           Opacity="0.75"
+                           TextWrapping="Wrap" />
+
+                <ProgressBar Minimum="0"
+                             Maximum="100"
+                             Value="{Binding ExportProgress}"
+                             Height="6"
+                             IsVisible="{Binding IsExporting}" />
+
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                  <TextBlock Grid.Column="0" Text="{Binding ExportStatusMessage}" Opacity="0.75" VerticalAlignment="Center" TextWrapping="Wrap" />
+                  <Button Grid.Column="1" Content="{Binding SaveConfigText}" Command="{Binding SaveExportConfigCommand}" Margin="8,0,0,0" />
+                  <Button Grid.Column="2" Content="{Binding LoadConfigText}" Command="{Binding LoadExportConfigCommand}" Margin="8,0,0,0" />
+                  <Button Grid.Column="3"
+                          Content="{Binding ExportCurrentModsButtonText}"
+                          Command="{Binding ExportCurrentModsCommand}"
+                          Margin="8,0,0,0"
+                          IsEnabled="{Binding CanStartExport}" />
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="{Binding OpenExportFolderButtonText}" Command="{Binding OpenExportFolderCommand}" />
+                  <TextBlock Text="{Binding ExportHint}" Opacity="0.75" VerticalAlignment="Center" TextWrapping="Wrap" />
+                </StackPanel>
               </StackPanel>
             </StackPanel>
           </Border>

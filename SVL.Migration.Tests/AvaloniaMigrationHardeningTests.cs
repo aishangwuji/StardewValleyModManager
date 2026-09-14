@@ -3702,6 +3702,90 @@ public sealed class AvaloniaMigrationHardeningTests
     }
 
     [TestMethod]
+    public void InstancesPage_ImportModpackButton_ShouldBeNamedSearchModpacks()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "svl-instances-search-button-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new AppUserSettingsStore(root);
+            var locator = new RoundTripGameInstallPathLocator(root);
+            var dialog = new DialogService();
+            var registry = new InstanceRegistryStore();
+            var localization = new LocalizationService(settings);
+            var imageResource = new ImageResourceService(localization);
+
+            var vm = new InstancesPageViewModel(locator, dialog, registry, settings, imageResource, localization);
+            Assert.AreEqual("搜索整合包", vm.ImportModpackButtonText);
+
+            var requested = false;
+            vm.ModpackImportRequested += () => requested = true;
+            vm.ImportModpackCommand.Execute(null);
+
+            Assert.IsTrue(requested);
+            Assert.AreEqual("正在打开整合包搜索", vm.Status);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [TestMethod]
+    public void VersionSettingsPage_ModpackSection_ShouldSupportImportAndExportSubTabs()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "svl-version-modpack-tab-test-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new AppUserSettingsStore(root);
+            var localization = new LocalizationService(settings);
+
+            var vm = (VersionSettingsPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(VersionSettingsPageViewModel));
+            SetPrivateField(vm, "_localizationService", localization);
+            SetPrivateField(vm, "_modpackNavText", "整合包");
+            SetPrivateField(vm, "_exportNavText", "整合包");
+            SetPrivateField(vm, "_selectedSection", "Overview");
+            SetPrivateField(vm, "_isModpackImportTab", false);
+
+            Assert.AreEqual("整合包", vm.ModpackNavText);
+            Assert.AreEqual("整合包", vm.ExportNavText);
+
+            // 切换到整合包分区
+            vm.SwitchToModpackSectionCommand.Execute(null);
+            Assert.IsTrue(vm.IsModpackSection);
+            Assert.IsTrue(vm.IsExportSection);
+            Assert.IsFalse(vm.IsModpackImportTab);
+            Assert.IsTrue(vm.IsModpackExportTab);
+
+            // 切换到导入整合包子分栏
+            vm.SwitchModpackImportTabCommand.Execute(null);
+            Assert.IsTrue(vm.IsModpackImportTab);
+            Assert.IsFalse(vm.IsModpackExportTab);
+
+            // 切换回导出整合包子分栏
+            vm.SwitchModpackExportTabCommand.Execute(null);
+            Assert.IsFalse(vm.IsModpackImportTab);
+            Assert.IsTrue(vm.IsModpackExportTab);
+
+            // 测试在线整合包搜索跳转事件
+            var onlineSearchRequested = false;
+            vm.NavigateToModpackSearchRequested += () => onlineSearchRequested = true;
+            vm.NavigateToOnlineModpackSearchCommand.Execute(null);
+            Assert.IsTrue(onlineSearchRequested);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task SvlModpackInstall_ShouldRejectMissingManifest()
     {
         var root = Path.Combine(Path.GetTempPath(), "svl-missing-modpack-manifest-test-" + Guid.NewGuid().ToString("N"));
