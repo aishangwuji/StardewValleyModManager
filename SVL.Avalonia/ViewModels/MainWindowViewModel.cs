@@ -716,7 +716,7 @@ public partial class MainWindowViewModel : ObservableObject
         // 进入任务页前同步任务列表，确保历史任务能显示
         TaskStatusPage.SyncTasks(DownloadPage.DownloadTasks);
         UpdateTaskStatusOverview();
-        NavigateToPage("任务", TaskStatusPage);
+        NavigateToPage("任务", TaskStatusPage, clearBackStack: true);
     }
 
     private void HandleNavigateToDownload()
@@ -773,14 +773,14 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         TaskStatusPage.SetCurrentTask(request.ToTaskDisplayName(), "已加入队列");
-        NavigateToPage("任务", TaskStatusPage);
+        NavigateToPage("任务", TaskStatusPage, clearBackStack: true);
     }
 
     /// <summary>批量更新路由：把 VersionSettingsPage 收集的可更新 Mod 列表交给 DownloadPage 入队。</summary>
     private async void HandleBatchUpdateModsRequested(IReadOnlyList<ModBatchUpdateEntry> entries)
     {
         await DownloadPage.EnqueueBatchUpdateAsync(entries);
-        NavigateToPage("任务", TaskStatusPage);
+        NavigateToPage("任务", TaskStatusPage, clearBackStack: true);
     }
 
     /// <summary>导航到一级页面“启动”，清空返回栈并刷新本机实例状态。</summary>
