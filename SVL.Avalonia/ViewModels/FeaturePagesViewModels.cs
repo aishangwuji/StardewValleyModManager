@@ -4396,6 +4396,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private bool _includeMods = true;
 
     [ObservableProperty]
+    private bool _includeModFiles = true;
+
+    [ObservableProperty]
     private bool _includeModSettings = true;
 
     [ObservableProperty]
@@ -4603,6 +4606,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     [ObservableProperty]
     private string _includeModsText = "导出 Mod 清单";
+
+    [ObservableProperty]
+    private string _includeModFilesText = "包含 Mod 文件本体（完整离线包，开箱即用）";
 
     [ObservableProperty]
     private string _includeSettingsText = "导出 Mod 配置文件（config/*.json、根目录自定义 JSON）";
@@ -5252,11 +5258,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         ExportAuthorLabelText = L("VersionSettings.Export.AuthorLabel", "作者");
         ExportContentTitleText = L("VersionSettings.Export.ContentTitle", "导出内容");
         IncludeModsText = L("VersionSettings.Export.IncludeMods", "导出 Mod 清单");
+        IncludeModFilesText = L("VersionSettings.Export.IncludeModFiles", "包含 Mod 文件本体（完整离线包，开箱即用）");
         IncludeSettingsText = L("VersionSettings.Export.IncludeSettings", "导出 Mod 配置文件（config/*.json、根目录自定义 JSON）");
         IncludeLauncherText = L("VersionSettings.Export.IncludeLauncher", "导出当前 SVL 启动器文件");
         ExportSelectAllText = L("VersionSettings.Export.SelectAll", "全选/反选");
         ExportSourcePriorityHintText = L("VersionSettings.Export.SourcePriorityHint", "来源优先导出清单，无来源条目仅保留安装提示");
-        ExportStrategyText = L("VersionSettings.Export.Strategy", "导出策略：为遵循来源平台分发规则，导出包不直接包含 Mod 本体，仅导出清单及可选配置。");
+        UpdateExportStrategyText();
         SaveConfigText = L("VersionSettings.Export.SaveConfig", "保存配置");
         LoadConfigText = L("VersionSettings.Export.LoadConfig", "读取配置");
         BatchSelectedModsFormatText = L("VersionSettings.Batch.SelectedModsFormat", "已选择 {0} 个 Mod");
@@ -5410,6 +5417,26 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     {
         OnPropertyChanged(nameof(ShowExportModList));
         OnPropertyChanged(nameof(CanStartExport));
+        UpdateExportStrategyText();
+    }
+
+    partial void OnIncludeModFilesChanged(bool value)
+    {
+        UpdateExportStrategyText();
+    }
+
+    private void UpdateExportStrategyText()
+    {
+        if (IncludeMods && IncludeModFiles)
+        {
+            ExportStrategyText = L("VersionSettings.Export.Strategy.Full",
+                "导出策略：当前为完整离线整合包。选中的 Mod 本体文件将全部打包，接收方导入后零网络依赖，开箱即用。");
+        }
+        else
+        {
+            ExportStrategyText = L("VersionSettings.Export.Strategy.ManifestOnly",
+                "导出策略：当前为轻量清单包。仅导出下载清单与配置文件，包体小，接收方导入时需连网下载 Mod。");
+        }
     }
 
     partial void OnIsExportingChanged(bool value)
@@ -12140,6 +12167,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 ModpackVersion = ModpackVersion,
                 ModpackAuthor = ModpackAuthor,
                 IncludeMods = IncludeMods,
+                IncludeModFiles = IncludeModFiles,
                 IncludeModSettings = IncludeModSettings,
                 IncludeSvlLauncher = IncludeSvlLauncher,
                 SelectedModKeys = ExportModItems
@@ -12192,6 +12220,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             ModpackVersion = FirstNonEmpty(config.ModpackVersion, ModpackVersion);
             ModpackAuthor = FirstNonEmpty(config.ModpackAuthor, ModpackAuthor);
             IncludeMods = config.IncludeMods;
+            IncludeModFiles = config.IncludeModFiles;
             IncludeModSettings = config.IncludeModSettings;
             IncludeSvlLauncher = config.IncludeSvlLauncher;
 
@@ -12336,7 +12365,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
             ExportProgress = 100;
             LastExportPath = outputPath;
-            ExportStatusMessage = unresolvedSourceFileIds > 0
+            ExportStatusMessage = (unresolvedSourceFileIds > 0 && !IncludeModFiles)
                 ? $"导出完成：{Path.GetFileName(outputPath)}（{unresolvedSourceFileIds} 个 Nexus/CurseForge Mod 缺少 FileID）"
                 : $"导出完成：{Path.GetFileName(outputPath)}";
             Status = ExportStatusMessage;
@@ -12558,6 +12587,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         try
         {
+            var isBundlingModFiles = IncludeMods && IncludeModFiles;
+
             var exportManifest = new VersionSettingsExportManifest
             {
                 SchemaVersion = 1,
@@ -12567,9 +12598,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 ExportedAtUtc = DateTimeOffset.UtcNow,
                 InstancePath = instancePath,
                 IncludeMods = IncludeMods,
+                IncludeModFiles = IncludeModFiles,
                 IncludeModSettings = IncludeModSettings,
                 IncludeSvlLauncher = IncludeSvlLauncher,
-                Notes = "遵循来源平台分发规则，导出包不包含 Mod 本体，仅包含清单与可选配置。",
+                Notes = isBundlingModFiles
+                    ? "完整离线整合包，包含 Mod 实体文件与配置文件，安装零网络依赖。"
+                    : "轻量清单整合包，仅包含来源清单与配置文件，导入时需下载 Mod。",
                 Mods = selectedMods.Select(mod => new VersionSettingsExportManifestMod
                 {
                     Name = mod.Name,
@@ -12581,7 +12615,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                     SourceProjectId = mod.SourceProjectId,
                     SourceFileId = mod.SourceFileId,
                     SourceDownloadUrl = mod.SourceDownloadUrl,
-                    RequiresManualInstall = !mod.HasCompleteSourceCredential
+                    RequiresManualInstall = !isBundlingModFiles && !mod.HasCompleteSourceCredential
                 }).ToList()
             };
 
@@ -12615,11 +12649,30 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 JsonSerializer.Serialize(svlManifest, new JsonSerializerOptions { WriteIndented = true }),
                 Encoding.UTF8);
 
+            // 当勾选“包含 Mod 文件本体”时，将 Mod 目录物理复制到 ZIP 根目录下的 mods/ 文件夹中，
+            // 接收方使用 ModpackInstallService 解压时即可直接安装本体，零网络开箱即用。
+            if (isBundlingModFiles)
+            {
+                var modsRoot = Path.Combine(tempRoot, "mods");
+                Directory.CreateDirectory(modsRoot);
+                foreach (var mod in selectedMods)
+                {
+                    if (string.IsNullOrWhiteSpace(mod.ModPath) || !Directory.Exists(mod.ModPath))
+                    {
+                        continue;
+                    }
+
+                    var folderName = SanitizeFileName(FirstNonEmpty(mod.DirectoryName, mod.UniqueId, Path.GetFileName(mod.ModPath)));
+                    var targetModDir = Path.Combine(modsRoot, folderName);
+                    CopyDirectory(mod.ModPath, targetModDir);
+                }
+            }
+
             var sourceEntries = selectedMods.Select(mod => new SvlExportSourceEntry
             {
                 Name = FirstNonEmpty(mod.Name, mod.UniqueId, mod.DirectoryName),
                 DirectoryName = FirstNonEmpty(mod.DirectoryName, mod.UniqueId, mod.Name),
-                Bundled = false,
+                Bundled = isBundlingModFiles,
                 IsParentMod = mod.IsCompositeParent && mod.ChildMods.Count > 0,
                 ParentMod = mod.ParentMod,
                 ChildMods = mod.ChildMods.ToList(),
@@ -14187,6 +14240,8 @@ public sealed class VersionSettingsExportConfig
 
     public bool IncludeMods { get; set; } = true;
 
+    public bool IncludeModFiles { get; set; } = true;
+
     public bool IncludeModSettings { get; set; } = true;
 
     public bool IncludeSvlLauncher { get; set; }
@@ -14209,6 +14264,8 @@ public sealed class VersionSettingsExportManifest
     public string InstancePath { get; set; } = string.Empty;
 
     public bool IncludeMods { get; set; }
+
+    public bool IncludeModFiles { get; set; }
 
     public bool IncludeModSettings { get; set; }
 

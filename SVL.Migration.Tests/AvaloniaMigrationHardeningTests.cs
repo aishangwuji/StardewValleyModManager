@@ -3588,6 +3588,120 @@ public sealed class AvaloniaMigrationHardeningTests
     }
 
     [TestMethod]
+    public async Task ExportedSvlModpack_WithIncludeModFiles_ShouldBundleModsAndInstallOffline()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "svl-export-bundled-offline-test-" + Guid.NewGuid().ToString("N"));
+        var sourceInstance = Path.Combine(root, "source-instance");
+        var sourceMod = Path.Combine(sourceInstance, "Mods", "OfflineMod");
+        var outputPath = Path.Combine(root, "Offline Pack.zip");
+        var targetBase = Path.Combine(root, "target-base");
+        var registry = new InstanceRegistryStore();
+
+        try
+        {
+            Directory.CreateDirectory(sourceMod);
+            File.WriteAllText(
+                Path.Combine(sourceMod, "manifest.json"),
+                "{\"Name\":\"OfflineMod\",\"UniqueID\":\"Example.OfflineMod\",\"Version\":\"2.0.0\"}");
+            File.WriteAllText(Path.Combine(sourceMod, "content.json"), "{\"data\":123}");
+
+            var viewModel = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+                typeof(VersionSettingsPageViewModel));
+            SetPrivateField(viewModel, "_modpackName", "Offline Pack");
+            SetPrivateField(viewModel, "_modpackVersion", "1.0.0");
+            SetPrivateField(viewModel, "_modpackAuthor", "SVL Bundled Test");
+            SetPrivateField(viewModel, "_smapiVersionText", "4.5.2");
+            SetPrivateField(viewModel, "_includeMods", true);
+            SetPrivateField(viewModel, "_includeModFiles", true);
+            SetPrivateField(viewModel, "_includeModSettings", false);
+            SetPrivateField(viewModel, "_includeSvlLauncher", false);
+            SetPrivateField(viewModel, "_isSmapiInstance", true);
+
+            var itemType = typeof(VersionSettingsPageViewModel).Assembly.GetType(
+                "SVL.Avalonia.ViewModels.ExportModPackageItem");
+            Assert.IsNotNull(itemType);
+            var item = Activator.CreateInstance(itemType!, nonPublic: true);
+            Assert.IsNotNull(item);
+            SetProperty(item!, "Name", "OfflineMod");
+            SetProperty(item!, "UniqueId", "Example.OfflineMod");
+            SetProperty(item!, "Version", "2.0.0");
+            SetProperty(item!, "Author", "SVL Bundled Test");
+            SetProperty(item!, "ModPath", sourceMod);
+            SetProperty(item!, "DirectoryName", "OfflineMod");
+            SetProperty(item!, "SourcePlatform", "未知");
+
+            var itemListType = typeof(List<>).MakeGenericType(itemType!);
+            var itemList = Activator.CreateInstance(itemListType)!;
+            itemListType.GetMethod("Add")!.Invoke(itemList, [item]);
+
+            var exportMethod = typeof(VersionSettingsPageViewModel).GetMethod(
+                "BuildVersionSettingsExportPackage",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsNotNull(exportMethod);
+            exportMethod!.Invoke(viewModel, [outputPath, sourceInstance, itemList]);
+
+            Assert.IsTrue(File.Exists(outputPath));
+
+            using (var exported = System.IO.Compression.ZipFile.OpenRead(outputPath))
+            {
+                Assert.IsNotNull(exported.GetEntry("modpack.json"));
+                Assert.IsNotNull(exported.GetEntry("sources.json"));
+                Assert.IsNotNull(exported.GetEntry("export-manifest.json"));
+                // 实体文件必须打包在 mods/ 目录下
+                Assert.IsNotNull(exported.GetEntry("mods/OfflineMod/manifest.json"));
+                Assert.IsNotNull(exported.GetEntry("mods/OfflineMod/content.json"));
+
+                using var sourcesReader = new StreamReader(exported.GetEntry("sources.json")!.Open());
+                var sourcesJson = await sourcesReader.ReadToEndAsync();
+                StringAssert.Contains(sourcesJson, "\"bundled\": true");
+            }
+
+            Directory.CreateDirectory(Path.Combine(targetBase, "versions", "SMAPI 4.5.2"));
+            File.WriteAllText(
+                Path.Combine(targetBase, "versions", "SMAPI 4.5.2", "StardewModdingAPI.dll"),
+                "existing-smapi");
+
+            var settingsStore = new AppUserSettingsStore(Path.Combine(root, "settings"));
+            var installService = new ModpackInstallService(
+                new RoundTripGameInstallPathLocator(targetBase),
+                new RoundTripSmapiInstallService(),
+                new HttpDownloadService(settingsStore),
+                new RemoteCatalogService(settingsStore),
+                settingsStore,
+                new NexusModDownloadResolverService(),
+                new SVL.Core.Platform.Abstractions.NxmLinkParser());
+
+            // 导入时无需网络，直接解压 bundled mod
+            var result = await installService.InstallSvlModpackAsync(
+                outputPath,
+                "Imported Offline Pack",
+                targetBase,
+                onProgress: null);
+
+            Assert.IsTrue(result.IsSuccess, result.Message);
+            Assert.AreEqual(1, result.InstalledMods.Count);
+            Assert.AreEqual(0, result.FailedMods.Count);
+            var importedRoot = Path.Combine(targetBase, "versions", "Imported Offline Pack");
+            Assert.IsTrue(File.Exists(Path.Combine(importedRoot, "Mods", "OfflineMod", "manifest.json")));
+            Assert.IsTrue(File.Exists(Path.Combine(importedRoot, "Mods", "OfflineMod", "content.json")));
+        }
+        finally
+        {
+            var records = registry.LoadManualInstances();
+            records.RemoveAll(record =>
+                string.Equals(record.Name, "Imported Offline Pack", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(record.Path) &&
+                record.Path.StartsWith(targetBase, StringComparison.OrdinalIgnoreCase));
+            registry.SaveManualInstances(records);
+
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task SvlModpackInstall_ShouldRejectMissingManifest()
     {
         var root = Path.Combine(Path.GetTempPath(), "svl-missing-modpack-manifest-test-" + Guid.NewGuid().ToString("N"));

@@ -1121,6 +1121,10 @@
               <StackPanel Spacing="6">
                 <CheckBox Content="{Binding IncludeModsText}"
                           IsChecked="{Binding IncludeMods}" />
+                <CheckBox Content="{Binding IncludeModFilesText}"
+                          IsChecked="{Binding IncludeModFiles}"
+                          IsEnabled="{Binding IncludeMods}"
+                          Margin="24,0,0,0" />
                 <CheckBox Content="{Binding IncludeSettingsText}"
                           IsChecked="{Binding IncludeModSettings}" />
                 <CheckBox Content="{Binding IncludeLauncherText}"
