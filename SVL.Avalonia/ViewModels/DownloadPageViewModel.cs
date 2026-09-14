@@ -366,6 +366,199 @@ public partial class DownloadPageViewModel : ObservableObject
     private string _openModpackSearchButtonText = "进入 Modpack 搜索页";
 
     [ObservableProperty]
+    private string _categoryGameText = "游戏本体";
+
+    [ObservableProperty]
+    private string _categoryGameSubText = "SteamCMD 登录下载";
+
+    [ObservableProperty]
+    private string _filterSourceLabelText = "来源";
+
+    [ObservableProperty]
+    private string _filterVersionLabelText = "版本";
+
+    [ObservableProperty]
+    private string _filterTypeLabelText = "类型";
+
+    [ObservableProperty]
+    private string _filterResetText = "重置";
+
+    [ObservableProperty]
+    private string _modpackSearchTitleText2 = "搜索 Modpack";
+
+    [ObservableProperty]
+    private string _modpackSearchWatermarkText2 = "输入 Modpack 关键词";
+
+    [ObservableProperty]
+    private string _gameTitleText = "游戏本体下载（SteamCMD）";
+
+    [ObservableProperty]
+    private string _gameLinearFlowText = "线性流程：安装 SteamCMD → 登录 Steam 账号 → 选择版本下载。账号需已拥有该游戏。版本通过 SteamCMD 自动获取，也可输入自定义 Manifest ID。";
+
+    [ObservableProperty]
+    private string _gameStepInstallText = "安装";
+
+    [ObservableProperty]
+    private string _gameStepLoginText = "登录";
+
+    [ObservableProperty]
+    private string _gameStepDownloadText = "版本下载";
+
+    [ObservableProperty]
+    private string _gameInstallTitleText = "安装 SteamCMD";
+
+    [ObservableProperty]
+    private string _gameInstallDescText = "首次使用需下载并解压 SteamCMD 命令行客户端（约 2MB），用于登录与下载游戏文件。";
+
+    [ObservableProperty]
+    private string _steamCmdStatusLabelText = "SteamCMD 状态：";
+
+    [ObservableProperty]
+    private string _downloadSteamCmdText = "下载 SteamCMD";
+
+    [ObservableProperty]
+    private string _gameLoginTitleText = "Steam 账号登录";
+
+    [ObservableProperty]
+    private string _gameAccountLabelText = "账号";
+
+    [ObservableProperty]
+    private string _gameAccountWatermarkText = "Steam 登录账号";
+
+    [ObservableProperty]
+    private string _gamePasswordLabelText = "密码";
+
+    [ObservableProperty]
+    private string _gamePasswordWatermarkText = "Steam 密码";
+
+    [ObservableProperty]
+    private string _gameGuardLabelText = "Steam Guard 验证码（如需要）";
+
+    [ObservableProperty]
+    private string _gameGuardWatermarkText = "邮箱验证码 / 手机令牌";
+
+    [ObservableProperty]
+    private string _gameLoginButtonText = "登录";
+
+    [ObservableProperty]
+    private string _guardTitleText = "关于 Steam Guard 登录";
+
+    [ObservableProperty]
+    private string _guardDesc1Text = "若账号开启手机令牌：点击登录后请打开 Steam 手机 APP 批准本次登录，或通过 APP 获取 Steam Guard 验证码填入上方，直接登录。";
+
+    [ObservableProperty]
+    private string _guardDesc2Text = "若等待超时（约 180 秒）登录失败，请重试。";
+
+    [ObservableProperty]
+    private string _guardDesc3Text = "登录信息不会被存储。";
+
+    [ObservableProperty]
+    private string _selectVersionTitleText = "选择游戏版本并下载";
+
+    [ObservableProperty]
+    private string _selectVersionDescText = "版本通过 SteamCMD 自动获取（当前分支/历史分支）；也可输入自定义 Manifest ID。";
+
+    [ObservableProperty]
+    private string _steamVersionsLabelText = "SteamCMD 自动获取的版本";
+
+    [ObservableProperty]
+    private string _customManifestLabelText = "自定义 Manifest ID（可选，优先于下拉）";
+
+    [ObservableProperty]
+    private string _customManifestWatermarkText = "从 SteamDB 查询 Manifest ID";
+
+    [ObservableProperty]
+    private string _targetPathLabelText = "保存目录（须为空目录）";
+
+    [ObservableProperty]
+    private string _targetPathWatermarkText = "游戏文件保存位置";
+
+    [ObservableProperty]
+    private string _browseText = "浏览";
+
+    [ObservableProperty]
+    private string _downloadGameButtonText = "下载游戏文件";
+
+    [ObservableProperty]
+    private string _prevStepText = "上一步";
+
+    [ObservableProperty]
+    private string _nextStepText = "下一步";
+
+    [ObservableProperty]
+    private string _steamLogTitleText = "SteamCMD 日志";
+
+    [ObservableProperty]
+    private string _customCommandWatermarkText = "输入自定义 SteamCMD 指令，如 app_update 413150 或 download_depot 413150 413151";
+
+    [ObservableProperty]
+    private string _sendText = "发送";
+
+    [ObservableProperty]
+    private string _commandHintText = "提示：指令会以 +指令 +quit 形式执行；登录建议在登录页填写以支持 Steam Guard。";
+
+    [ObservableProperty]
+    private string _smapiListTitleText = "SMAPI 搜索结果";
+
+    [ObservableProperty]
+    private string _listTitleSmapiText = "SMAPI 资源列表";
+
+    [ObservableProperty]
+    private string _listTitleModsText = "Mod 资源列表";
+
+    [ObservableProperty]
+    private string _listTitleModpacksText = "Modpack 资源列表";
+
+    [ObservableProperty]
+    private string _listTitleDefaultText = "资源列表";
+
+    [ObservableProperty]
+    private string _noItemsText = "暂无资源，可尝试搜索关键词";
+
+    [ObservableProperty]
+    private string _searchLoadingText = "加载中...";
+
+    [ObservableProperty]
+    private string _paginationPrevText = "上一页";
+
+    [ObservableProperty]
+    private string _paginationNextText = "下一页";
+
+    [ObservableProperty]
+    private string _detailViewText = "查看详情";
+
+    [ObservableProperty]
+    private string _detailEnterText = "进入详情";
+    [ObservableProperty]
+    private string _filterSourceTipText = "来源筛选：全部/NexusMods/Curseforge";
+
+    [ObservableProperty]
+    private string _filterVersionTipText = "游戏版本筛选：按兼容版本过滤";
+
+    [ObservableProperty]
+    private string _filterTypeTipText = "类型筛选：按功能类别过滤";
+
+    [ObservableProperty]
+    private string _dismissForeverText = "不再提示";
+
+    [ObservableProperty]
+    private string _dismissForeverTipText = "持久化隐藏，直到在设置页重新开启";
+
+    [ObservableProperty]
+    private string _dismissSessionText = "本次使用期间不提示";
+
+    [ObservableProperty]
+    private string _dismissSessionTipText = "仅在本次运行期间隐藏";
+
+    [ObservableProperty]
+    private string _goLoginText = "去登录";
+
+    [ObservableProperty]
+    private string _goLoginTipText = "跳转到设置页 Nexus 登录区";
+
+
+
+    [ObservableProperty]
     private string _categorySmapiIconSource = "avares://SVL.Avalonia/Assets/Icons/Modded.png";
 
     [ObservableProperty]
@@ -1144,6 +1337,71 @@ public partial class DownloadPageViewModel : ObservableObject
         ModpackFileNameWatermarkText = _localizationService.Get("Download.Modpack.FileNameWatermark");
         ModpackImportButtonText = _localizationService.Get("Download.Modpack.Import");
         OpenModpackSearchButtonText = _localizationService.Get("Download.Modpack.OpenSearch");
+
+        CategoryGameText = _localizationService.Get("Download.Category.Game");
+        CategoryGameSubText = _localizationService.Get("Download.Category.GameSub");
+        FilterSourceLabelText = _localizationService.Get("Download.Filter.SourceLabel");
+        FilterVersionLabelText = _localizationService.Get("Download.Filter.VersionLabel");
+        FilterTypeLabelText = _localizationService.Get("Download.Filter.TypeLabel");
+        FilterResetText = _localizationService.Get("Download.Filter.Reset");
+        ModpackSearchTitleText2 = _localizationService.Get("Download.Search.ModpackTitle");
+        ModpackSearchWatermarkText2 = _localizationService.Get("Download.Search.ModpackWatermark");
+        GameTitleText = _localizationService.Get("Download.Game.Title");
+        GameLinearFlowText = _localizationService.Get("Download.Game.LinearFlow");
+        GameStepInstallText = _localizationService.Get("Download.Game.Step.Install");
+        GameStepLoginText = _localizationService.Get("Download.Game.Step.Login");
+        GameStepDownloadText = _localizationService.Get("Download.Game.Step.Download");
+        GameInstallTitleText = _localizationService.Get("Download.Game.InstallTitle");
+        GameInstallDescText = _localizationService.Get("Download.Game.InstallDesc");
+        SteamCmdStatusLabelText = _localizationService.Get("Download.Game.SteamCmdStatus");
+        DownloadSteamCmdText = _localizationService.Get("Download.Game.DownloadSteamCmd");
+        GameLoginTitleText = _localizationService.Get("Download.Game.LoginTitle");
+        GameAccountLabelText = _localizationService.Get("Download.Game.AccountLabel");
+        GameAccountWatermarkText = _localizationService.Get("Download.Game.AccountWatermark");
+        GamePasswordLabelText = _localizationService.Get("Download.Game.PasswordLabel");
+        GamePasswordWatermarkText = _localizationService.Get("Download.Game.PasswordWatermark");
+        GameGuardLabelText = _localizationService.Get("Download.Game.GuardLabel");
+        GameGuardWatermarkText = _localizationService.Get("Download.Game.GuardWatermark");
+        GameLoginButtonText = _localizationService.Get("Download.Game.LoginButton");
+        GuardTitleText = _localizationService.Get("Download.Game.GuardTitle");
+        GuardDesc1Text = _localizationService.Get("Download.Game.GuardDesc1");
+        GuardDesc2Text = _localizationService.Get("Download.Game.GuardDesc2");
+        GuardDesc3Text = _localizationService.Get("Download.Game.GuardDesc3");
+        SelectVersionTitleText = _localizationService.Get("Download.Game.SelectVersionTitle");
+        SelectVersionDescText = _localizationService.Get("Download.Game.SelectVersionDesc");
+        SteamVersionsLabelText = _localizationService.Get("Download.Game.SteamVersionsLabel");
+        CustomManifestLabelText = _localizationService.Get("Download.Game.CustomManifestLabel");
+        CustomManifestWatermarkText = _localizationService.Get("Download.Game.CustomManifestWatermark");
+        TargetPathLabelText = _localizationService.Get("Download.Game.TargetPathLabel");
+        TargetPathWatermarkText = _localizationService.Get("Download.Game.TargetPathWatermark");
+        BrowseText = _localizationService.Get("Download.Game.Browse");
+        DownloadGameButtonText = _localizationService.Get("Download.Game.DownloadButton");
+        PrevStepText = _localizationService.Get("Download.Game.PrevStep");
+        NextStepText = _localizationService.Get("Download.Game.NextStep");
+        SteamLogTitleText = _localizationService.Get("Download.Game.LogTitle");
+        CustomCommandWatermarkText = _localizationService.Get("Download.Game.CustomCommandWatermark");
+        SendText = _localizationService.Get("Download.Game.Send");
+        CommandHintText = _localizationService.Get("Download.Game.CommandHint");
+        SmapiListTitleText = _localizationService.Get("Download.Smapi.ListTitle");
+        ListTitleSmapiText = _localizationService.Get("Download.Category.ListTitle.Smapi");
+        ListTitleModsText = _localizationService.Get("Download.Category.ListTitle.Mods");
+        ListTitleModpacksText = _localizationService.Get("Download.Category.ListTitle.Modpacks");
+        ListTitleDefaultText = _localizationService.Get("Download.Category.ListTitle.Default");
+        NoItemsText = _localizationService.Get("Download.Category.NoItems");
+        SearchLoadingText = _localizationService.Get("Download.Search.Loading");
+        PaginationPrevText = _localizationService.Get("Download.Pagination.Prev");
+        PaginationNextText = _localizationService.Get("Download.Pagination.Next");
+        DetailViewText = _localizationService.Get("Download.Detail.View");
+        DetailEnterText = _localizationService.Get("Download.Detail.Enter");
+        FilterSourceTipText = _localizationService.Get("Download.Filter.SourceTip");
+        FilterVersionTipText = _localizationService.Get("Download.Filter.VersionTip");
+        FilterTypeTipText = _localizationService.Get("Download.Filter.TypeTip");
+        DismissForeverText = _localizationService.Get("Download.Nexus.DismissForever");
+        DismissForeverTipText = _localizationService.Get("Download.Nexus.DismissForeverTip");
+        DismissSessionText = _localizationService.Get("Download.Nexus.DismissSession");
+        DismissSessionTipText = _localizationService.Get("Download.Nexus.DismissSessionTip");
+        GoLoginText = _localizationService.Get("Download.Nexus.GoLogin");
+        GoLoginTipText = _localizationService.Get("Download.Nexus.GoLoginTip");
     }
 
     private void OnTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)

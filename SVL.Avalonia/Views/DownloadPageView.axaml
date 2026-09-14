@@ -20,8 +20,8 @@
             <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsGameCategory}" />
             <Image Grid.Column="1" Source="{Binding CategoryGameIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
             <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-              <TextBlock Text="游戏本体" FontWeight="SemiBold" />
-              <TextBlock Text="SteamCMD 登录下载" FontSize="11" Opacity="0.72" />
+              <TextBlock Text="{Binding CategoryGameText}" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding CategoryGameSubText}" FontSize="11" Opacity="0.72" />
             </StackPanel>
           </Grid>
         </Button>
@@ -192,13 +192,13 @@
             </Grid>
             <!-- 来源/版本/类型 + 重置：左标题右下拉框单行 -->
             <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*,Auto" Margin="0,2,0,0">
-              <TextBlock Grid.Column="0" Text="来源" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
-              <ComboBox Grid.Column="1" ItemsSource="{Binding ModSources}" SelectedItem="{Binding SelectedModSource}" Margin="0,0,12,0" ToolTip.Tip="来源筛选：全部/NexusMods/Curseforge" />
-              <TextBlock Grid.Column="2" Text="版本" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
-              <ComboBox Grid.Column="3" ItemsSource="{Binding ModGameVersions}" SelectedItem="{Binding SelectedModGameVersion}" Margin="0,0,12,0" ToolTip.Tip="游戏版本筛选：按兼容版本过滤" />
-              <TextBlock Grid.Column="4" Text="类型" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
-              <ComboBox Grid.Column="5" ItemsSource="{Binding ModTypes}" SelectedItem="{Binding SelectedModType}" Margin="0,0,12,0" ToolTip.Tip="类型筛选：按功能类别过滤" />
-              <Button Grid.Column="6" Content="重置" Command="{Binding ResetModFiltersCommand}" HorizontalAlignment="Right" MinWidth="60" Padding="12,4" />
+              <TextBlock Grid.Column="0" Text="{Binding FilterSourceLabelText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
+              <ComboBox Grid.Column="1" ItemsSource="{Binding ModSources}" SelectedItem="{Binding SelectedModSource}" Margin="0,0,12,0" ToolTip.Tip="{Binding FilterSourceTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+              <TextBlock Grid.Column="2" Text="{Binding FilterVersionLabelText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
+              <ComboBox Grid.Column="3" ItemsSource="{Binding ModGameVersions}" SelectedItem="{Binding SelectedModGameVersion}" Margin="0,0,12,0" ToolTip.Tip="{Binding FilterVersionTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+              <TextBlock Grid.Column="4" Text="{Binding FilterTypeLabelText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
+              <ComboBox Grid.Column="5" ItemsSource="{Binding ModTypes}" SelectedItem="{Binding SelectedModType}" Margin="0,0,12,0" ToolTip.Tip="{Binding FilterTypeTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+              <Button Grid.Column="6" Content="{Binding FilterResetText}" Command="{Binding ResetModFiltersCommand}" HorizontalAlignment="Right" MinWidth="60" Padding="12,4" />
             </Grid>
             <TextBlock Text="{Binding SelectedModSourceDescription}" Opacity="0.72" FontSize="11" />
             <Border IsVisible="{Binding HasNexusAuthExpiredNotice}"
@@ -211,20 +211,20 @@
                 <TextBlock Text="{Binding NexusAuthExpiredNotice}"
                            TextWrapping="Wrap" />
                 <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                  <Button Content="不再提示"
+                  <Button Content="{Binding DismissForeverText}"
                           Command="{Binding DismissNexusAuthNotificationPermanentlyCommand}"
                           Margin="0,0,8,0"
                           MinWidth="80"
-                          ToolTip.Tip="持久化隐藏，直到在设置页重新开启" />
-                  <Button Content="本次使用期间不提示"
+                          ToolTip.Tip="{Binding DismissForeverTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                  <Button Content="{Binding DismissSessionText}"
                           Command="{Binding DismissNexusAuthNotificationThisSessionCommand}"
                           Margin="0,0,8,0"
                           MinWidth="80"
-                          ToolTip.Tip="仅在本次运行期间隐藏" />
-                  <Button Content="去登录"
+                          ToolTip.Tip="{Binding DismissSessionTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                  <Button Content="{Binding GoLoginText}"
                           Command="{Binding GoToNexusLoginCommand}"
                           MinWidth="80"
-                          ToolTip.Tip="跳转到设置页 Nexus 登录区" />
+                          ToolTip.Tip="{Binding GoLoginTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                 </WrapPanel>
               </StackPanel>
             </Border>
@@ -233,9 +233,9 @@
 
         <Border Grid.Row="0" Classes="hintCard" Margin="0,0,0,12" IsVisible="{Binding IsModpacksCategory}">
           <StackPanel Spacing="8">
-            <TextBlock Text="搜索 Modpack" Classes="hintTitle" />
+            <TextBlock Text="{Binding ModpackSearchTitleText2}" Classes="hintTitle" />
             <Grid ColumnDefinitions="*,Auto,Auto">
-              <TextBox Grid.Column="0" Text="{Binding ModpackSearchText}" Watermark="输入 Modpack 关键词" Margin="0,0,8,0" />
+              <TextBox Grid.Column="0" Text="{Binding ModpackSearchText}" Watermark="{Binding ModpackSearchWatermarkText2}" Margin="0,0,8,0" />
               <ComboBox Grid.Column="1" ItemsSource="{Binding ModpackSources}" SelectedItem="{Binding SelectedModpackSource}" Width="120" Margin="0,0,8,0" />
               <Button Grid.Column="2" Content="{Binding SearchButtonText}" Command="{Binding SearchModpacksCommand}" />
             </Grid>
@@ -261,8 +261,8 @@
             <!-- 游戏本体下载（SteamCMD） -->
             <Border Classes="hintCard" IsVisible="{Binding IsGameCategory}">
               <StackPanel Spacing="8">
-                <TextBlock Text="游戏本体下载（SteamCMD）" Classes="hintTitle" />
-                <TextBlock Text="线性流程：安装 SteamCMD → 登录 Steam 账号 → 选择版本下载。账号需已拥有该游戏。版本通过 SteamCMD 自动获取，也可输入自定义 Manifest ID。" Opacity="0.72" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding GameTitleText}" Classes="hintTitle" />
+                <TextBlock Text="{Binding GameLinearFlowText}" Opacity="0.72" TextWrapping="Wrap" />
 
                 <!-- 步骤指示器 -->
                 <Grid ColumnDefinitions="*,*,*" Margin="0,4,0,0">
@@ -274,7 +274,7 @@
                     <Border Width="24" Height="24" CornerRadius="12" Background="{DynamicResource IconBg}" IsVisible="{Binding !IsSteamCmdStepInstall}">
                       <TextBlock Text="1" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="安装" FontSize="11" HorizontalAlignment="Center" Foreground="{DynamicResource DefaultTextForeground}" />
+                    <TextBlock Text="{Binding GameStepInstallText}" FontSize="11" HorizontalAlignment="Center" Foreground="{DynamicResource DefaultTextForeground}" />
                   </StackPanel>
                   <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Center">
                     <Border Width="24" Height="24" CornerRadius="12"
@@ -285,7 +285,7 @@
                             Background="{DynamicResource CategoryIndicator}" IsVisible="{Binding IsSteamCmdStepLogin}">
                       <TextBlock Text="2" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="登录" FontSize="11" HorizontalAlignment="Center" Foreground="{DynamicResource DefaultTextForeground}" />
+                    <TextBlock Text="{Binding GameStepLoginText}" FontSize="11" HorizontalAlignment="Center" Foreground="{DynamicResource DefaultTextForeground}" />
                   </StackPanel>
                   <StackPanel Grid.Column="2" Spacing="2" HorizontalAlignment="Center">
                     <Border Width="24" Height="24" CornerRadius="12"
@@ -296,81 +296,81 @@
                             Background="{DynamicResource CategoryIndicator}" IsVisible="{Binding IsSteamCmdStepDownload}">
                       <TextBlock Text="3" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="版本下载" FontSize="11" HorizontalAlignment="Center" Foreground="{DynamicResource DefaultTextForeground}" />
+                    <TextBlock Text="{Binding GameStepDownloadText}" FontSize="11" HorizontalAlignment="Center" Foreground="{DynamicResource DefaultTextForeground}" />
                   </StackPanel>
                 </Grid>
 
                 <!-- 第 1 页：安装 -->
                 <StackPanel Spacing="6" IsVisible="{Binding IsSteamCmdStepInstall}">
-                  <TextBlock Text="安装 SteamCMD" FontWeight="SemiBold" Margin="0,4,0,0" />
-                  <TextBlock Text="首次使用需下载并解压 SteamCMD 命令行客户端（约 2MB），用于登录与下载游戏文件。" Opacity="0.72" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding GameInstallTitleText}" FontWeight="SemiBold" Margin="0,4,0,0" />
+                  <TextBlock Text="{Binding GameInstallDescText}" Opacity="0.72" TextWrapping="Wrap" />
                   <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="0,4,0,0">
-                    <TextBlock Grid.Column="0" Text="SteamCMD 状态：" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="0" Text="{Binding SteamCmdStatusLabelText}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="{Binding SteamCmdStatusText}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
                     <TextBlock Grid.Column="2" Text="{Binding Status}" Opacity="0.7" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                    <Button Grid.Column="3" Content="下载 SteamCMD" Command="{Binding EnsureSteamCmdCommand}"
+                    <Button Grid.Column="3" Content="{Binding DownloadSteamCmdText}" Command="{Binding EnsureSteamCmdCommand}"
                             IsEnabled="{Binding !IsSteamCmdBusy}" MinWidth="110" Margin="8,0,0,0" />
                   </Grid>
                 </StackPanel>
 
                 <!-- 第 2 页：登录 -->
                 <StackPanel Spacing="6" IsVisible="{Binding IsSteamCmdStepLogin}">
-                  <TextBlock Text="Steam 账号登录" FontWeight="SemiBold" Margin="0,4,0,0" />
+                  <TextBlock Text="{Binding GameLoginTitleText}" FontWeight="SemiBold" Margin="0,4,0,0" />
                   <Grid ColumnDefinitions="*,*">
                     <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,8,0">
-                      <TextBlock Text="账号" FontSize="12" />
-                      <TextBox Text="{Binding SteamUsername}" Watermark="Steam 登录账号" />
+                      <TextBlock Text="{Binding GameAccountLabelText}" FontSize="12" />
+                      <TextBox Text="{Binding SteamUsername}" Watermark="{Binding GameAccountWatermarkText}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="4">
-                      <TextBlock Text="密码" FontSize="12" />
-                      <TextBox Text="{Binding SteamPassword}" PasswordChar="*" Watermark="Steam 密码" />
+                      <TextBlock Text="{Binding GamePasswordLabelText}" FontSize="12" />
+                      <TextBox Text="{Binding SteamPassword}" PasswordChar="*" Watermark="{Binding GamePasswordWatermarkText}" />
                     </StackPanel>
                   </Grid>
                   <Grid ColumnDefinitions="*,Auto">
                     <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,8,0">
-                      <TextBlock Text="Steam Guard 验证码（如需要）" FontSize="12" />
-                      <TextBox Text="{Binding SteamGuardCode}" Watermark="邮箱验证码 / 手机令牌" />
+                      <TextBlock Text="{Binding GameGuardLabelText}" FontSize="12" />
+                      <TextBox Text="{Binding SteamGuardCode}" Watermark="{Binding GameGuardWatermarkText}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="登录" Command="{Binding SteamCmdLoginCommand}"
+                    <Button Grid.Column="1" Content="{Binding GameLoginButtonText}" Command="{Binding SteamCmdLoginCommand}"
                             IsEnabled="{Binding !IsSteamCmdBusy}" VerticalAlignment="Bottom" MinWidth="90" />
                   </Grid>
                   <Border Background="{DynamicResource WarningBg}" CornerRadius="6" Padding="8" Margin="0,2,0,0">
                     <StackPanel Spacing="3">
-                      <TextBlock Text="关于 Steam Guard 登录" FontWeight="SemiBold" FontSize="12" />
-                      <TextBlock Text="若账号开启手机令牌：点击登录后请打开 Steam 手机 APP 批准本次登录，或通过 APP 获取 Steam Guard 验证码填入上方，直接登录。" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
-                      <TextBlock Text="若等待超时（约 180 秒）登录失败，请重试。" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
-                      <TextBlock Text="登录信息不会被存储。" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding GuardTitleText}" FontWeight="SemiBold" FontSize="12" />
+                      <TextBlock Text="{Binding GuardDesc1Text}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding GuardDesc2Text}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding GuardDesc3Text}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
                     </StackPanel>
                   </Border>
                 </StackPanel>
 
                 <!-- 第 3 页：版本下载 -->
                 <StackPanel Spacing="6" IsVisible="{Binding IsSteamCmdStepDownload}">
-                  <TextBlock Text="选择游戏版本并下载" FontWeight="SemiBold" Margin="0,4,0,0" />
-                  <TextBlock Text="版本通过 SteamCMD 自动获取（当前分支/历史分支）；也可输入自定义 Manifest ID。" Opacity="0.72" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding SelectVersionTitleText}" FontWeight="SemiBold" Margin="0,4,0,0" />
+                  <TextBlock Text="{Binding SelectVersionDescText}" Opacity="0.72" TextWrapping="Wrap" />
                   <Grid ColumnDefinitions="*,*">
                     <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,8,0">
-                      <TextBlock Text="SteamCMD 自动获取的版本" FontSize="12" />
+                      <TextBlock Text="{Binding SteamVersionsLabelText}" FontSize="12" />
                       <ComboBox ItemsSource="{Binding GameVersionOptions}" SelectedItem="{Binding SelectedGameVersion}" />
                       <TextBlock Text="{Binding SelectedGameVersionDescription}" FontSize="11" Opacity="0.75" TextWrapping="Wrap"
                                  IsVisible="{Binding HasSelectedGameVersionDescription}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="4">
-                      <TextBlock Text="自定义 Manifest ID（可选，优先于下拉）" FontSize="12" />
-                      <TextBox Text="{Binding CustomManifestId}" Watermark="从 SteamDB 查询 Manifest ID" />
+                      <TextBlock Text="{Binding CustomManifestLabelText}" FontSize="12" />
+                      <TextBox Text="{Binding CustomManifestId}" Watermark="{Binding CustomManifestWatermarkText}" />
                     </StackPanel>
                   </Grid>
 
                   <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
                     <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,8,0">
-                      <TextBlock Text="保存目录（须为空目录）" FontSize="12" />
-                      <TextBox Text="{Binding GameTargetPath}" Watermark="游戏文件保存位置" />
+                      <TextBlock Text="{Binding TargetPathLabelText}" FontSize="12" />
+                      <TextBox Text="{Binding GameTargetPath}" Watermark="{Binding TargetPathWatermarkText}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="浏览" Command="{Binding BrowseGameTargetPathCommand}"
+                    <Button Grid.Column="1" Content="{Binding BrowseText}" Command="{Binding BrowseGameTargetPathCommand}"
                             VerticalAlignment="Bottom" MinWidth="80" />
                   </Grid>
 
-                  <Button Content="下载游戏文件" Command="{Binding DownloadGameCommand}"
+                  <Button Content="{Binding DownloadGameButtonText}" Command="{Binding DownloadGameCommand}"
                           IsEnabled="{Binding CanDownloadGame}" Classes="accent"
                           HorizontalAlignment="Left" MinWidth="140" Margin="0,4,0,0" />
                   <ProgressBar Minimum="0" Maximum="100" Value="{Binding GameDownloadProgress}" Height="8"
@@ -379,33 +379,33 @@
 
                 <!-- 翻页导航：上一步在左，下一步在右 -->
                 <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
-                  <Button Grid.Column="0" Content="上一步" Command="{Binding PrevSteamCmdStepCommand}"
+                  <Button Grid.Column="0" Content="{Binding PrevStepText}" Command="{Binding PrevSteamCmdStepCommand}"
                           IsVisible="{Binding CanGoPrevSteamCmdStep}" MinWidth="90" />
-                  <Button Grid.Column="2" Content="下一步" Command="{Binding NextSteamCmdStepCommand}"
+                  <Button Grid.Column="2" Content="{Binding NextStepText}" Command="{Binding NextSteamCmdStepCommand}"
                           IsVisible="{Binding CanGoNextSteamCmdStep}" MinWidth="90" />
                 </Grid>
 
                 <!-- 日志 + 自定义指令（始终显示在底部） -->
-                <TextBlock Text="SteamCMD 日志" FontSize="12" FontWeight="SemiBold" Margin="0,6,0,0" />
+                <TextBlock Text="{Binding SteamLogTitleText}" FontSize="12" FontWeight="SemiBold" Margin="0,6,0,0" />
                 <TextBox x:Name="SteamCmdLogBox" Text="{Binding SteamCmdLogText}" IsReadOnly="True" TextWrapping="Wrap" Height="180"
                          FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="11" TextChanged="SteamCmdLogBox_TextChanged" />
 
                 <!-- 自定义指令输入栏 -->
                 <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
                   <TextBox Grid.Column="0" Text="{Binding SteamCmdInputText}"
-                           Watermark="输入自定义 SteamCMD 指令，如 app_update 413150 或 download_depot 413150 413151"
+                           Watermark="{Binding CustomCommandWatermarkText}"
                            FontFamily="Cascadia Mono,Consolas,Courier New" FontSize="11"
                            VerticalAlignment="Center" />
-                  <Button Grid.Column="1" Content="发送" Command="{Binding SendSteamCmdInputCommand}"
+                  <Button Grid.Column="1" Content="{Binding SendText}" Command="{Binding SendSteamCmdInputCommand}"
                           IsEnabled="{Binding CanSendSteamCmdInput}" MinWidth="72" Margin="8,0,0,0" />
                 </Grid>
-                <TextBlock Text="提示：指令会以 +指令 +quit 形式执行；登录建议在登录页填写以支持 Steam Guard。" FontSize="10.5" Opacity="0.6" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding CommandHintText}" FontSize="10.5" Opacity="0.6" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
 
             <Border Classes="hintCard" IsVisible="{Binding IsSmapiCategory}">
               <StackPanel Spacing="10">
-                <TextBlock Text="SMAPI 搜索结果" Classes="hintTitle" />
+                <TextBlock Text="{Binding SmapiListTitleText}" Classes="hintTitle" />
 
                 <StackPanel Spacing="8" IsVisible="{Binding HasSmapiGithubItems}">
                   <TextBlock Text="GitHub" Classes="sectionTitle" />
@@ -427,7 +427,7 @@
                               <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.75" />
                             </StackPanel>
                                 <Button Grid.Column="2"
-                                  Content="进入详情"
+                                  Content="{Binding DetailEnterText}"
                                   Command="{Binding DataContext.OpenCatalogItemDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   CommandParameter="{Binding}"
                                   VerticalAlignment="Center"
@@ -459,7 +459,7 @@
                               <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.75" />
                             </StackPanel>
                                 <Button Grid.Column="2"
-                                  Content="进入详情"
+                                  Content="{Binding DetailEnterText}"
                                   Command="{Binding DataContext.OpenCatalogItemDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   CommandParameter="{Binding}"
                                   VerticalAlignment="Center"
@@ -491,7 +491,7 @@
                               <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.75" />
                             </StackPanel>
                                 <Button Grid.Column="2"
-                                  Content="进入详情"
+                                  Content="{Binding DetailEnterText}"
                                   Command="{Binding DataContext.OpenCatalogItemDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   CommandParameter="{Binding}"
                                   VerticalAlignment="Center"
@@ -530,7 +530,7 @@
                                 </Grid>
 
                                 <StackPanel Grid.Column="2" Grid.RowSpan="2" Spacing="6" Margin="10,0,0,0" VerticalAlignment="Top">
-                                  <Button Content="查看详情"
+                                  <Button Content="{Binding DetailViewText}"
                                           Command="{Binding DataContext.OpenCatalogItemDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                     CommandParameter="{Binding}"
                                     Width="96"
@@ -572,7 +572,7 @@
                                 Spacing="12"
                                 Margin="20,24">
                       <ProgressBar IsIndeterminate="True" Width="240" Height="6" />
-                      <TextBlock Text="加载中..."
+                      <TextBlock Text="{Binding SearchLoadingText}"
                                  HorizontalAlignment="Center"
                                  Foreground="{DynamicResource TextPrimaryBrush}"
                                  Opacity="0.7" />
@@ -585,7 +585,7 @@
             <Border Classes="hintCard" IsVisible="{Binding IsModsPageable}">
               <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
                 <Button Grid.Column="0"
-                        Content="上一页"
+                        Content="{Binding PaginationPrevText}"
                         Command="{Binding GoToPreviousModPageCommand}"
                         IsEnabled="{Binding CanGoToPreviousModPage}"
                         MinWidth="82" />
@@ -595,7 +595,7 @@
                            VerticalAlignment="Center"
                            FontWeight="SemiBold" />
                 <Button Grid.Column="2"
-                        Content="下一页"
+                        Content="{Binding PaginationNextText}"
                         Command="{Binding GoToNextModPageCommand}"
                         IsEnabled="{Binding CanGoToNextModPage}"
                         MinWidth="82" />
@@ -605,7 +605,7 @@
             <Border Classes="hintCard" IsVisible="{Binding IsModpacksPageable}">
               <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
                 <Button Grid.Column="0"
-                        Content="上一页"
+                        Content="{Binding PaginationPrevText}"
                         Command="{Binding GoToPreviousModpackPageCommand}"
                         IsEnabled="{Binding CanGoToPreviousModpackPage}"
                         MinWidth="82" />
@@ -615,7 +615,7 @@
                            VerticalAlignment="Center"
                            FontWeight="SemiBold" />
                 <Button Grid.Column="2"
-                        Content="下一页"
+                        Content="{Binding PaginationNextText}"
                         Command="{Binding GoToNextModpackPageCommand}"
                         IsEnabled="{Binding CanGoToNextModpackPage}"
                         MinWidth="82" />

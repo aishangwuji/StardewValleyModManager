@@ -229,7 +229,7 @@
             </Border>
             <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
               <TextBlock Text="{Binding InstanceDisplayName}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-              <TextBlock Text="{Binding InstanceVersionText, StringFormat=星露谷版本: {0}}" FontSize="11" Opacity="0.72" />
+              <TextBlock Text="{Binding StardewVersionDisplay}" FontSize="11" Opacity="0.72" />
             </StackPanel>
           </Grid>
         </Border>
@@ -273,7 +273,7 @@
                     <TextBlock Text="{Binding InstanceDisplayName}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="4">
                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Gamepad.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.78" />
-                      <TextBlock Text="原版: " FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding VanillaLabelText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding InstanceVersionText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowSmapiVersion}">
@@ -283,7 +283,7 @@
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowNoSmapiHint}">
                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Lightbulb.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.68" />
-                      <TextBlock Text="当前为原版，自动安装页可执行 SMAPI 安装/切换流程" FontSize="12" Opacity="0.68" VerticalAlignment="Center" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding NoSmapiHintText}" FontSize="12" Opacity="0.68" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
                   </StackPanel>
                 </Grid>
@@ -293,7 +293,7 @@
                 <StackPanel Spacing="10">
                   <TextBlock Text="{Binding OverviewPersonalizationCardTitleText}" Classes="sectionTitle" />
                   <Grid ColumnDefinitions="120,*">
-                    <TextBlock Text="图标" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding IconLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
                     <Button Grid.Column="1"
                             Content="{Binding ChangeIconButtonText}"
                             Command="{Binding ChangeIconCommand}"
@@ -399,7 +399,7 @@
                     <TextBlock Text="{Binding InstanceDisplayName}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="4">
                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Gamepad.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" Opacity="0.78" />
-                      <TextBlock Text="原版: " FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding VanillaLabelText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding InstanceVersionText}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowSmapiVersion}">
@@ -438,7 +438,7 @@
                         <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="20" Height="20"
                               Stretch="Uniform"
                               VerticalAlignment="Center" />
-                        <TextBlock Text="正在安装 SMAPI..."
+                        <TextBlock Text="{Binding InstallingSmapiText}"
                                    FontSize="13"
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center" />
@@ -488,7 +488,7 @@
                     IsVisible="{Binding ShowBaseModeModWarning}">
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/AlertTriangle.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
-                <TextBlock Text="这是原版版本，不支持使用 MOD。请先安装并切换到 SMAPI 版本。"
+                <TextBlock Text="{Binding BaseModeWarningText}"
                            FontSize="13"
                            Foreground="{DynamicResource TextSecondaryBrush}"
                            VerticalAlignment="Center"
@@ -559,40 +559,40 @@
               <Border Classes="hintCard" Padding="14,12">
                 <StackPanel>
                   <WrapPanel IsVisible="{Binding IsModsTab}">
-                    <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenCurrentInstanceModsFolderCommand}" />
-                    <Button Classes="toolbarAction" Content="检测更新" Command="{Binding CheckAllModsUpdateCommand}" IsEnabled="{Binding IsCheckingModUpdates, Converter={x:Static BoolConverters.Not}}" />
-                    <Button Classes="toolbarAction" Content="检测冲突" Command="{Binding DetectModConflictsCommand}" IsEnabled="{Binding CanDetectModConflicts}" />
-                    <Button Classes="toolbarAction" Content="检测汉化" Command="{Binding CheckAllModsLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
-                    <Button Classes="toolbarAction" Content="刷新选中汉化" Command="{Binding RefreshSelectedLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
-                    <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
-                    <Button Classes="toolbarAction" Width="34" Padding="0" Content="+" ToolTip.Tip="从本地安装 Mod" Command="{Binding InstallModFromLocalCommand}" />
+                    <Button Classes="toolbarAction" Content="{Binding ToolbarOpenFolderText}" Command="{Binding OpenCurrentInstanceModsFolderCommand}" />
+                    <Button Classes="toolbarAction" Content="{Binding CheckUpdatesText}" Command="{Binding CheckAllModsUpdateCommand}" IsEnabled="{Binding IsCheckingModUpdates, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="{Binding CheckConflictsText}" Command="{Binding DetectModConflictsCommand}" IsEnabled="{Binding CanDetectModConflicts}" />
+                    <Button Classes="toolbarAction" Content="{Binding CheckLocalizationText}" Command="{Binding CheckAllModsLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="{Binding RefreshLocalizationText}" Command="{Binding RefreshSelectedLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="{Binding SelectAllText}" Command="{Binding ToggleAllSelectionCommand}" />
+                    <Button Classes="toolbarAction" Content="{Binding ReloadModsButtonText}" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Width="34" Padding="0" Content="+" ToolTip.Tip="{Binding InstallTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" Command="{Binding InstallModFromLocalCommand}" />
                   </WrapPanel>
 
                   <WrapPanel IsVisible="{Binding IsBackupTab}">
-                    <Button Classes="toolbarAction" Content="打开文件夹" Command="{Binding OpenBackupFolderCommand}" />
-                    <Button Classes="toolbarAction" Content="全选" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="刷新" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="{Binding ToolbarOpenFolderText}" Command="{Binding OpenBackupFolderCommand}" />
+                    <Button Classes="toolbarAction" Content="{Binding SelectAllText}" Command="{Binding ToggleAllSelectionCommand}" />
+                    <Button Classes="toolbarAction" Content="{Binding ReloadModsButtonText}" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
                   </WrapPanel>
                 </StackPanel>
               </Border>
 
               <Border Classes="hintCard" Padding="14,12">
                 <StackPanel Spacing="10">
-                  <TextBlock Text="Mod搜索" Classes="sectionTitle" />
+                  <TextBlock Text="{Binding ModSearchTitleText}" Classes="sectionTitle" />
                   <Grid ColumnDefinitions="*,Auto,Auto">
                     <TextBox Grid.Column="0"
                              Text="{Binding SearchKeyword}"
-                             Watermark="搜索 Mod（支持 tag:/author:/name: 等语法）"
+                             Watermark="{Binding ModSearchWatermarkText}"
                              Height="36"
                              VerticalContentAlignment="Center"
                              Padding="10,0" />
                     <Button Grid.Column="1"
-                            Content="清空"
+                            Content="{Binding SearchClearText}"
                             Command="{Binding ClearSearchKeywordCommand}"
                             MinWidth="68" />
                     <Button Grid.Column="2"
-                            Content="高级语法"
+                            Content="{Binding SearchAdvancedText}"
                             Command="{Binding ShowAdvancedSearchHelpCommand}"
                             MinWidth="92" />
                   </Grid>
@@ -602,7 +602,7 @@
               <Border Classes="hintCard" Padding="14,12" IsVisible="{Binding IsModsTab}">
                 <StackPanel Spacing="10">
                   <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Grid.Column="0" Text="Tag 筛选与管理" Classes="sectionTitle" />
+                    <TextBlock Grid.Column="0" Text="{Binding TagFilterTitleText}" Classes="sectionTitle" />
                     <Button Grid.Column="1"
                             Content="{Binding TagPanelToggleText}"
                             Command="{Binding ToggleTagPanelExpandedCommand}" />
@@ -620,19 +620,19 @@
                       </ComboBox>
 
                       <WrapPanel Grid.Column="1" VerticalAlignment="Center">
-                        <CheckBox Content="文件夹式" IsChecked="{Binding ShowFolderTags}" Margin="0,0,8,0" />
-                        <CheckBox Content="前缀式" IsChecked="{Binding ShowPrefixTags}" Margin="0,0,8,0" />
-                        <CheckBox Content="自定义" IsChecked="{Binding ShowCustomTags}" />
+                        <CheckBox Content="{Binding TagFolderText}" IsChecked="{Binding ShowFolderTags}" Margin="0,0,8,0" />
+                        <CheckBox Content="{Binding TagPrefixText}" IsChecked="{Binding ShowPrefixTags}" Margin="0,0,8,0" />
+                        <CheckBox Content="{Binding TagCustomText}" IsChecked="{Binding ShowCustomTags}" />
                       </WrapPanel>
                     </Grid>
 
                     <Grid ColumnDefinitions="*,Auto">
                       <TextBox Grid.Column="0"
                                Text="{Binding TagSearchKeyword}"
-                               Watermark="筛选 Tag / 输入新标签名后点新增"
+                               Watermark="{Binding TagPlaceholderText}"
                                Height="34"
                                VerticalContentAlignment="Center" />
-                      <Button Grid.Column="1" Content="新增" Command="{Binding AddCustomTagCommand}" MinWidth="70" Height="34" Margin="8,0,0,0" />
+                      <Button Grid.Column="1" Content="{Binding TagAddText}" Command="{Binding AddCustomTagCommand}" MinWidth="70" Height="34" Margin="8,0,0,0" />
                     </Grid>
 
                     <ItemsControl ItemsSource="{Binding TagPanelItems}">
@@ -653,10 +653,10 @@
                                         Margin="0,0,8,8">
                             <ToggleButton.ContextMenu>
                               <ContextMenu>
-                                <MenuItem Header="重命名"
+                                <MenuItem Header="{Binding DataContext.TagRenameText, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                           Tag="{Binding .}"
                                           Click="OnCustomTagRenameClicked" />
-                                <MenuItem Header="删除该标签"
+                                <MenuItem Header="{Binding DataContext.TagDeleteText, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                           Tag="{Binding .}"
                                           Click="OnCustomTagDeleteClicked" />
                               </ContextMenu>
@@ -668,16 +668,16 @@
                     </ItemsControl>
 
                     <WrapPanel>
-                      <Button Content="搜索"
+                      <Button Content="{Binding TagSearchText}"
                               Command="{Binding ApplySelectedTagsToSearchCommand}"
                               IsEnabled="{Binding CanApplyTagSelectionToSearch}"
                               Margin="0,0,8,8" />
-                      <Button Content="清除选中 Tags"
+                      <Button Content="{Binding TagClearSelectedText}"
                               Command="{Binding ClearSelectedTagsCommand}"
                               Margin="0,0,0,8" />
                     </WrapPanel>
 
-                    <TextBlock Text="选中 Tag 仅用于组合搜索或批量标签操作；点击“搜索”后才会写入搜索公式。"
+                    <TextBlock Text="{Binding TagHintText}"
                                FontSize="12"
                                Opacity="0.7"
                                TextWrapping="Wrap"
@@ -690,9 +690,9 @@
               <Border Classes="hintCard" Padding="14,12" IsVisible="{Binding ShowModConflictResult}">
                 <StackPanel Spacing="8">
                   <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Grid.Column="0" Text="Mod 冲突检测" Classes="sectionTitle" />
+                    <TextBlock Grid.Column="0" Text="{Binding ConflictTitleText}" Classes="sectionTitle" />
                     <Button Grid.Column="1"
-                            Content="清除结果"
+                            Content="{Binding ConflictClearText}"
                             Command="{Binding ClearModConflictsCommand}"
                             Padding="10,4" />
                   </Grid>
@@ -726,12 +726,12 @@
 
               <Border Classes="hintCard" Padding="14,12" IsVisible="{Binding HasRunningModTask}">
                 <StackPanel Spacing="10">
-                  <TextBlock Text="任务进度" Classes="sectionTitle" />
+                  <TextBlock Text="{Binding TaskProgressTitleText}" Classes="sectionTitle" />
 
                   <StackPanel IsVisible="{Binding IsCheckingModUpdates}" Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
-                      <TextBlock Text="更新检测" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding UpdateCheckTitleText}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding CurrentUpdateProcessingModName}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <TextBlock Text="{Binding UpdateCheckProgressText}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
@@ -740,7 +740,7 @@
                   <StackPanel IsVisible="{Binding IsCheckingLocalization}" Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
-                      <TextBlock Text="汉化检测" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding LocalizationCheckTitleText}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                       <TextBlock Text="{Binding CurrentLocalizationProcessingModName}" FontSize="13" Opacity="0.78" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <TextBlock Text="{Binding LocalizationCheckProgressText}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
@@ -752,7 +752,7 @@
                 <StackPanel Spacing="8">
                   <StackPanel Orientation="Horizontal" Spacing="8">
                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" VerticalAlignment="Center" />
-                    <TextBlock Text="正在加载 Mod 列表…" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding LoadingModsTitleText}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                   </StackPanel>
                   <ProgressBar IsIndeterminate="True" Height="4" />
                   <TextBlock Text="{Binding Status}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
@@ -772,10 +772,10 @@
                                   Command="{Binding ToggleCurrentPageSelectionCommand}"
                                   IsEnabled="{Binding CanToggleCurrentPageSelection}" />
                       </StackPanel>
-                      <TextBlock Grid.Column="1" Text="目录 | 名称 | 版本 | 作者" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis" IsVisible="{Binding IsModsTab}" />
-                      <TextBlock Grid.Column="1" Text="备份目录 | 名称 | 版本 | 作者" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis" IsVisible="{Binding IsBackupTab}" />
-                      <TextBlock Grid.Column="2" Text="状态 | 更新时间" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" IsVisible="{Binding IsModsTab}" />
-                      <TextBlock Grid.Column="2" Text="备份时间" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" IsVisible="{Binding IsBackupTab}" />
+                      <TextBlock Grid.Column="1" Text="{Binding TableHeaderModsText}" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis" IsVisible="{Binding IsModsTab}" />
+                      <TextBlock Grid.Column="1" Text="{Binding TableHeaderBackupModsText}" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis" IsVisible="{Binding IsBackupTab}" />
+                      <TextBlock Grid.Column="2" Text="{Binding TableHeaderStatusText}" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" IsVisible="{Binding IsModsTab}" />
+                      <TextBlock Grid.Column="2" Text="{Binding TableHeaderBackupTimeText}" FontSize="13" FontWeight="SemiBold" Opacity="0.75" VerticalAlignment="Center" IsVisible="{Binding IsBackupTab}" />
                     </Grid>
                   </Border>
 
@@ -824,7 +824,7 @@
                                         FontSize="11" />
                               </StackPanel>
                               <StackPanel Margin="0,4,0,0" Orientation="Horizontal" IsVisible="{Binding HasDisplayDependencies}">
-                                <TextBlock Text="前置：" Opacity="0.64" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Top" />
+                                <TextBlock Text="{Binding DataContext.DependencyPrefixText, RelativeSource={RelativeSource AncestorType=UserControl}}" Opacity="0.64" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Top" />
                                 <ItemsControl ItemsSource="{Binding DisplayDependencies}" MaxWidth="360">
                                   <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -883,33 +883,33 @@
 
                               <StackPanel Classes="rowHoverActions" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="6">
                                 <WrapPanel HorizontalAlignment="Right" Orientation="Horizontal">
-                                  <Button Classes="rowAction" IsVisible="{Binding HasLocalization}" Command="{Binding DataContext.ToggleModLocalizationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="切换中英文">
+                                  <Button Classes="rowAction" IsVisible="{Binding HasLocalization}" Command="{Binding DataContext.ToggleModLocalizationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ToggleLangTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <TextBlock Text="{Binding LocalizationToggleButtonText}" FontSize="11" FontWeight="SemiBold" />
                                   </Button>
-                                  <Button Classes="rowAction" Command="{Binding DataContext.ShowLocalItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="查看本地详情">
+                                  <Button Classes="rowAction" Command="{Binding DataContext.ShowLocalItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ViewLocalDetailTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FileText.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
-                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.ShowOnlineItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="查看在线详情">
+                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.ShowOnlineItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ViewOnlineDetailTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Globe.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
-                                  <Button Classes="rowAction" Command="{Binding DataContext.OpenItemFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="打开目录">
+                                  <Button Classes="rowAction" Command="{Binding DataContext.OpenItemFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.OpenItemFolderTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FolderOpen.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                 </WrapPanel>
                                 <WrapPanel HorizontalAlignment="Right" Orientation="Horizontal">
-                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.CheckItemUpdateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="检查更新">
+                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.CheckItemUpdateCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemCheckUpdateTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
-                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.ToggleItemEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="启用/禁用">
+                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.ToggleItemEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemToggleTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Power.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
-                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.BackupItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="备份">
+                                  <Button Classes="rowAction" IsVisible="{Binding IsNormalItem}" Command="{Binding DataContext.BackupItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemBackupTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/HardDrive.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
-                                  <Button Classes="rowAction" IsVisible="{Binding IsBackupItem}" Command="{Binding DataContext.RestoreItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="恢复备份">
+                                  <Button Classes="rowAction" IsVisible="{Binding IsBackupItem}" Command="{Binding DataContext.RestoreItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemRestoreTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RotateCcw.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
-                                  <Button Classes="rowAction" Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="删除">
+                                  <Button Classes="rowAction" Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemDeleteTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Trash2.png" Width="18" Height="18" Stretch="Uniform" />
                                   </Button>
                                 </WrapPanel>
@@ -933,7 +933,7 @@
                                       <Run Text="{Binding DirectoryName}" FontSize="13" FontWeight="SemiBold" />
                                       <Run Text=" | " FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
                                       <Run Text="{Binding DisplayName}" FontSize="12" />
-                                      <Run Text=" | 子 Mod" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                      <Run Text="{Binding DataContext.ChildSuffixText, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
                                     </TextBlock>
                                     <TextBlock Text="{Binding Description}" Margin="0,3,0,0" FontSize="11" Opacity="0.65"
                                                TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
@@ -951,19 +951,19 @@
                                     </ItemsControl>
                                   </StackPanel>
                                   <WrapPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                    <Button Classes="rowAction" IsVisible="{Binding HasLocalization}" Command="{Binding DataContext.ToggleModLocalizationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="切换中英文">
+                                    <Button Classes="rowAction" IsVisible="{Binding HasLocalization}" Command="{Binding DataContext.ToggleModLocalizationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ToggleLangTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                       <TextBlock Text="{Binding LocalizationToggleButtonText}" FontSize="10" FontWeight="SemiBold" />
                                     </Button>
-                                    <Button Classes="rowAction" Command="{Binding DataContext.ShowLocalItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="查看本地详情">
+                                    <Button Classes="rowAction" Command="{Binding DataContext.ShowLocalItemDetailCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ViewLocalDetailTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FileText.png" Width="16" Height="16" Stretch="Uniform" />
                                     </Button>
-                                    <Button Classes="rowAction" Command="{Binding DataContext.OpenItemFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="打开目录">
+                                    <Button Classes="rowAction" Command="{Binding DataContext.OpenItemFolderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.OpenItemFolderTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/FolderOpen.png" Width="16" Height="16" Stretch="Uniform" />
                                     </Button>
-                                    <Button Classes="rowAction" Command="{Binding DataContext.ToggleItemEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="启用/禁用">
+                                    <Button Classes="rowAction" Command="{Binding DataContext.ToggleItemEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemToggleTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Power.png" Width="16" Height="16" Stretch="Uniform" />
                                     </Button>
-                                    <Button Classes="rowAction" Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="删除">
+                                    <Button Classes="rowAction" Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding .}" ToolTip.Tip="{Binding DataContext.ItemDeleteTipText, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Trash2.png" Width="16" Height="16" Stretch="Uniform" />
                                     </Button>
                                   </WrapPanel>
@@ -979,10 +979,10 @@
 
                   <Border Padding="14,10" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
                     <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding TotalFilteredCount, StringFormat=共 {0} 项}" VerticalAlignment="Center" Opacity="0.75" />
+                      <TextBlock Text="{Binding TotalDisplay}" VerticalAlignment="Center" Opacity="0.75" />
 
                       <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
-                        <Button Content="上一页"
+                        <Button Content="{Binding PrevPageText}"
                           Command="{Binding PreviousPageCommand}"
                           IsEnabled="{Binding HasPreviousPage}"
                           MinWidth="70"
@@ -1007,7 +1007,7 @@
                           </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <Button Content="下一页"
+                        <Button Content="{Binding NextPageText}"
                           Command="{Binding NextPageCommand}"
                           IsEnabled="{Binding HasNextPage}"
                           MinWidth="70"
@@ -1026,7 +1026,7 @@
             <Border Classes="hintCard" Padding="14,12">
               <StackPanel Orientation="Horizontal" Spacing="10">
                 <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Info.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
-                <TextBlock Text="这些设置只对该游戏版本生效，不会影响其他版本"
+                <TextBlock Text="{Binding SettingsHintText}"
                            FontSize="13"
                            Opacity="0.84"
                            TextWrapping="Wrap"
@@ -1036,11 +1036,11 @@
 
             <Border Classes="hintCard" Padding="16,12">
               <StackPanel Spacing="10">
-                <TextBlock Text="启动选项" Classes="sectionTitle" />
+                <TextBlock Text="{Binding LaunchOptionsTitleText}" Classes="sectionTitle" />
 
-                <TextBlock Text="窗口标题" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding WindowTitleLabelText}" FontWeight="SemiBold" />
                 <Grid ColumnDefinitions="*,Auto">
-                  <TextBox Text="{Binding GameWindowTitle}" Watermark="例如: Stardew Valley &lt;ver&gt; - &lt;name&gt;" />
+                  <TextBox Text="{Binding GameWindowTitle}" Watermark="{Binding WindowTitleWatermarkText}" />
                   <Button Grid.Column="1"
                           Content="?"
                           Command="{Binding ShowWindowTitleHelpCommand}"
@@ -1052,18 +1052,18 @@
                           Margin="8,0,0,0"
                           HorizontalContentAlignment="Center"
                           VerticalContentAlignment="Center"
-                          ToolTip.Tip="查看窗口标题占位符说明" />
+                          ToolTip.Tip="{Binding WindowTitleHelpTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
                 </Grid>
 
-                <TextBlock Text="启动参数" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding LaunchArgsLabelText}" FontWeight="SemiBold" />
                 <TextBox Text="{Binding InstanceCustomLaunchArguments}"
                          Height="68"
                          AcceptsReturn="True"
                          TextWrapping="Wrap"
-                         Watermark="例如: --debug --loglevel trace" />
+                         Watermark="{Binding LaunchArgsWatermarkText}" />
 
                 <WrapPanel>
-                  <Button Content="重置默认" Command="{Binding ResetStartupOptionsCommand}" Margin="0,0,8,8" />
+                  <Button Content="{Binding ResetDefaultText}" Command="{Binding ResetStartupOptionsCommand}" Margin="0,0,8,8" />
                   <Button Content="{Binding SaveInstanceSettingsButtonText}" Command="{Binding SaveInstanceSettingsCommand}" Margin="0,0,8,8" />
                 </WrapPanel>
               </StackPanel>
@@ -1071,33 +1071,33 @@
 
             <Border Classes="hintCard" Padding="16,12">
               <StackPanel Spacing="10">
-                <TextBlock Text="Steam 启动参数覆写" Classes="sectionTitle" />
-                <TextBlock Text="默认参数会自动指向当前实例的 SMAPI 可执行文件，你也可以手动编辑后写入 Steam。"
+                <TextBlock Text="{Binding SteamOverrideTitleText}" Classes="sectionTitle" />
+                <TextBlock Text="{Binding SteamOverrideDescText}"
                            FontSize="12"
                            Opacity="0.74"
                            TextWrapping="Wrap" />
 
-                <TextBlock Text="默认命令" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding DefaultCommandText}" FontWeight="SemiBold" />
                 <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10,8" Background="{DynamicResource CardBrush}">
                   <TextBlock Text="{Binding DefaultSteamLaunchOptions}" FontSize="12" Opacity="0.8" TextWrapping="Wrap" />
                 </Border>
 
-                <CheckBox Content="覆盖 Steam 启动参数" IsChecked="{Binding OverrideSteamLaunchOptions}" />
+                <CheckBox Content="{Binding OverrideCheckboxText}" IsChecked="{Binding OverrideSteamLaunchOptions}" />
 
-                <TextBlock Text="编辑参数" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding EditArgsText}" FontWeight="SemiBold" />
                 <TextBox Text="{Binding SteamLaunchOptions}"
                          AcceptsReturn="True"
                          Height="72"
                          TextWrapping="Wrap"
-                         Watermark="例如: &quot;D:\Games\Stardew Valley\StardewModdingAPI.exe&quot; %command%" />
+                         Watermark="{Binding SteamArgsWatermarkText}" />
 
-                <TextBlock Text="参数预览" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding PreviewArgsText}" FontWeight="SemiBold" />
                 <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10,8" Background="{DynamicResource CardBrush}">
                   <TextBlock Text="{Binding SteamLaunchOptionsPreview}" FontSize="12" Opacity="0.8" TextWrapping="Wrap" />
                 </Border>
 
                 <WrapPanel>
-                  <Button Content="写入 Steam 启动参数" Command="{Binding WriteSteamLaunchOptionsCommand}" Margin="0,0,8,8" />
+                  <Button Content="{Binding WriteSteamText}" Command="{Binding WriteSteamLaunchOptionsCommand}" Margin="0,0,8,8" />
                   <Button Content="{Binding SaveInstanceSettingsButtonText}" Command="{Binding SaveInstanceSettingsCommand}" Margin="0,0,8,8" />
                 </WrapPanel>
               </StackPanel>
@@ -1109,21 +1109,21 @@
               <TextBlock Text="{Binding ExportSectionTitleText}" Classes="sectionTitle" />
 
               <Grid ColumnDefinitions="110,*" RowDefinitions="Auto,Auto,Auto">
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="整合包名称" VerticalAlignment="Center" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding ExportModpackNameLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
                 <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding ModpackName}" Margin="0,0,0,8" />
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="版本" VerticalAlignment="Center" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding ExportVersionLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ModpackVersion}" Margin="0,0,0,8" />
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="作者" VerticalAlignment="Center" FontWeight="SemiBold" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding ExportAuthorLabelText}" VerticalAlignment="Center" FontWeight="SemiBold" />
                 <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ModpackAuthor}" />
               </Grid>
 
-              <TextBlock Text="导出内容" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding ExportContentTitleText}" FontWeight="SemiBold" />
               <StackPanel Spacing="6">
-                <CheckBox Content="导出 Mod 清单"
+                <CheckBox Content="{Binding IncludeModsText}"
                           IsChecked="{Binding IncludeMods}" />
-                <CheckBox Content="导出 Mod 配置文件（config/*.json、根目录自定义 JSON）"
+                <CheckBox Content="{Binding IncludeSettingsText}"
                           IsChecked="{Binding IncludeModSettings}" />
-                <CheckBox Content="导出当前 SVL 启动器文件"
+                <CheckBox Content="{Binding IncludeLauncherText}"
                           IsChecked="{Binding IncludeSvlLauncher}" />
               </StackPanel>
 
@@ -1135,7 +1135,7 @@
                 <StackPanel Spacing="6">
                   <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
                     <Button Grid.Column="0"
-                            Content="全选/反选"
+                            Content="{Binding ExportSelectAllText}"
                             Command="{Binding ToggleSelectAllExportModsCommand}"
                             Padding="8,4"
                             Margin="0,0,8,0" />
@@ -1144,7 +1144,7 @@
                                VerticalAlignment="Center"
                                Opacity="0.82" />
                     <TextBlock Grid.Column="2"
-                               Text="来源优先导出清单，无来源条目仅保留安装提示"
+                               Text="{Binding ExportSourcePriorityHintText}"
                                FontSize="11"
                                Opacity="0.68"
                                VerticalAlignment="Center" />
@@ -1185,7 +1185,7 @@
                 </StackPanel>
               </Border>
 
-              <TextBlock Text="导出策略：为遵循来源平台分发规则，导出包不直接包含 Mod 本体，仅导出清单及可选配置。"
+              <TextBlock Text="{Binding ExportStrategyText}"
                          Opacity="0.75"
                          TextWrapping="Wrap" />
 
@@ -1197,8 +1197,8 @@
 
               <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                 <TextBlock Grid.Column="0" Text="{Binding ExportStatusMessage}" Opacity="0.75" VerticalAlignment="Center" TextWrapping="Wrap" />
-                <Button Grid.Column="1" Content="保存配置" Command="{Binding SaveExportConfigCommand}" Margin="8,0,0,0" />
-                <Button Grid.Column="2" Content="读取配置" Command="{Binding LoadExportConfigCommand}" Margin="8,0,0,0" />
+                <Button Grid.Column="1" Content="{Binding SaveConfigText}" Command="{Binding SaveExportConfigCommand}" Margin="8,0,0,0" />
+                <Button Grid.Column="2" Content="{Binding LoadConfigText}" Command="{Binding LoadExportConfigCommand}" Margin="8,0,0,0" />
                 <Button Grid.Column="3"
                         Content="{Binding ExportCurrentModsButtonText}"
                         Command="{Binding ExportCurrentModsCommand}"
@@ -1226,37 +1226,37 @@
               Opacity="0.98">
         <StackPanel Spacing="8">
           <StackPanel IsVisible="{Binding IsModsTab}" Spacing="8">
-            <TextBlock Text="{Binding SelectedCount, StringFormat=已选择 {0} 个 Mod}"
+            <TextBlock Text="{Binding BatchSelectedModsDisplay}"
                        FontWeight="SemiBold"
                        FontSize="13" />
-            <TextBlock Text="批量操作会立即生效，建议先备份后执行启用/禁用/删除。"
+            <TextBlock Text="{Binding BatchHintModsText}"
                        Opacity="0.74"
                        FontSize="12" />
             <WrapPanel>
-              <Button Content="备份已选" Command="{Binding BackupSelectedModsCommand}" Margin="0,0,8,8" />
-              <Button Content="启用已选" Command="{Binding EnableSelectedModsCommand}" Margin="0,0,8,8" />
-              <Button Content="禁用已选" Command="{Binding DisableSelectedModsCommand}" Margin="0,0,8,8" />
-              <Button Content="删除已选" Command="{Binding DeleteSelectedModsCommand}" Margin="0,0,8,8" />
-                    <Button Content="添加到新标签" Command="{Binding AddSelectedModsToNewTagCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchBackupSelectedText}" Command="{Binding BackupSelectedModsCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchEnableSelectedText}" Command="{Binding EnableSelectedModsCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchDisableSelectedText}" Command="{Binding DisableSelectedModsCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchDeleteSelectedText}" Command="{Binding DeleteSelectedModsCommand}" Margin="0,0,8,8" />
+                    <Button Content="{Binding BatchAddToNewTagText}" Command="{Binding AddSelectedModsToNewTagCommand}" Margin="0,0,8,8" />
               <Button Content="{Binding TagBatchActionText}"
                       Command="{Binding ApplyTagBatchActionCommand}"
                       IsVisible="{Binding ShowTagBatchAction}"
                       Margin="0,0,8,8" />
-              <Button Content="取消选择" Command="{Binding ClearSelectionCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchCancelSelectionText}" Command="{Binding ClearSelectionCommand}" Margin="0,0,8,8" />
             </WrapPanel>
           </StackPanel>
 
           <StackPanel IsVisible="{Binding IsBackupTab}" Spacing="8">
-            <TextBlock Text="{Binding SelectedCount, StringFormat=已选择 {0} 个备份}"
+            <TextBlock Text="{Binding BatchSelectedBackupsDisplay}"
                        FontWeight="SemiBold"
                        FontSize="13" />
-            <TextBlock Text="支持批量恢复或删除备份。"
+            <TextBlock Text="{Binding BatchHintBackupsText}"
                        Opacity="0.74"
                        FontSize="12" />
             <WrapPanel>
-              <Button Content="恢复已选备份" Command="{Binding RestoreSelectedBackupsCommand}" Margin="0,0,8,8" />
-              <Button Content="删除已选备份" Command="{Binding DeleteSelectedBackupsCommand}" Margin="0,0,8,8" />
-              <Button Content="取消选择" Command="{Binding ClearSelectionCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchRestoreSelectedText}" Command="{Binding RestoreSelectedBackupsCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchDeleteSelectedBackupsText}" Command="{Binding DeleteSelectedBackupsCommand}" Margin="0,0,8,8" />
+              <Button Content="{Binding BatchCancelSelectionText}" Command="{Binding ClearSelectionCommand}" Margin="0,0,8,8" />
             </WrapPanel>
           </StackPanel>
         </StackPanel>

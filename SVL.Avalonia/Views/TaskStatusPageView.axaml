@@ -11,15 +11,15 @@
         <!-- 列表标题 + 清空已完成 -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
           <StackPanel Grid.Column="0" Spacing="2">
-            <TextBlock Text="任务列表" Classes="sectionTitle" />
+            <TextBlock Text="{Binding TasksListTitleText}" Classes="sectionTitle" />
             <TextBlock FontSize="12" Opacity="0.7">
-              <Run Text="进行中: " />
+              <Run Text="{Binding ActivePrefixText}" />
               <Run Text="{Binding ActiveTasksCount}" />
-              <Run Text="  历史已完成: " />
+              <Run Text="{Binding FinishedPrefixText}" />
               <Run Text="{Binding FinishedTasksCount}" />
             </TextBlock>
           </StackPanel>
-          <Button Grid.Column="1" Content="清空已完成"
+          <Button Grid.Column="1" Content="{Binding ClearCompletedText}"
                   Command="{Binding ClearCompletedCommand}"
                   IsEnabled="{Binding CanClearCompleted}"
                   Classes="settingsNav"
@@ -30,9 +30,9 @@
         <Border Grid.Row="1" Classes="hintCard" IsVisible="{Binding IsEmptyState}">
           <StackPanel Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center">
             <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Inbox.png" Width="40" Height="40" Stretch="Uniform" HorizontalAlignment="Center" Opacity="0.4" />
-            <TextBlock Text="当前没有任务" FontWeight="SemiBold" HorizontalAlignment="Center" />
-            <TextBlock Text="去下载页发起任务后，这里会实时显示进度。" Opacity="0.72" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="240" />
-            <Button Content="前往下载" Command="{Binding GoToDownloadCommand}" HorizontalAlignment="Center" MinWidth="120" Height="34" Margin="0,8,0,0" />
+            <TextBlock Text="{Binding EmptyTitleText}" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding EmptyDescText}" Opacity="0.72" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="240" />
+            <Button Content="{Binding GoDownloadText}" Command="{Binding GoToDownloadCommand}" HorizontalAlignment="Center" MinWidth="120" Height="34" Margin="0,8,0,0" />
           </StackPanel>
         </Border>
 
@@ -98,13 +98,13 @@
     <Border Grid.Column="1" Classes="panel" Margin="12,0,0,0">
       <ScrollViewer IsVisible="{Binding ShowMainStateContent}">
         <StackPanel Spacing="12">
-          <TextBlock Text="任务状态详情" Classes="heroTitle" />
+          <TextBlock Text="{Binding DetailTitleText}" Classes="heroTitle" />
 
           <!-- 空选中提示 -->
           <Border Classes="hintCard" IsVisible="{Binding !HasSelectedTask}">
             <StackPanel Spacing="8" HorizontalAlignment="Center">
-              <TextBlock Text="未选择任务" Classes="hintTitle" HorizontalAlignment="Center" />
-              <TextBlock Text="从左侧列表点击一个任务，这里会展示完整进度、失败原因与操作入口。"
+              <TextBlock Text="{Binding DetailEmptyTitleText}" Classes="hintTitle" HorizontalAlignment="Center" />
+              <TextBlock Text="{Binding DetailEmptyDescText}"
                          Opacity="0.75" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420" />
             </StackPanel>
           </Border>
@@ -115,11 +115,11 @@
               <TextBlock Text="{Binding CurrentTaskName}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
               <TextBlock Text="{Binding CurrentTaskStatus}" Opacity="0.8" TextWrapping="Wrap" />
               <StackPanel Spacing="2" IsVisible="{Binding SelectedTaskHasTargetGamePath}">
-                <TextBlock Text="目标 Base 路径" FontSize="11" Opacity="0.65" />
+                <TextBlock Text="{Binding DetailTargetPathText}" FontSize="11" Opacity="0.65" />
                 <TextBlock Text="{Binding SelectedTaskTargetGamePath}" FontSize="12" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel Spacing="2" IsVisible="{Binding SelectedTaskHasInstalledPath}">
-                <TextBlock Text="实际安装目录" FontSize="11" Opacity="0.65" />
+                <TextBlock Text="{Binding DetailInstalledPathText}" FontSize="11" Opacity="0.65" />
                 <TextBlock Text="{Binding SelectedTaskInstalledPath}" FontSize="12" TextWrapping="Wrap" />
               </StackPanel>
             </StackPanel>
@@ -128,7 +128,7 @@
           <!-- 失败详情 -->
           <Border Classes="hintCard" IsVisible="{Binding IsFailedState}">
             <StackPanel Spacing="8">
-              <TextBlock Text="失败原因" Classes="hintTitle" />
+              <TextBlock Text="{Binding FailedTitleText}" Classes="hintTitle" />
               <TextBlock Text="{Binding FailureSummary}" TextWrapping="Wrap" FontWeight="SemiBold" />
             </StackPanel>
           </Border>
@@ -136,7 +136,7 @@
           <!-- 运行中进度（分层：总进度+子进度+速度+ETA） -->
           <Border Classes="hintCard" IsVisible="{Binding IsRunningState}">
             <StackPanel Spacing="8">
-              <TextBlock Text="当前进度" Classes="hintTitle" />
+              <TextBlock Text="{Binding ProgressTitleText}" Classes="hintTitle" />
               <!-- 多线程时用分块进度条作为主显示；单线程时才显示整条总进度 -->
               <ProgressBar Minimum="0" Maximum="100" Value="{Binding ProgressPercent}" Height="10" IsVisible="{Binding !SelectedTask.HasSegmentProgress}" />
               <!-- 多线程分片进度（每线程一条，分块加载） -->
@@ -154,7 +154,7 @@
               </ItemsControl>
               <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0" FontSize="12" Opacity="0.75">
-                  <Run Text="进度: " />
+                  <Run Text="{Binding ProgressLabelText}" />
                   <Run Text="{Binding ProgressPercent, StringFormat={}{0:F1}%}" />
                 </TextBlock>
                 <TextBlock Grid.Column="1" FontSize="12" Opacity="0.75" Text="{Binding SelectedTaskSpeedText}"
@@ -181,42 +181,42 @@
           <!-- 完成/取消态提示 -->
           <Border Classes="hintCard" IsVisible="{Binding IsCompletedState}">
             <StackPanel Spacing="8">
-              <TextBlock Text="任务完成" Classes="hintTitle" />
-              <TextBlock Text="可在下方操作栏点击打开目录查看安装结果。" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding CompletedTitleText}" Classes="hintTitle" />
+              <TextBlock Text="{Binding CompletedDescText}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
           <Border Classes="hintCard" IsVisible="{Binding IsCancelledState}">
             <StackPanel Spacing="8">
-              <TextBlock Text="任务已取消" Classes="hintTitle" />
-              <TextBlock Text="任务被取消后可移除清理，或在下载页发起新任务。" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding CancelledTitleText}" Classes="hintTitle" />
+              <TextBlock Text="{Binding CancelledDescText}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
 
           <!-- 操作栏：完整操作按钮，按状态启用 -->
           <Border Classes="hintCard" IsVisible="{Binding HasSelectedTask}">
             <StackPanel Spacing="8">
-              <TextBlock Text="操作" Classes="hintTitle" />
+              <TextBlock Text="{Binding ActionTitleText}" Classes="hintTitle" />
               <WrapPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                <Button Content="取消任务" Command="{Binding CancelTaskCommand}"
+                <Button Content="{Binding ActionCancelText}" Command="{Binding CancelTaskCommand}"
                         CommandParameter="{Binding SelectedTask}"
                         IsEnabled="{Binding SelectedTaskCanCancel}"
                         MinWidth="92" Margin="0,0,8,8" />
-                <Button Content="重试" Command="{Binding RetryTaskCommand}"
+                <Button Content="{Binding ActionRetryText}" Command="{Binding RetryTaskCommand}"
                         CommandParameter="{Binding SelectedTask}"
                         IsEnabled="{Binding SelectedTaskCanRetry}"
                         MinWidth="92" Margin="0,0,8,8" />
-                <Button Content="移除" Command="{Binding RemoveTaskCommand}"
+                <Button Content="{Binding ActionRemoveText}" Command="{Binding RemoveTaskCommand}"
                         CommandParameter="{Binding SelectedTask}"
                         MinWidth="92" Margin="0,0,8,8" />
-                <Button Content="打开目录" Command="{Binding OpenDirectoryCommand}"
+                <Button Content="{Binding ActionOpenDirText}" Command="{Binding OpenDirectoryCommand}"
                         CommandParameter="{Binding SelectedTask}"
                         IsEnabled="{Binding SelectedTaskHasInstalledDirectory}"
                         MinWidth="92" Margin="0,0,8,8" />
-                <Button Content="打开报告" Command="{Binding OpenReportCommand}"
+                <Button Content="{Binding ActionOpenReportText}" Command="{Binding OpenReportCommand}"
                         CommandParameter="{Binding SelectedTask}"
                         IsVisible="{Binding SelectedTaskHasReportPath}"
                         MinWidth="92" Margin="0,0,8,8" />
-                <Button Content="打开重试报告" Command="{Binding OpenRetryReportForTaskCommand}"
+                <Button Content="{Binding ActionOpenRetryReportText}" Command="{Binding OpenRetryReportForTaskCommand}"
                         CommandParameter="{Binding SelectedTask}"
                         IsVisible="{Binding SelectedTaskHasRetryReportPath}"
                         MinWidth="108" Margin="0,0,8,8" />
@@ -241,7 +241,7 @@
           <!-- 冲突预览 -->
           <Border Classes="hintCard" IsVisible="{Binding HasConflictPreview}">
             <StackPanel Spacing="8">
-              <TextBlock Text="安装冲突预览" Classes="hintTitle" />
+              <TextBlock Text="{Binding ConflictPreviewTitleText}" Classes="hintTitle" />
               <ScrollViewer Height="120">
                 <ItemsControl ItemsSource="{Binding ConflictPreviewItems}">
                   <ItemsControl.ItemTemplate>
@@ -258,9 +258,9 @@
           <Border Classes="hintCard">
             <StackPanel Spacing="8">
               <Grid ColumnDefinitions="*,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="任务日志" Classes="hintTitle" />
-                <Button Grid.Column="1" Content="复制" Command="{Binding CopyLogsCommand}" MinWidth="60" Margin="0,0,6,0" />
-                <Button Grid.Column="2" Content="清空" Command="{Binding ClearLogsCommand}" MinWidth="60" />
+                <TextBlock Grid.Column="0" Text="{Binding LogTitleText}" Classes="hintTitle" />
+                <Button Grid.Column="1" Content="{Binding LogCopyText}" Command="{Binding CopyLogsCommand}" MinWidth="60" Margin="0,0,6,0" />
+                <Button Grid.Column="2" Content="{Binding LogClearText}" Command="{Binding ClearLogsCommand}" MinWidth="60" />
               </Grid>
               <ScrollViewer Height="160">
                 <ItemsControl ItemsSource="{Binding TaskLogs}">

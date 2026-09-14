@@ -39,6 +39,61 @@ public abstract partial class FeaturePageViewModelBase : ObservableObject
 
 public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
 {
+    private readonly Services.LocalizationService? _localizationService;
+
+    public TaskStatusPageViewModel()
+    {
+    }
+
+    public TaskStatusPageViewModel(Services.LocalizationService localizationService)
+    {
+        _localizationService = localizationService;
+        _localizationService.LanguageChanged += ApplyLocalizedTexts;
+        ApplyLocalizedTexts();
+    }
+
+    private void ApplyLocalizedTexts()
+    {
+        TasksListTitleText = L("Tasks.List.Title", "任务列表");
+        ActivePrefixText = L("Tasks.List.ActivePrefix", "进行中: ");
+        FinishedPrefixText = L("Tasks.List.FinishedPrefix", "  历史已完成: ");
+        ClearCompletedText = L("Tasks.Button.ClearCompleted", "清空已完成");
+        EmptyTitleText = L("Tasks.Empty.Title", "当前没有任务");
+        EmptyDescText = L("Tasks.Empty.Desc", "去下载页发起任务后，这里会实时显示进度。");
+        GoDownloadText = L("Tasks.Button.GoDownload", "前往下载");
+        DetailTitleText = L("Tasks.Detail.Title", "任务状态详情");
+        DetailEmptyTitleText = L("Tasks.Detail.EmptyTitle", "未选择任务");
+        DetailEmptyDescText = L("Tasks.Detail.EmptyDesc", "从左侧列表点击一个任务，这里会展示完整进度、失败原因与操作入口。");
+        DetailTargetPathText = L("Tasks.Detail.TargetPath", "目标 Base 路径");
+        DetailInstalledPathText = L("Tasks.Detail.InstalledPath", "实际安装目录");
+        FailedTitleText = L("Tasks.Detail.FailedTitle", "失败原因");
+        ProgressTitleText = L("Tasks.Detail.ProgressTitle", "当前进度");
+        ProgressLabelText = L("Tasks.Detail.ProgressLabel", "进度: ");
+        CompletedTitleText = L("Tasks.Detail.CompletedTitle", "任务完成");
+        CompletedDescText = L("Tasks.Detail.CompletedDesc", "可在下方操作栏点击打开目录查看安装结果。");
+        CancelledTitleText = L("Tasks.Detail.CancelledTitle", "任务已取消");
+        CancelledDescText = L("Tasks.Detail.CancelledDesc", "任务被取消后可移除清理，或在下载页发起新任务。");
+        ActionTitleText = L("Tasks.Action.Title", "操作");
+        ActionCancelText = L("Tasks.Action.Cancel", "取消任务");
+        ActionRetryText = L("Tasks.Action.Retry", "重试");
+        ActionRemoveText = L("Tasks.Action.Remove", "移除");
+        ActionOpenDirText = L("Tasks.Action.OpenDir", "打开目录");
+        ActionOpenReportText = L("Tasks.Action.OpenReport", "打开报告");
+        ActionOpenRetryReportText = L("Tasks.Action.OpenRetryReport", "打开重试报告");
+        AdviceTitle = L("Tasks.Action.AdviceTitle", "建议操作");
+        ConflictPreviewTitleText = L("Tasks.Action.ConflictPreview", "安装冲突预览");
+        LogTitleText = L("Tasks.Log.Title", "任务日志");
+        LogCopyText = L("Tasks.Log.Copy", "复制");
+        LogClearText = L("Tasks.Log.Clear", "清空");
+    }
+
+    private string L(string key, string fallback)
+    {
+        if (_localizationService == null) return fallback;
+        var value = _localizationService.Get(key);
+        return string.Equals(value, key, StringComparison.Ordinal) ? fallback : value;
+    }
+
     public override string Title => "任务状态";
     public override string Description => "统一任务视图：左栏多任务列表（含进度条），右栏选中任务详情与操作栏。";
 
@@ -93,6 +148,97 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
 
     [ObservableProperty]
     private string _selectedTaskHint = "未选择任务";
+
+    [ObservableProperty]
+    private string _tasksListTitleText = "任务列表";
+
+    [ObservableProperty]
+    private string _activePrefixText = "进行中: ";
+
+    [ObservableProperty]
+    private string _finishedPrefixText = "  历史已完成: ";
+
+    [ObservableProperty]
+    private string _clearCompletedText = "清空已完成";
+
+    [ObservableProperty]
+    private string _emptyTitleText = "当前没有任务";
+
+    [ObservableProperty]
+    private string _emptyDescText = "去下载页发起任务后，这里会实时显示进度。";
+
+    [ObservableProperty]
+    private string _goDownloadText = "前往下载";
+
+    [ObservableProperty]
+    private string _detailTitleText = "任务状态详情";
+
+    [ObservableProperty]
+    private string _detailEmptyTitleText = "未选择任务";
+
+    [ObservableProperty]
+    private string _detailEmptyDescText = "从左侧列表点击一个任务，这里会展示完整进度、失败原因与操作入口。";
+
+    [ObservableProperty]
+    private string _detailTargetPathText = "目标 Base 路径";
+
+    [ObservableProperty]
+    private string _detailInstalledPathText = "实际安装目录";
+
+    [ObservableProperty]
+    private string _failedTitleText = "失败原因";
+
+    [ObservableProperty]
+    private string _progressTitleText = "当前进度";
+
+    [ObservableProperty]
+    private string _progressLabelText = "进度: ";
+
+    [ObservableProperty]
+    private string _completedTitleText = "任务完成";
+
+    [ObservableProperty]
+    private string _completedDescText = "可在下方操作栏点击打开目录查看安装结果。";
+
+    [ObservableProperty]
+    private string _cancelledTitleText = "任务已取消";
+
+    [ObservableProperty]
+    private string _cancelledDescText = "任务被取消后可移除清理，或在下载页发起新任务。";
+
+    [ObservableProperty]
+    private string _actionTitleText = "操作";
+
+    [ObservableProperty]
+    private string _actionCancelText = "取消任务";
+
+    [ObservableProperty]
+    private string _actionRetryText = "重试";
+
+    [ObservableProperty]
+    private string _actionRemoveText = "移除";
+
+    [ObservableProperty]
+    private string _actionOpenDirText = "打开目录";
+
+    [ObservableProperty]
+    private string _actionOpenReportText = "打开报告";
+
+    [ObservableProperty]
+    private string _actionOpenRetryReportText = "打开重试报告";
+
+    [ObservableProperty]
+    private string _conflictPreviewTitleText = "安装冲突预览";
+
+    [ObservableProperty]
+    private string _logTitleText = "任务日志";
+
+    [ObservableProperty]
+    private string _logCopyText = "复制";
+
+    [ObservableProperty]
+    private string _logClearText = "清空";
+
 
     // 兼容旧 View 绑定（部分卡片仍引用 CurrentTaskName/CurrentTaskStatus）
     public string CurrentTaskName => SelectedTask?.Name ?? "暂无任务";
@@ -4546,6 +4692,289 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private string _openExportFolderButtonText = "打开导出目录";
 
     [ObservableProperty]
+    private string _iconLabelText = "图标";
+
+    [ObservableProperty]
+    private string _stardewVersionFormatText = "星露谷版本: {0}";
+
+    [ObservableProperty]
+    private string _vanillaLabelText = "原版: ";
+
+    [ObservableProperty]
+    private string _smapiLabelText = "SMAPI: ";
+
+    [ObservableProperty]
+    private string _noSmapiHintText = "当前为原版，自动安装页可执行 SMAPI 安装/切换流程";
+
+    [ObservableProperty]
+    private string _installingSmapiText = "正在安装 SMAPI...";
+
+    [ObservableProperty]
+    private string _baseModeWarningText = "这是原版版本，不支持使用 MOD。请先安装并切换到 SMAPI 版本。";
+
+    [ObservableProperty]
+    private string _modSearchTitleText = "Mod搜索";
+
+    [ObservableProperty]
+    private string _modSearchWatermarkText = "搜索 Mod（支持 tag:/author:/name: 等语法）";
+
+    [ObservableProperty]
+    private string _searchClearText = "清空";
+
+    [ObservableProperty]
+    private string _searchAdvancedText = "高级语法";
+
+    [ObservableProperty]
+    private string _tagFilterTitleText = "Tag 筛选与管理";
+
+    [ObservableProperty]
+    private string _tagFolderText = "文件夹式";
+
+    [ObservableProperty]
+    private string _tagPrefixText = "前缀式";
+
+    [ObservableProperty]
+    private string _tagCustomText = "自定义";
+
+    [ObservableProperty]
+    private string _tagPlaceholderText = "筛选 Tag / 输入新标签名后点新增";
+
+    [ObservableProperty]
+    private string _tagAddText = "新增";
+
+    [ObservableProperty]
+    private string _tagRenameText = "重命名";
+
+    [ObservableProperty]
+    private string _tagDeleteText = "删除该标签";
+
+    [ObservableProperty]
+    private string _tagSearchText = "搜索";
+
+    [ObservableProperty]
+    private string _tagClearSelectedText = "清除选中 Tags";
+
+    [ObservableProperty]
+    private string _tagHintText = "选中 Tag 仅用于组合搜索或批量标签操作；点击“搜索”后才会写入搜索公式。";
+
+    [ObservableProperty]
+    private string _conflictTitleText = "Mod 冲突检测";
+
+    [ObservableProperty]
+    private string _conflictClearText = "清除结果";
+
+    [ObservableProperty]
+    private string _taskProgressTitleText = "任务进度";
+
+    [ObservableProperty]
+    private string _updateCheckTitleText = "更新检测";
+
+    [ObservableProperty]
+    private string _localizationCheckTitleText = "汉化检测";
+
+    [ObservableProperty]
+    private string _loadingModsTitleText = "正在加载 Mod 列表…";
+
+    [ObservableProperty]
+    private string _tableHeaderModsText = "目录 | 名称 | 版本 | 作者";
+
+    [ObservableProperty]
+    private string _tableHeaderBackupModsText = "备份目录 | 名称 | 版本 | 作者";
+
+    [ObservableProperty]
+    private string _tableHeaderStatusText = "状态 | 更新时间";
+
+    [ObservableProperty]
+    private string _tableHeaderBackupTimeText = "备份时间";
+
+    [ObservableProperty]
+    private string _dependencyPrefixText = "前置：";
+
+    [ObservableProperty]
+    private string _childSuffixText = " | 子 Mod";
+
+    [ObservableProperty]
+    private string _totalFormatText = "共 {0} 项";
+
+    [ObservableProperty]
+    private string _prevPageText = "上一页";
+
+    [ObservableProperty]
+    private string _nextPageText = "下一页";
+
+    [ObservableProperty]
+    private string _toolbarOpenFolderText = "打开文件夹";
+
+    [ObservableProperty]
+    private string _checkUpdatesText = "检测更新";
+
+    [ObservableProperty]
+    private string _checkConflictsText = "检测冲突";
+
+    [ObservableProperty]
+    private string _checkLocalizationText = "检测汉化";
+
+    [ObservableProperty]
+    private string _refreshLocalizationText = "刷新选中汉化";
+
+    [ObservableProperty]
+    private string _selectAllText = "全选";
+
+    [ObservableProperty]
+    private string _settingsHintText = "这些设置只对该游戏版本生效，不会影响其他版本";
+
+    [ObservableProperty]
+    private string _launchOptionsTitleText = "启动选项";
+
+    [ObservableProperty]
+    private string _windowTitleLabelText = "窗口标题";
+
+    [ObservableProperty]
+    private string _launchArgsLabelText = "启动参数";
+
+    [ObservableProperty]
+    private string _steamOverrideTitleText = "Steam 启动参数覆写";
+
+    [ObservableProperty]
+    private string _steamOverrideDescText = "默认参数会自动指向当前实例的 SMAPI 可执行文件，你也可以手动编辑后写入 Steam。";
+
+    [ObservableProperty]
+    private string _defaultCommandText = "默认命令";
+
+    [ObservableProperty]
+    private string _overrideCheckboxText = "覆盖 Steam 启动参数";
+
+    [ObservableProperty]
+    private string _editArgsText = "编辑参数";
+
+    [ObservableProperty]
+    private string _previewArgsText = "参数预览";
+
+    [ObservableProperty]
+    private string _resetDefaultText = "重置默认";
+
+    [ObservableProperty]
+    private string _writeSteamText = "写入 Steam 启动参数";
+
+    [ObservableProperty]
+    private string _exportModpackNameLabelText = "整合包名称";
+
+    [ObservableProperty]
+    private string _exportVersionLabelText = "版本";
+
+    [ObservableProperty]
+    private string _exportAuthorLabelText = "作者";
+
+    [ObservableProperty]
+    private string _exportContentTitleText = "导出内容";
+
+    [ObservableProperty]
+    private string _includeModsText = "导出 Mod 清单";
+
+    [ObservableProperty]
+    private string _includeSettingsText = "导出 Mod 配置文件（config/*.json、根目录自定义 JSON）";
+
+    [ObservableProperty]
+    private string _includeLauncherText = "导出当前 SVL 启动器文件";
+
+    [ObservableProperty]
+    private string _exportSelectAllText = "全选/反选";
+
+    [ObservableProperty]
+    private string _exportSourcePriorityHintText = "来源优先导出清单，无来源条目仅保留安装提示";
+
+    [ObservableProperty]
+    private string _exportStrategyText = "导出策略：为遵循来源平台分发规则，导出包不直接包含 Mod 本体，仅导出清单及可选配置。";
+
+    [ObservableProperty]
+    private string _saveConfigText = "保存配置";
+
+    [ObservableProperty]
+    private string _loadConfigText = "读取配置";
+
+    [ObservableProperty]
+    private string _batchSelectedModsFormatText = "已选择 {0} 个 Mod";
+
+    [ObservableProperty]
+    private string _batchHintModsText = "批量操作会立即生效，建议先备份后执行启用/禁用/删除。";
+
+    [ObservableProperty]
+    private string _batchBackupSelectedText = "备份已选";
+
+    [ObservableProperty]
+    private string _batchEnableSelectedText = "启用已选";
+
+    [ObservableProperty]
+    private string _batchDisableSelectedText = "禁用已选";
+
+    [ObservableProperty]
+    private string _batchDeleteSelectedText = "删除已选";
+
+    [ObservableProperty]
+    private string _batchAddToNewTagText = "添加到新标签";
+
+    [ObservableProperty]
+    private string _batchCancelSelectionText = "取消选择";
+
+    [ObservableProperty]
+    private string _batchSelectedBackupsFormatText = "已选择 {0} 个备份";
+
+    [ObservableProperty]
+    private string _batchHintBackupsText = "支持批量恢复或删除备份。";
+
+    [ObservableProperty]
+    private string _batchRestoreSelectedText = "恢复已选备份";
+
+    [ObservableProperty]
+    private string _batchDeleteSelectedBackupsText = "删除已选备份";
+    [ObservableProperty]
+    private string _windowTitleWatermarkText = "例如: Stardew Valley &lt;ver&gt; - &lt;name&gt;";
+
+    [ObservableProperty]
+    private string _launchArgsWatermarkText = "例如: --debug --loglevel trace";
+
+    [ObservableProperty]
+    private string _steamArgsWatermarkText = "例如: \"D:\\Games\\Stardew Valley\\StardewModdingAPI.exe\" %command%";
+
+    [ObservableProperty]
+    private string _installTipText = "从本地安装 Mod";
+
+    [ObservableProperty]
+    private string _toggleLangTipText = "切换中英文";
+
+    [ObservableProperty]
+    private string _viewLocalDetailTipText = "查看本地详情";
+
+    [ObservableProperty]
+    private string _viewOnlineDetailTipText = "查看在线详情";
+
+    [ObservableProperty]
+    private string _openItemFolderTipText = "打开目录";
+
+    [ObservableProperty]
+    private string _itemCheckUpdateTipText = "检查更新";
+
+    [ObservableProperty]
+    private string _itemToggleTipText = "启用/禁用";
+
+    [ObservableProperty]
+    private string _itemBackupTipText = "备份";
+
+    [ObservableProperty]
+    private string _itemRestoreTipText = "恢复备份";
+
+    [ObservableProperty]
+    private string _itemDeleteTipText = "删除";
+
+    [ObservableProperty]
+    private string _windowTitleHelpTipText = "查看窗口标题占位符说明";
+
+
+    [ObservableProperty]
+    private string _toolbarRestoreBackupText = "恢复备份";
+
+
+    [ObservableProperty]
     private string _selectedSection = "Overview";
 
     [ObservableProperty]
@@ -5030,6 +5459,102 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         ExportCurrentModsButtonText = L("VersionSettings.Export.CurrentMods", "导出当前整合包");
         OpenExportFolderButtonText = L("VersionSettings.Export.OpenFolder", "打开导出目录");
 
+        IconLabelText = L("VersionSettings.Overview.IconLabel", "图标");
+        StardewVersionFormatText = L("VersionSettings.Overview.StardewVersionFormat", "星露谷版本: {0}");
+        VanillaLabelText = L("VersionSettings.Overview.VanillaLabel", "原版: ");
+        SmapiLabelText = L("VersionSettings.Overview.SmapiLabel", "SMAPI: ");
+        NoSmapiHintText = L("VersionSettings.Overview.NoSmapiHint", "当前为原版，自动安装页可执行 SMAPI 安装/切换流程");
+        InstallingSmapiText = L("VersionSettings.AutoInstall.Installing", "正在安装 SMAPI...");
+        BaseModeWarningText = L("VersionSettings.ModManage.BaseModeWarning", "这是原版版本，不支持使用 MOD。请先安装并切换到 SMAPI 版本。");
+        ModSearchTitleText = L("VersionSettings.ModManage.SearchTitle", "Mod搜索");
+        ModSearchWatermarkText = L("VersionSettings.ModManage.SearchWatermark", "搜索 Mod（支持 tag:/author:/name: 等语法）");
+        SearchClearText = L("VersionSettings.ModManage.SearchClear", "清空");
+        SearchAdvancedText = L("VersionSettings.ModManage.SearchAdvanced", "高级语法");
+        TagFilterTitleText = L("VersionSettings.ModManage.TagFilterTitle", "Tag 筛选与管理");
+        TagFolderText = L("VersionSettings.ModManage.TagFolder", "文件夹式");
+        TagPrefixText = L("VersionSettings.ModManage.TagPrefix", "前缀式");
+        TagCustomText = L("VersionSettings.ModManage.TagCustom", "自定义");
+        TagPlaceholderText = L("VersionSettings.ModManage.TagPlaceholder", "筛选 Tag / 输入新标签名后点新增");
+        TagAddText = L("VersionSettings.ModManage.TagAdd", "新增");
+        TagRenameText = L("VersionSettings.ModManage.TagRename", "重命名");
+        TagDeleteText = L("VersionSettings.ModManage.TagDelete", "删除该标签");
+        TagSearchText = L("VersionSettings.ModManage.TagSearch", "搜索");
+        TagClearSelectedText = L("VersionSettings.ModManage.TagClearSelected", "清除选中 Tags");
+        TagHintText = L("VersionSettings.ModManage.TagHint", "选中 Tag 仅用于组合搜索或批量标签操作；点击“搜索”后才会写入搜索公式。");
+        ConflictTitleText = L("VersionSettings.ModManage.ConflictTitle", "Mod 冲突检测");
+        ConflictClearText = L("VersionSettings.ModManage.ConflictClear", "清除结果");
+        TaskProgressTitleText = L("VersionSettings.ModManage.TaskProgressTitle", "任务进度");
+        UpdateCheckTitleText = L("VersionSettings.ModManage.UpdateCheckTitle", "更新检测");
+        LocalizationCheckTitleText = L("VersionSettings.ModManage.LocalizationCheckTitle", "汉化检测");
+        LoadingModsTitleText = L("VersionSettings.ModManage.LoadingTitle", "正在加载 Mod 列表…");
+        TableHeaderModsText = L("VersionSettings.ModManage.TableHeaderMods", "目录 | 名称 | 版本 | 作者");
+        TableHeaderBackupModsText = L("VersionSettings.ModManage.TableHeaderBackupMods", "备份目录 | 名称 | 版本 | 作者");
+        TableHeaderStatusText = L("VersionSettings.ModManage.TableHeaderStatus", "状态 | 更新时间");
+        TableHeaderBackupTimeText = L("VersionSettings.ModManage.TableHeaderBackupTime", "备份时间");
+        DependencyPrefixText = L("VersionSettings.ModManage.DependencyPrefix", "前置：");
+        ChildSuffixText = L("VersionSettings.ModManage.ChildSuffix", " | 子 Mod");
+        TotalFormatText = L("VersionSettings.ModManage.TotalFormat", "共 {0} 项");
+        PrevPageText = L("VersionSettings.ModManage.PrevPage", "上一页");
+        NextPageText = L("VersionSettings.ModManage.NextPage", "下一页");
+        ToolbarOpenFolderText = L("VersionSettings.ModManage.OpenFolder", "打开文件夹");
+        CheckUpdatesText = L("VersionSettings.ModManage.CheckUpdates", "检测更新");
+        CheckConflictsText = L("VersionSettings.ModManage.CheckConflicts", "检测冲突");
+        CheckLocalizationText = L("VersionSettings.ModManage.CheckLocalization", "检测汉化");
+        RefreshLocalizationText = L("VersionSettings.ModManage.RefreshLocalization", "刷新选中汉化");
+        SelectAllText = L("VersionSettings.ModManage.SelectAll", "全选");
+        SettingsHintText = L("VersionSettings.Settings.Hint", "这些设置只对该游戏版本生效，不会影响其他版本");
+        LaunchOptionsTitleText = L("VersionSettings.Settings.LaunchOptionsTitle", "启动选项");
+        WindowTitleLabelText = L("VersionSettings.Settings.WindowTitleLabel", "窗口标题");
+        LaunchArgsLabelText = L("VersionSettings.Settings.LaunchArgsLabel", "启动参数");
+        SteamOverrideTitleText = L("VersionSettings.Settings.SteamOverrideTitle", "Steam 启动参数覆写");
+        SteamOverrideDescText = L("VersionSettings.Settings.SteamOverrideDesc", "默认参数会自动指向当前实例的 SMAPI 可执行文件，你也可以手动编辑后写入 Steam。");
+        DefaultCommandText = L("VersionSettings.Settings.DefaultCommand", "默认命令");
+        OverrideCheckboxText = L("VersionSettings.Settings.OverrideCheckbox", "覆盖 Steam 启动参数");
+        EditArgsText = L("VersionSettings.Settings.EditArgs", "编辑参数");
+        PreviewArgsText = L("VersionSettings.Settings.PreviewArgs", "参数预览");
+        ResetDefaultText = L("VersionSettings.Settings.ResetDefault", "重置默认");
+        WriteSteamText = L("VersionSettings.Settings.WriteSteam", "写入 Steam 启动参数");
+        ExportModpackNameLabelText = L("VersionSettings.Export.ModpackNameLabel", "整合包名称");
+        ExportVersionLabelText = L("VersionSettings.Export.VersionLabel", "版本");
+        ExportAuthorLabelText = L("VersionSettings.Export.AuthorLabel", "作者");
+        ExportContentTitleText = L("VersionSettings.Export.ContentTitle", "导出内容");
+        IncludeModsText = L("VersionSettings.Export.IncludeMods", "导出 Mod 清单");
+        IncludeSettingsText = L("VersionSettings.Export.IncludeSettings", "导出 Mod 配置文件（config/*.json、根目录自定义 JSON）");
+        IncludeLauncherText = L("VersionSettings.Export.IncludeLauncher", "导出当前 SVL 启动器文件");
+        ExportSelectAllText = L("VersionSettings.Export.SelectAll", "全选/反选");
+        ExportSourcePriorityHintText = L("VersionSettings.Export.SourcePriorityHint", "来源优先导出清单，无来源条目仅保留安装提示");
+        ExportStrategyText = L("VersionSettings.Export.Strategy", "导出策略：为遵循来源平台分发规则，导出包不直接包含 Mod 本体，仅导出清单及可选配置。");
+        SaveConfigText = L("VersionSettings.Export.SaveConfig", "保存配置");
+        LoadConfigText = L("VersionSettings.Export.LoadConfig", "读取配置");
+        BatchSelectedModsFormatText = L("VersionSettings.Batch.SelectedModsFormat", "已选择 {0} 个 Mod");
+        BatchHintModsText = L("VersionSettings.Batch.HintMods", "批量操作会立即生效，建议先备份后执行启用/禁用/删除。");
+        BatchBackupSelectedText = L("VersionSettings.Batch.BackupSelected", "备份已选");
+        BatchEnableSelectedText = L("VersionSettings.Batch.EnableSelected", "启用已选");
+        BatchDisableSelectedText = L("VersionSettings.Batch.DisableSelected", "禁用已选");
+        BatchDeleteSelectedText = L("VersionSettings.Batch.DeleteSelected", "删除已选");
+        BatchAddToNewTagText = L("VersionSettings.Batch.AddToNewTag", "添加到新标签");
+        BatchCancelSelectionText = L("VersionSettings.Batch.CancelSelection", "取消选择");
+        BatchSelectedBackupsFormatText = L("VersionSettings.Batch.SelectedBackupsFormat", "已选择 {0} 个备份");
+        BatchHintBackupsText = L("VersionSettings.Batch.HintBackups", "支持批量恢复或删除备份。");
+        BatchRestoreSelectedText = L("VersionSettings.Batch.RestoreSelected", "恢复已选备份");
+        BatchDeleteSelectedBackupsText = L("VersionSettings.Batch.DeleteSelectedBackups", "删除已选备份");
+        ToolbarOpenFolderText = L("VersionSettings.ModManage.Toolbar.OpenFolder", "打开文件夹");
+        ToolbarRestoreBackupText = L("VersionSettings.ModManage.Toolbar.RestoreBackup", "恢复备份");
+        WindowTitleWatermarkText = L("VersionSettings.Settings.WindowTitleWatermark", "例如: Stardew Valley &lt;ver&gt; - &lt;name&gt;");
+        LaunchArgsWatermarkText = L("VersionSettings.Settings.LaunchArgsWatermark", "例如: --debug --loglevel trace");
+        SteamArgsWatermarkText = L("VersionSettings.Settings.SteamArgsWatermark", "例如: \"D:\\Games\\Stardew Valley\\StardewModdingAPI.exe\" %command%");
+        InstallTipText = L("VersionSettings.ModManage.InstallTip", "从本地安装 Mod");
+        ToggleLangTipText = L("VersionSettings.ModManage.ToggleLangTip", "切换中英文");
+        ViewLocalDetailTipText = L("VersionSettings.ModManage.ViewLocalDetailTip", "查看本地详情");
+        ViewOnlineDetailTipText = L("VersionSettings.ModManage.ViewOnlineDetailTip", "查看在线详情");
+        OpenItemFolderTipText = L("VersionSettings.ModManage.OpenItemFolderTip", "打开目录");
+        ItemCheckUpdateTipText = L("VersionSettings.ModManage.ItemCheckUpdateTip", "检查更新");
+        ItemToggleTipText = L("VersionSettings.ModManage.ItemToggleTip", "启用/禁用");
+        ItemBackupTipText = L("VersionSettings.ModManage.ItemBackupTip", "备份");
+        ItemRestoreTipText = L("VersionSettings.ModManage.ItemRestoreTip", "恢复备份");
+        ItemDeleteTipText = L("VersionSettings.ModManage.ItemDeleteTip", "删除");
+        WindowTitleHelpTipText = L("VersionSettings.Settings.WindowTitleHelpTip", "查看窗口标题占位符说明");
+
         OnPropertyChanged(nameof(ModsSummary));
         OnPropertyChanged(nameof(SelectedModDetails));
         OnPropertyChanged(nameof(ExportHint));
@@ -5046,6 +5571,38 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private string F(string key, string fallback, params object[] args)
     {
         return string.Format(L(key, fallback), args);
+    }
+
+    /// <summary>星露谷版本展示（本地化格式 + 实例版本号）。</summary>
+    public string StardewVersionDisplay => string.Format(
+        string.IsNullOrWhiteSpace(StardewVersionFormatText) ? "星露谷版本: {0}" : StardewVersionFormatText,
+        InstanceVersionText);
+
+    /// <summary>Mod 总数展示（本地化格式 + 过滤后总数）。</summary>
+    public string TotalDisplay => string.Format(TotalFormatText, TotalFilteredCount);
+
+    /// <summary>批量操作已选 Mod 数展示。</summary>
+    public string BatchSelectedModsDisplay => string.Format(BatchSelectedModsFormatText, SelectedCount);
+
+    /// <summary>批量操作已选备份数展示。</summary>
+    public string BatchSelectedBackupsDisplay => string.Format(BatchSelectedBackupsFormatText, SelectedCount);
+
+    partial void OnStardewVersionFormatTextChanged(string value) => OnPropertyChanged(nameof(StardewVersionDisplay));
+
+    partial void OnInstanceVersionTextChanged(string value) => OnPropertyChanged(nameof(StardewVersionDisplay));
+
+    partial void OnTotalFormatTextChanged(string value) => OnPropertyChanged(nameof(TotalDisplay));
+
+    partial void OnBatchSelectedModsFormatTextChanged(string value) => OnPropertyChanged(nameof(BatchSelectedModsDisplay));
+
+    partial void OnBatchSelectedBackupsFormatTextChanged(string value) => OnPropertyChanged(nameof(BatchSelectedBackupsDisplay));
+
+    partial void OnTotalFilteredCountChanged(int value) => OnPropertyChanged(nameof(TotalDisplay));
+
+    partial void OnSelectedCountChanged(int value)
+    {
+        OnPropertyChanged(nameof(BatchSelectedModsDisplay));
+        OnPropertyChanged(nameof(BatchSelectedBackupsDisplay));
     }
 
     private void NotifyInstanceContextChanged()
