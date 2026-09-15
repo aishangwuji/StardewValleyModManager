@@ -242,57 +242,62 @@ public partial class ModProfileManageDialog : Window
 
     private void SaveProfile_Click(object? sender, RoutedEventArgs e)
     {
-        if (SelectedProfile == null)
+        try
         {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(EditingProfile.Name))
-        {
-            StatusMessage = "预设名称不能为空。";
-            return;
-        }
-
-        // Apply changes from EditingProfile to SelectedProfile
-        SelectedProfile.Name = EditingProfile.Name.Trim();
-        SelectedProfile.ModsPath = EditingProfile.ModsPath?.Trim() ?? string.Empty;
-        SelectedProfile.EnableCustomSavePath = EditingProfile.EnableCustomSavePath;
-        SelectedProfile.CustomSavePath = EditingProfile.CustomSavePath?.Trim() ?? string.Empty;
-
-        // Auto-create folder if specified and does not exist
-        if (!string.IsNullOrWhiteSpace(SelectedProfile.ModsPath))
-        {
-            try
+            var targetProfile = SelectedProfile;
+            if (targetProfile == null)
             {
-                if (!Directory.Exists(SelectedProfile.ModsPath))
-                {
-                    Directory.CreateDirectory(SelectedProfile.ModsPath);
-                }
+                StatusMessage = "请先在左侧选择一个预设。";
+                return;
             }
-            catch { }
-        }
 
-        if (SelectedProfile.EnableCustomSavePath && !string.IsNullOrWhiteSpace(SelectedProfile.CustomSavePath))
-        {
-            try
+            if (string.IsNullOrWhiteSpace(EditingProfile.Name))
             {
-                if (!Directory.Exists(SelectedProfile.CustomSavePath))
-                {
-                    Directory.CreateDirectory(SelectedProfile.CustomSavePath);
-                }
+                StatusMessage = "预设名称不能为空。";
+                return;
             }
-            catch { }
-        }
 
-        _profileStore.UpsertProfile(SelectedProfile);
-        // Refresh list binding
-        var index = Profiles.IndexOf(SelectedProfile);
-        if (index >= 0)
+            var savedName = EditingProfile.Name.Trim();
+
+            // Apply changes from EditingProfile to targetProfile
+            targetProfile.Name = savedName;
+            targetProfile.ModsPath = EditingProfile.ModsPath?.Trim() ?? string.Empty;
+            targetProfile.EnableCustomSavePath = EditingProfile.EnableCustomSavePath;
+            targetProfile.CustomSavePath = EditingProfile.CustomSavePath?.Trim() ?? string.Empty;
+
+            // Auto-create folder if specified and does not exist
+            if (!string.IsNullOrWhiteSpace(targetProfile.ModsPath))
+            {
+                try
+                {
+                    if (!Directory.Exists(targetProfile.ModsPath))
+                    {
+                        Directory.CreateDirectory(targetProfile.ModsPath);
+                    }
+                }
+                catch { }
+            }
+
+            if (targetProfile.EnableCustomSavePath && !string.IsNullOrWhiteSpace(targetProfile.CustomSavePath))
+            {
+                try
+                {
+                    if (!Directory.Exists(targetProfile.CustomSavePath))
+                    {
+                        Directory.CreateDirectory(targetProfile.CustomSavePath);
+                    }
+                }
+                catch { }
+            }
+
+            _profileStore.UpsertProfile(targetProfile);
+
+            StatusMessage = $"预设「{savedName}」已成功保存！";
+        }
+        catch (Exception ex)
         {
-            Profiles[index] = SelectedProfile;
+            StatusMessage = $"保存失败: {ex.Message}";
         }
-
-        StatusMessage = $"预设「{SelectedProfile.Name}」已成功保存！";
     }
 
     private void Close_Click(object? sender, RoutedEventArgs e)
