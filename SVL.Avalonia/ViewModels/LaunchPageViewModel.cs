@@ -698,6 +698,38 @@ public partial class LaunchPageViewModel : ObservableObject
         NavigateToVersionSettingsRequested?.Invoke();
     }
 
+    /// <summary>打开当前游戏安装目录。</summary>
+    [RelayCommand]
+    private void OpenGameFolder()
+    {
+        if (string.IsNullOrWhiteSpace(_currentGamePath) || !Directory.Exists(_currentGamePath))
+        {
+            ActionStatus = Text("Launch.Action.InvalidInstancePath");
+            return;
+        }
+
+        _externalProcessService.TryOpenPath(_currentGamePath);
+    }
+
+    /// <summary>打开当前游戏 Mods 目录。</summary>
+    [RelayCommand]
+    private void OpenModsFolder()
+    {
+        if (string.IsNullOrWhiteSpace(_currentGamePath) || !Directory.Exists(_currentGamePath))
+        {
+            ActionStatus = Text("Launch.Action.InvalidInstancePath");
+            return;
+        }
+
+        var modsPath = Path.Combine(_currentGamePath, "Mods");
+        if (!Directory.Exists(modsPath))
+        {
+            try { Directory.CreateDirectory(modsPath); } catch { }
+        }
+
+        _externalProcessService.TryOpenPath(Directory.Exists(modsPath) ? modsPath : _currentGamePath);
+    }
+
     private static string ResolveLaunchTarget(string gamePath, string launchModeToken)
     {
         var smapiCandidates = new[]

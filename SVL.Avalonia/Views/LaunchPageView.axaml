@@ -7,46 +7,103 @@
              mc:Ignorable="d"
              x:Class="SVL.Avalonia.Views.LaunchPageView"
              x:DataType="vm:LaunchPageViewModel">
-  <Grid ColumnDefinitions="280,*">
+  <Grid ColumnDefinitions="290,*">
+    <!-- 左侧启动控制台 -->
     <Border Grid.Column="0" Classes="panel">
       <Grid RowDefinitions="Auto,*,Auto">
-        <StackPanel Grid.Row="0" Margin="20,20,20,10" Spacing="8">
-          <Border Width="110" Height="110" CornerRadius="10" Background="{DynamicResource CardBrush}" HorizontalAlignment="Center">
+        <!-- 顶部：实例头像与版本概览 -->
+        <StackPanel Grid.Row="0" Margin="10,12,10,14" Spacing="10">
+          <Border Width="110" Height="110" CornerRadius="18"
+                  Background="{DynamicResource CardBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="1.5"
+                  BoxShadow="0 4 14 0 #14000000"
+                  HorizontalAlignment="Center">
             <Image Source="{Binding InstanceIconSource, Converter={StaticResource AssetImageConverter}}"
                    angif:ImageBehavior.AnimatedSource="{Binding InstanceIconSource, Converter={StaticResource AssetImageConverter}, ConverterParameter=animate}"
-                   Width="78"
-                   Height="78"
+                   Width="76"
+                   Height="76"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    Stretch="Uniform" />
           </Border>
-          <TextBlock Text="{Binding InstanceName}" Classes="sectionValue" HorizontalAlignment="Center" TextAlignment="Center" />
-          <TextBlock Text="{Binding GameVersion}" HorizontalAlignment="Center" Opacity="0.82" />
-          <TextBlock Text="{Binding VersionStatus}" Classes="pill" HorizontalAlignment="Center" />
+          <TextBlock Text="{Binding InstanceName}" Classes="sectionValue" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding GameVersion}" HorizontalAlignment="Center" Opacity="0.82" FontSize="13" />
+
+          <!-- 状态徽章与呼吸小圆点 -->
+          <Border Background="{DynamicResource PillBg}" CornerRadius="12" Padding="12,5" HorizontalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <Ellipse Width="7" Height="7" Fill="#4CAF50" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding VersionStatus}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+          </Border>
         </StackPanel>
 
-        <Border Grid.Row="1" />
+        <!-- 中间：当前实例参数概览卡片（填补以往空白） -->
+        <Border Grid.Row="1" Classes="statCard" Margin="8,4,8,12" VerticalAlignment="Center">
+          <StackPanel Spacing="8">
+            <TextBlock Text="启动环境参数" FontWeight="SemiBold" FontSize="12" Opacity="0.75" />
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" Margin="0,2">
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="模式：" Opacity="0.65" FontSize="12" Margin="0,0,6,4" />
+              <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PreferredLaunchMode}" FontSize="12" FontWeight="Medium" Margin="0,0,0,4" />
 
-        <StackPanel Grid.Row="2" Spacing="12" HorizontalAlignment="Stretch" Margin="20,0,20,20">
-          <Button Classes="launchPrimary" Content="{Binding LaunchButtonText}" Command="{Binding LaunchGameCommand}" Height="48" FontSize="15" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" />
-          <Button Classes="launchSecondary" Content="{Binding VersionSelectButtonText}" Command="{Binding NavigateToVersionSelectCommand}" Height="42" FontSize="14" HorizontalAlignment="Stretch" />
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="安全模式：" Opacity="0.65" FontSize="12" Margin="0,0,6,4" />
+              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SafeLaunchState}" FontSize="12" FontWeight="Medium" Margin="0,0,0,4" />
+
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="状态：" Opacity="0.65" FontSize="12" Margin="0,0,6,0" />
+              <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ActionStatus}" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ActionStatus}" />
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <!-- 底部：主启动操作区 -->
+        <StackPanel Grid.Row="2" Spacing="10" HorizontalAlignment="Stretch" Margin="8,0,8,10">
+          <Button Classes="launchPrimary" Content="{Binding LaunchButtonText}" Command="{Binding LaunchGameCommand}" Height="50" FontSize="16" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" />
+          <Button Classes="launchSecondary" Content="{Binding VersionSelectButtonText}" Command="{Binding NavigateToVersionSelectCommand}" Height="40" FontSize="13" HorizontalAlignment="Stretch" />
         </StackPanel>
       </Grid>
     </Border>
 
-    <Border Grid.Column="1" Classes="panel" Margin="12,0,0,0">
+    <!-- 右侧星露谷仪表盘主工作区 -->
+    <Border Grid.Column="1" Classes="panel" Margin="14,0,0,0">
       <ScrollViewer>
-        <StackPanel Spacing="12">
-          <StackPanel Spacing="2">
-            <TextBlock Text="{Binding WelcomeTitle}" Classes="heroTitle" />
-            <TextBlock Text="{Binding BrandText}" Opacity="0.8" />
-          </StackPanel>
+        <StackPanel Spacing="14">
+          <!-- 1. 沉浸式 Hero 横幅（游戏氛围大卡） -->
+          <Border CornerRadius="14" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" BoxShadow="0 6 18 0 #15000000" ClipToBounds="True">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                <GradientStop Color="#E38350" Offset="0.0" />
+                <GradientStop Color="#D47748" Offset="0.55" />
+                <GradientStop Color="#B85D30" Offset="1.0" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Grid ColumnDefinitions="*,Auto" Margin="22,16">
+              <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="6">
+                <TextBlock Text="{Binding WelcomeTitle}" FontSize="22" FontWeight="Bold" Foreground="White" />
+                <TextBlock Text="{Binding BrandText}" FontSize="13" Foreground="#F5FFFFFF" Opacity="0.92" TextWrapping="Wrap" />
+              </StackPanel>
+              <Image Grid.Column="1" Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="64" Height="64" VerticalAlignment="Center" Margin="16,0,8,0" Opacity="0.95" />
+            </Grid>
+          </Border>
 
+          <!-- 2. 快捷操作矩阵（一键进入 Mod 管理、打开 Mods 目录、游戏目录） -->
           <Border Classes="hintCard">
-            <StackPanel Spacing="8">
+            <StackPanel Spacing="10">
+              <TextBlock Text="快捷操作" Classes="hintTitle" FontSize="13" />
+              <Grid ColumnDefinitions="*,*,*">
+                <Button Grid.Column="0" Content="📦 Mod 管理" Command="{Binding OpenModManageCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="0,0,6,0" Padding="10,8" />
+                <Button Grid.Column="1" Content="📂 打开 Mods 目录" Command="{Binding OpenModsFolderCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="3,0,3,0" Padding="10,8" />
+                <Button Grid.Column="2" Content="🎮 打开游戏目录" Command="{Binding OpenGameFolderCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="6,0,0,0" Padding="10,8" />
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <!-- 3. 运行环境与实例状态面板 -->
+          <Border Classes="hintCard">
+            <StackPanel Spacing="10">
               <TextBlock Text="{Binding StatusHeadline}" Classes="hintTitle" />
-              <TextBlock Text="{Binding StatusSubline}" Opacity="0.82" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="96,*" RowDefinitions="Auto,Auto,Auto,Auto">
+              <TextBlock Text="{Binding StatusSubline}" Opacity="0.82" TextWrapping="Wrap" FontSize="13" />
+              <Grid ColumnDefinitions="96,*" RowDefinitions="Auto,Auto,Auto,Auto" Margin="0,4,0,0">
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding InstanceInfoLabel}" Opacity="0.7" Margin="0,0,8,6" />
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding InstanceName}" FontWeight="Medium" TextWrapping="Wrap" Margin="0,0,0,6" />
 
@@ -62,6 +119,7 @@
             </StackPanel>
           </Border>
 
+          <!-- 4. 新手上路卡片（仅在未选择实例时展示） -->
           <Border Classes="hintCard" IsVisible="{Binding ShowOnboardingCard}">
             <StackPanel Spacing="8">
               <TextBlock Text="{Binding GetStartedTitle}" Classes="hintTitle" />
@@ -70,17 +128,18 @@
               <TextBlock Text="{Binding GuideStep2}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding GuideStep3}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding GuideStep4}" TextWrapping="Wrap" />
-              <Button Classes="launchPrimary" Content="{Binding VersionSelectButtonText}" Command="{Binding NavigateToVersionSelectCommand}" HorizontalAlignment="Left" />
+              <Button Classes="launchPrimary" Content="{Binding VersionSelectButtonText}" Command="{Binding NavigateToVersionSelectCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" />
             </StackPanel>
           </Border>
 
+          <!-- 5. 使用指南与技巧卡片 -->
           <Border Classes="hintCard">
             <StackPanel Spacing="8">
               <TextBlock Text="{Binding GuideUsageTitle}" Classes="hintTitle" />
               <TextBlock Text="{Binding GuideUsageLine1}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding GuideUsageLine2}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding GuideUsageModManageLine}" TextWrapping="Wrap" />
-              <Button Content="{Binding ModManageButtonText}" Command="{Binding OpenModManageCommand}" IsVisible="{Binding ShowModManageButton}" HorizontalAlignment="Left" />
+              <Button Content="{Binding ModManageButtonText}" Command="{Binding OpenModManageCommand}" IsVisible="{Binding ShowModManageButton}" HorizontalAlignment="Left" Margin="0,4,0,0" />
             </StackPanel>
           </Border>
         </StackPanel>

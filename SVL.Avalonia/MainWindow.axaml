@@ -58,7 +58,7 @@
   </Window.DataTemplates>
 
   <Grid RowDefinitions="48,*">
-    <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" BorderBrush="#335D2C1F" BorderThickness="0,0,0,1" PointerPressed="TitleBar_PointerPressed">
+    <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" BorderBrush="#26000000" BorderThickness="0,0,0,1" BoxShadow="0 2 12 0 #18000000" PointerPressed="TitleBar_PointerPressed">
       <Grid ColumnDefinitions="Auto,*,Auto" Margin="16,0">
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Classes="nav back" IsVisible="{Binding ShowBackButton}" Command="{Binding NavigateBackCommand}">
@@ -69,43 +69,45 @@
           <TextBlock Text="{Binding ResourceDetailsHeaderTitle}" Classes="brand" Foreground="White" VerticalAlignment="Center" IsVisible="{Binding ShowResourceDetailHeaderTitle}" />
         </StackPanel>
 
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-          <Button Classes="nav" Classes.selected="{Binding IsLaunchPage}" Command="{Binding NavigateToLaunchCommand}">
-            <TextBlock Text="{Binding NavLaunchText}" VerticalAlignment="Center" />
-          </Button>
-          <Button Classes="nav" Classes.selected="{Binding IsLocalModManagePage}" Command="{Binding NavigateToLocalModManageCommand}">
-            <TextBlock Text="{Binding NavLocalModManageText}" VerticalAlignment="Center" />
-          </Button>
-          <Button Classes="nav" Classes.selected="{Binding IsDownloadPage}" Command="{Binding NavigateToDownloadCommand}">
-            <TextBlock Text="{Binding NavDownloadText}" VerticalAlignment="Center" />
-          </Button>
-          <Button Classes="nav" Classes.selected="{Binding IsTasksPage}" Command="{Binding NavigateToTasksCommand}">
-            <Grid>
-              <TextBlock Text="{Binding NavTasksText}" VerticalAlignment="Center" />
-              <Ellipse Width="7"
-                       Height="7"
-                       Fill="#FFEF5350"
-                       Stroke="White"
-                       StrokeThickness="0.8"
-                       HorizontalAlignment="Right"
-                       VerticalAlignment="Top"
-                       Margin="0,-2,-2,0"
-                       IsVisible="{Binding ShowTaskNavNotification}" />
-              <Ellipse Width="7"
-                       Height="7"
-                       Fill="#FFE0B85A"
-                       Stroke="#FFF8F2DE"
-                       StrokeThickness="0.8"
-                       HorizontalAlignment="Right"
-                       VerticalAlignment="Top"
-                       Margin="0,-2,-2,0"
-                       IsVisible="{Binding ShowTaskNavSoftHint}" />
-            </Grid>
-          </Button>
-          <Button Classes="nav" Classes.selected="{Binding IsSettingsPage}" Command="{Binding NavigateToSettingsCommand}">
-            <TextBlock Text="{Binding NavSettingsText}" VerticalAlignment="Center" />
-          </Button>
-        </StackPanel>
+        <Border Grid.Column="1" Background="#18000000" CornerRadius="20" Padding="4,3" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <Button Classes="nav" Classes.selected="{Binding IsLaunchPage}" Command="{Binding NavigateToLaunchCommand}">
+              <TextBlock Text="{Binding NavLaunchText}" VerticalAlignment="Center" />
+            </Button>
+            <Button Classes="nav" Classes.selected="{Binding IsLocalModManagePage}" Command="{Binding NavigateToLocalModManageCommand}">
+              <TextBlock Text="{Binding NavLocalModManageText}" VerticalAlignment="Center" />
+            </Button>
+            <Button Classes="nav" Classes.selected="{Binding IsDownloadPage}" Command="{Binding NavigateToDownloadCommand}">
+              <TextBlock Text="{Binding NavDownloadText}" VerticalAlignment="Center" />
+            </Button>
+            <Button Classes="nav" Classes.selected="{Binding IsTasksPage}" Command="{Binding NavigateToTasksCommand}">
+              <Grid>
+                <TextBlock Text="{Binding NavTasksText}" VerticalAlignment="Center" />
+                <Ellipse Width="7"
+                         Height="7"
+                         Fill="#FFEF5350"
+                         Stroke="White"
+                         StrokeThickness="0.8"
+                         HorizontalAlignment="Right"
+                         VerticalAlignment="Top"
+                         Margin="0,-2,-2,0"
+                         IsVisible="{Binding ShowTaskNavNotification}" />
+                <Ellipse Width="7"
+                         Height="7"
+                         Fill="#FFE0B85A"
+                         Stroke="#FFF8F2DE"
+                         StrokeThickness="0.8"
+                         HorizontalAlignment="Right"
+                         VerticalAlignment="Top"
+                         Margin="0,-2,-2,0"
+                         IsVisible="{Binding ShowTaskNavSoftHint}" />
+              </Grid>
+            </Button>
+            <Button Classes="nav" Classes.selected="{Binding IsSettingsPage}" Command="{Binding NavigateToSettingsCommand}">
+              <TextBlock Text="{Binding NavSettingsText}" VerticalAlignment="Center" />
+            </Button>
+          </StackPanel>
+        </Border>
 
         <Grid Grid.Column="2" Width="120" Height="48" RowDefinitions="48" ColumnDefinitions="40,40,40"
               HorizontalAlignment="Right" VerticalAlignment="Center" IsVisible="{Binding ShowWindowControlButtons}">

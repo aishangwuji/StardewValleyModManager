@@ -147,21 +147,22 @@
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{DynamicResource NavTextBrush}" />
     <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="Padding" Value="12,8" />
-    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="Padding" Value="14,6" />
+    <Setter Property="CornerRadius" Value="16" />
     <Setter Property="Transitions">
       <Transitions>
-        <DoubleTransition Property="Opacity" Duration="0:0:0.14" />
+        <BrushTransition Property="Background" Duration="0:0:0.15" />
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
       </Transitions>
     </Setter>
   </Style>
 
   <Style Selector="Button.nav:pointerover">
-    <Setter Property="Background" Value="#33FFFFFF" />
+    <Setter Property="Background" Value="#2BFFFFFF" />
   </Style>
 
   <Style Selector="Button.nav.selected">
-    <Setter Property="Background" Value="#33FFFFFF" />
+    <Setter Property="Background" Value="#45FFFFFF" />
     <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
@@ -296,8 +297,9 @@
     <Setter Property="Background" Value="{DynamicResource PanelBackgroundBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="10" />
-    <Setter Property="Padding" Value="14" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="16" />
+    <Setter Property="BoxShadow" Value="0 4 16 0 #0D000000" />
   </Style>
 
   <Style Selector="TextBlock.sectionTitle">
@@ -327,12 +329,51 @@
     <Setter Property="Background" Value="{DynamicResource CardBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="8" />
-    <Setter Property="Padding" Value="12" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="14" />
+    <Setter Property="BoxShadow" Value="0 2 8 0 #0B000000" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.18" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.18" />
+        <BrushTransition Property="Background" Duration="0:0:0.18" />
+      </Transitions>
+    </Setter>
   </Style>
 
   <Style Selector="Border.hintCard:pointerover">
     <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="BoxShadow" Value="0 4 14 0 #1A000000" />
+    <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+  </Style>
+
+  <!-- 英雄横幅与特性卡片 -->
+  <Style Selector="Border.heroCard">
+    <Setter Property="CornerRadius" Value="14" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="BorderBrush" Value="{DynamicResource CardHighlightBorder}" />
+    <Setter Property="BoxShadow" Value="0 6 20 0 #18000000" />
+    <Setter Property="Padding" Value="20" />
+  </Style>
+
+  <!-- 仪表盘统计小方卡 -->
+  <Style Selector="Border.statCard">
+    <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="12,10" />
+    <Setter Property="BoxShadow" Value="0 2 6 0 #08000000" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.16" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.16" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.statCard:pointerover">
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="BoxShadow" Value="0 4 12 0 #15000000" />
   </Style>
 
   <Style Selector="TextBlock.hintTitle">
@@ -423,13 +464,25 @@
     <Setter Property="Foreground" Value="White" />
     <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.15" />
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+      </Transitions>
+    </Setter>
   </Style>
 
   <Style Selector="Button.launchPrimary:pointerover">
     <Setter Property="Background" Value="{DynamicResource ColorBrush2}" />
+    <Setter Property="Opacity" Value="0.95" />
+  </Style>
+
+  <Style Selector="Button.launchPrimary:pressed">
+    <Setter Property="Opacity" Value="0.85" />
   </Style>
 
   <Style Selector="Button.launchSecondary">
@@ -437,12 +490,20 @@
     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+        <BrushTransition Property="Background" Duration="0:0:0.15" />
+      </Transitions>
+    </Setter>
   </Style>
 
   <Style Selector="Button.launchSecondary:pointerover">
     <Setter Property="Background" Value="{DynamicResource PanelBackgroundBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
   </Style>
 </Styles>
