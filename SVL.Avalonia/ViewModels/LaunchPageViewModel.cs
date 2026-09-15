@@ -1,12 +1,16 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using SVL.Avalonia.Models;
 using SVL.Avalonia.Services;
 using SVL.Core.Platform.Abstractions;
 using SVL.Core.Platform.Services;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace SVL.Avalonia.ViewModels;
 
@@ -22,8 +26,28 @@ public partial class LaunchPageViewModel : ObservableObject
     private readonly AppUserSettingsStore _settingsStore;
     private readonly LocalizationService _localizationService;
     private readonly ImageResourceService _imageResourceService;
+    private readonly DialogService? _dialogService;
+    private ModProfileStore? _profileStore;
     private string _currentGamePath = string.Empty;
     private string _preferredLaunchModeToken = "auto";
+
+    private ObservableCollection<ModProfileRecord>? _modProfiles;
+    public ObservableCollection<ModProfileRecord> ModProfiles => _modProfiles ??= [];
+
+    private ModProfileStore SafeProfileStore => _profileStore ??= new ModProfileStore();
+
+    [ObservableProperty]
+    private ModProfileRecord? _selectedModProfile;
+
+    public bool IsSaveSharedNoticeVisible => SelectedModProfile != null && !SelectedModProfile.IsDefault && !SelectedModProfile.EnableCustomSavePath;
+
+    public bool IsCustomSaveActive => SelectedModProfile != null && SelectedModProfile.EnableCustomSavePath;
+
+    partial void OnSelectedModProfileChanged(ModProfileRecord? value)
+    {
+        OnPropertyChanged(nameof(IsSaveSharedNoticeVisible));
+        OnPropertyChanged(nameof(IsCustomSaveActive));
+    }
 
     /// <summary>请求导航到“实例”二级页面（由 MainWindow 订阅后压栈）。</summary>
     public event Action? NavigateToInstancesRequested;
@@ -178,13 +202,17 @@ public partial class LaunchPageViewModel : ObservableObject
         IExternalProcessService externalProcessService,
         AppUserSettingsStore settingsStore,
         LocalizationService localizationService,
-        ImageResourceService imageResourceService)
+        ImageResourceService imageResourceService,
+        DialogService? dialogService = null,
+        ModProfileStore? profileStore = null)
     {
         _gameInstallPathLocator = gameInstallPathLocator;
         _externalProcessService = externalProcessService;
         _settingsStore = settingsStore;
         _localizationService = localizationService;
         _imageResourceService = imageResourceService;
+        _dialogService = dialogService;
+        _profileStore = profileStore ?? new ModProfileStore();
         _localizationService.LanguageChanged += ApplyLocalizedTexts;
         _imageResourceService.ResourcesChanged += RefreshInstanceFromLocalEnvironment;
         ApplyLocalizedTexts();
@@ -320,6 +348,7 @@ public partial class LaunchPageViewModel : ObservableObject
             ShowModManageButton = preferredHasSmapi;
             VersionStatus = BuildVersionStatusText(selectedIsSmapi, gameVersion, smapiVersion);
             SetInstanceIconSource(ResolveInstanceIconSource(preferredPath, selectedIsSmapi));
+            ReloadModProfiles();
             ActionStatus = Format("Launch.Action.LoadedInstance", InstanceName);
             return;
         }
@@ -338,6 +367,7 @@ public partial class LaunchPageViewModel : ObservableObject
             VersionStatus = Text("Launch.Instance.NoneStatus");
             ShowModManageButton = false;
             SetInstanceIconSource(ResolveNoneInstanceIcon());
+            ReloadModProfiles();
             ActionStatus = Text("Launch.Action.NoPathDetected");
             return;
         }
@@ -354,6 +384,7 @@ public partial class LaunchPageViewModel : ObservableObject
         ShowModManageButton = hasSmapi;
         VersionStatus = BuildVersionStatusText(hasSmapi, detectedGameVersion, detectedSmapiVersion);
         SetInstanceIconSource(ResolveInstanceIconSource(gamePath, hasSmapi));
+        ReloadModProfiles();
         ActionStatus = Format("Launch.Action.DetectedPath", gamePath);
     }
 
@@ -711,7 +742,7 @@ public partial class LaunchPageViewModel : ObservableObject
         _externalProcessService.TryOpenPath(_currentGamePath);
     }
 
-    /// <summary>打开当前游戏 Mods 目录。</summary>
+    /// <summary>打开当前游戏 Mods 目录（若选中自定义预设则打开对应预设的 Mods 目录）。</summary>
     [RelayCommand]
     private void OpenModsFolder()
     {
@@ -721,13 +752,76 @@ public partial class LaunchPageViewModel : ObservableObject
             return;
         }
 
-        var modsPath = Path.Combine(_currentGamePath, "Mods");
+        var modsPath = SelectedModProfile != null && !string.IsNullOrWhiteSpace(SelectedModProfile.ModsPath)
+            ? SelectedModProfile.GetEffectiveModsPath(_currentGamePath)
+            : Path.Combine(_currentGamePath, "Mods");
+
         if (!Directory.Exists(modsPath))
         {
             try { Directory.CreateDirectory(modsPath); } catch { }
         }
 
         _externalProcessService.TryOpenPath(Directory.Exists(modsPath) ? modsPath : _currentGamePath);
+    }
+
+    /// <summary>获取当前生效的 Mods 目录绝对路径。</summary>
+    public string GetCurrentEffectiveModsPath()
+    {
+        if (SelectedModProfile != null && !string.IsNullOrWhiteSpace(SelectedModProfile.ModsPath))
+        {
+            return SelectedModProfile.GetEffectiveModsPath(_currentGamePath);
+        }
+
+        return string.IsNullOrWhiteSpace(_currentGamePath) ? string.Empty : Path.Combine(_currentGamePath, "Mods");
+    }
+
+    /// <summary>重新加载当前实例的 Mod 预设列表。</summary>
+    public void ReloadModProfiles()
+    {
+        var previousSelectedId = SelectedModProfile?.Id;
+        ModProfiles.Clear();
+        if (string.IsNullOrWhiteSpace(_currentGamePath))
+        {
+            SelectedModProfile = null;
+            return;
+        }
+
+        var profiles = SafeProfileStore.GetProfilesForInstance(_currentGamePath, InstanceName);
+        foreach (var p in profiles)
+        {
+            ModProfiles.Add(p);
+        }
+
+        var match = ModProfiles.FirstOrDefault(p => string.Equals(p.Id, previousSelectedId, StringComparison.OrdinalIgnoreCase))
+                    ?? ModProfiles.FirstOrDefault();
+        SelectedModProfile = match;
+    }
+
+    /// <summary>呼出 Mod 整合包/预设管理弹窗。</summary>
+    [RelayCommand]
+    private async Task ManageModProfilesAsync()
+    {
+        if (_dialogService == null || string.IsNullOrWhiteSpace(_currentGamePath))
+        {
+            return;
+        }
+
+        var result = await _dialogService.ShowModProfileManageDialogAsync(
+            SafeProfileStore,
+            _currentGamePath,
+            _currentGamePath,
+            InstanceName,
+            SelectedModProfile?.Id);
+
+        ReloadModProfiles();
+        if (result != null)
+        {
+            var match = ModProfiles.FirstOrDefault(p => string.Equals(p.Id, result.Id, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                SelectedModProfile = match;
+            }
+        }
     }
 
     private static string ResolveLaunchTarget(string gamePath, string launchModeToken)
@@ -845,6 +939,33 @@ public partial class LaunchPageViewModel : ObservableObject
         if (EnableSafeLaunch)
         {
             args.Add("--safe");
+        }
+
+        // 方案 C: SMAPI 原生 --mods-path 支持
+        if (SelectedModProfile != null && !string.IsNullOrWhiteSpace(SelectedModProfile.ModsPath))
+        {
+            var effectiveMods = SelectedModProfile.GetEffectiveModsPath(_currentGamePath);
+            if (!string.IsNullOrWhiteSpace(effectiveMods))
+            {
+                try { Directory.CreateDirectory(effectiveMods); } catch { }
+                args.Add($"--mods-path \"{effectiveMods}\"");
+            }
+        }
+
+        // 独立存档空间 --save-path 支持
+        if (SelectedModProfile != null && SelectedModProfile.EnableCustomSavePath)
+        {
+            var effectiveSave = !string.IsNullOrWhiteSpace(SelectedModProfile.CustomSavePath)
+                ? Path.GetFullPath(SelectedModProfile.CustomSavePath)
+                : (!string.IsNullOrWhiteSpace(SelectedModProfile.ModsPath)
+                    ? Path.Combine(Path.GetDirectoryName(SelectedModProfile.ModsPath) ?? SelectedModProfile.ModsPath, "Saves")
+                    : Path.Combine(_currentGamePath, "Saves"));
+
+            if (!string.IsNullOrWhiteSpace(effectiveSave))
+            {
+                try { Directory.CreateDirectory(effectiveSave); } catch { }
+                args.Add($"--save-path \"{effectiveSave}\"");
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(settings.InstanceCustomLaunchArguments))

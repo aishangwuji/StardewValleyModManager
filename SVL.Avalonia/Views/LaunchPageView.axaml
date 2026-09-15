@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:SVL.Avalonia.ViewModels"
+             xmlns:models="using:SVL.Avalonia.Models"
              xmlns:angif="using:AnimatedImage.Avalonia"
              mc:Ignorable="d"
              x:Class="SVL.Avalonia.Views.LaunchPageView"
@@ -118,7 +119,87 @@
             </Panel>
           </Border>
 
-          <!-- 2. 快捷操作矩阵（一键进入 Mod 管理、打开 Mods 目录、游戏目录） -->
+          <!-- 2. Mod 整合包 / 预设快速切换 (方案 C: SMAPI 原生 mods-path) -->
+          <Border Classes="hintCard" IsVisible="{Binding ShowModManageButton}">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <TextBlock Text="📦 当前 Mod 整合包预设" Classes="hintTitle" FontSize="13" VerticalAlignment="Center" />
+                  <Border Background="{DynamicResource PillBg}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                    <TextBlock Text="SMAPI 原生 --mods-path 切换" FontSize="11" Opacity="0.8" />
+                  </Border>
+                </StackPanel>
+                <Button Grid.Column="1"
+                        Content="⚙️ 管理预设..."
+                        Command="{Binding ManageModProfilesCommand}"
+                        FontSize="12"
+                        Padding="10,4" />
+              </Grid>
+
+              <Grid ColumnDefinitions="*,Auto">
+                <ComboBox Grid.Column="0"
+                          ItemsSource="{Binding ModProfiles}"
+                          SelectedItem="{Binding SelectedModProfile, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="models:ModProfileRecord">
+                      <Grid ColumnDefinitions="*,Auto" Margin="2,0">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                          <TextBlock Text="{Binding Name}" FontWeight="Medium" />
+                          <Border IsVisible="{Binding IsDefault}"
+                                  Background="#2A80D0"
+                                  CornerRadius="4"
+                                  Padding="4,1"
+                                  VerticalAlignment="Center">
+                            <TextBlock Text="默认" FontSize="10" Foreground="White" />
+                          </Border>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding ModsPath}" FontSize="11" Opacity="0.5" Margin="8,0,0,0" />
+                      </Grid>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Grid>
+
+              <!-- 安全防呆提示栏（若当前预设共用全局存档且非默认） -->
+              <Border Classes="hintCard"
+                      IsVisible="{Binding IsSaveSharedNoticeVisible}"
+                      Background="#22FFA000"
+                      BorderBrush="#88FFA000"
+                      BorderThickness="1"
+                      CornerRadius="6"
+                      Padding="8,6">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="💡" VerticalAlignment="Center" />
+                  <TextBlock Text="提示：当前整合包共用游戏全局存档。如果包含大型扩展模组（如 SVE），请注意在游戏内选择对应存档！"
+                             FontSize="11"
+                             Foreground="#FFA000"
+                             TextWrapping="Wrap"
+                             VerticalAlignment="Center" />
+                </StackPanel>
+              </Border>
+
+              <!-- 独立存档启用提示 -->
+              <Border Classes="hintCard"
+                      IsVisible="{Binding IsCustomSaveActive}"
+                      Background="#224CAF50"
+                      BorderBrush="#884CAF50"
+                      BorderThickness="1"
+                      CornerRadius="6"
+                      Padding="8,6">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="🛡️" VerticalAlignment="Center" />
+                  <TextBlock Text="已为此整合包启用独立存档空间 (--save-path)，与全局存档完全物理隔离。"
+                             FontSize="11"
+                             Foreground="#4CAF50"
+                             TextWrapping="Wrap"
+                             VerticalAlignment="Center" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </Border>
+
+          <!-- 3. 快捷操作矩阵（一键进入 Mod 管理、打开 Mods 目录、游戏目录） -->
           <Border Classes="hintCard">
             <StackPanel Spacing="10">
               <TextBlock Text="快捷操作" Classes="hintTitle" FontSize="13" />

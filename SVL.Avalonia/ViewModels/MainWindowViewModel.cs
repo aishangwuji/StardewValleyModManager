@@ -216,7 +216,7 @@ public partial class MainWindowViewModel : ObservableObject
             modpackInstallService);
         var launcherUpdateService = new LauncherUpdateService();
         _launcherUpdateService = launcherUpdateService;
-        LaunchPage = new LaunchPageViewModel(_gameInstallPathLocator, externalProcessService, _settingsStore, _localizationService, _imageResourceService);
+        LaunchPage = new LaunchPageViewModel(_gameInstallPathLocator, externalProcessService, _settingsStore, _localizationService, _imageResourceService, dialogService);
         DownloadPage = new DownloadPageViewModel(
             _localizationService,
             _imageResourceService,

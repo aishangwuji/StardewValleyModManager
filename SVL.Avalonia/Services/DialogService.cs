@@ -940,6 +940,23 @@ public sealed class DialogService
         return await PickSaveFilePathAsync(owner, title, suggestedFileName, fileTypes);
     }
 
+    public async Task<ModProfileRecord?> ShowModProfileManageDialogAsync(
+        ModProfileStore profileStore,
+        string instanceKey,
+        string gamePath,
+        string instanceName,
+        string? activeProfileId = null)
+    {
+        var owner = GetMainWindow();
+        if (owner == null)
+        {
+            return null;
+        }
+
+        var dialog = new ModProfileManageDialog(profileStore, instanceKey, gamePath, instanceName, activeProfileId);
+        return await dialog.ShowDialog<ModProfileRecord?>(owner);
+    }
+
     private static Window CreateHostedDialogWindow(string title, Control content)
     {
         return new Window
