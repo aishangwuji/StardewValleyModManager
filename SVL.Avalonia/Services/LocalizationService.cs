@@ -17,7 +17,7 @@ public sealed class LocalizationService
         {
             ["zh-CN"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["Window.Title"] = "Stardew Valley Launcher",
+                ["Window.Title"] = "Stardew Valley Mod Manager",
                 ["Nav.Launch"] = "启动",
                 // 2026-01 精简：由 "本地Mod管理" 改为 "Mod管理"，保持与启动页按钮一致
                 ["Nav.LocalModManage"] = "Mod管理",
@@ -39,9 +39,9 @@ public sealed class LocalizationService
                 // 2026-01 精简：与 Nav.LocalModManage 同步由 "本地Mod管理" 改为 "Mod管理"（启动页入口按钮）
                 ["Launch.ModManage"] = "Mod管理",
                 ["Launch.VersionSettings"] = "版本设置",
-                ["Launch.Welcome"] = "欢迎使用星露谷物语启动器",
+                ["Launch.Welcome"] = "欢迎使用星露谷物语 Mod 管理器",
                 ["Launch.GetStarted"] = "开始使用",
-                ["Launch.Brand"] = "Stardew Valley Launcher",
+                ["Launch.Brand"] = "Stardew Valley Mod Manager",
                 ["Launch.Status.Initializing"] = "等待初始化",
                 ["Launch.Status.ReadingInstance"] = "正在读取实例状态",
                 ["Launch.Status.StartingTitle"] = "正在启动游戏",
@@ -447,7 +447,7 @@ public sealed class LocalizationService
             },
             ["en-US"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["Window.Title"] = "Stardew Valley Launcher",
+                ["Window.Title"] = "Stardew Valley Mod Manager",
                 ["Nav.Launch"] = "Launch",
                 ["Nav.LocalModManage"] = "Local Mods",
                 ["Nav.Download"] = "Download",
@@ -467,9 +467,9 @@ public sealed class LocalizationService
                 ["Launch.VersionSelect"] = "Version Select",
                 ["Launch.ModManage"] = "Local Mods",
                 ["Launch.VersionSettings"] = "Version Settings",
-                ["Launch.Welcome"] = "Welcome to Stardew Valley Launcher",
+                ["Launch.Welcome"] = "Welcome to Stardew Valley Mod Manager",
                 ["Launch.GetStarted"] = "Get Started",
-                ["Launch.Brand"] = "Stardew Valley Launcher",
+                ["Launch.Brand"] = "Stardew Valley Mod Manager",
                 ["Launch.Status.Initializing"] = "Initializing",
                 ["Launch.Status.ReadingInstance"] = "Reading instance state",
                 ["Launch.Status.StartingTitle"] = "Launching Game",

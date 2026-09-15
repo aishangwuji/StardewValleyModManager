@@ -12,9 +12,9 @@ public sealed class AppUserSettings
 
     public string InstanceSteamInviteCode { get; set; } = string.Empty;
 
-    public string LauncherTitle { get; set; } = "Stardew Valley Launcher";
+    public string LauncherTitle { get; set; } = "Stardew Valley Mod Manager";
 
-    public string LauncherAppName { get; set; } = "SVL";
+    public string LauncherAppName { get; set; } = "SVMM";
 
     public bool EnableDownloadCache { get; set; } = true;
 

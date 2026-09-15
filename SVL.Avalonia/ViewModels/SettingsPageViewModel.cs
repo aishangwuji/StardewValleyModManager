@@ -188,10 +188,10 @@ public partial class SettingsPageViewModel : ObservableObject
     private string _gameWindowTitle = "<default>";
 
     [ObservableProperty]
-    private string _launcherTitle = "Stardew Valley Launcher";
+    private string _launcherTitle = "Stardew Valley Mod Manager";
 
     [ObservableProperty]
-    private string _launcherAppName = "SVL";
+    private string _launcherAppName = "SVMM";
 
     [ObservableProperty]
     private bool _instanceAutoConnectServer;

@@ -2,7 +2,7 @@
   <img src="SVL.Avalonia/Assets/Icons/icon.png" alt="SVL Logo" width="128" height="128">
 </p>
 
-<h1 align="center">Stardew Valley Launcher</h1>
+<h1 align="center">Stardew Valley Mod Manager</h1>
 
 <p align="center">
   <b>一站式星露谷物语启动器 · Mod 管理器 · Modpack 工具</b>
@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Avalonia-11.2-blueviolet" alt="Avalonia">
   <img src="https://img.shields.io/badge/License-Apache_2.0-green" alt="License">
   <img src="https://img.shields.io/badge/Platform-Windows_/_macOS-0078D6" alt="Cross-Platform">
-  <img src="https://img.shields.io/github/v/release/panda-lsy/SVL-StardewValleyLauncher?include_prereleases" alt="Release">
+  <img src="https://img.shields.io/github/v/release/aishangwuji/StardewValleyModManager?include_prereleases" alt="Release">
   <a href="https://svl.qzz.io" target="_blank">
     <img src="https://img.shields.io/badge/官网-SVL%20Website-2F855A?style=flat-square" alt="Official Website">
   </a>
@@ -32,7 +32,7 @@
 
 ## 关于
 
-**SVL (Stardew Valley Launcher)** 是一个功能完整的星露谷物语启动器和 Mod 管理器。基于 Avalonia UI 和 .NET 10 构建，提供跨平台的现代化桌面体验，让你轻松管理游戏实例、安装和组织 Mod、集成 NexusMods / CurseForge 下载，以及创建和分享 Modpack。
+**Stardew Valley Mod Manager (SVMM)** 是一个功能完整的星露谷物语启动器和 Mod 管理器。基于 Avalonia UI 和 .NET 10 构建，提供跨平台的现代化桌面体验，让你轻松管理游戏实例、安装和组织 Mod、集成 NexusMods / CurseForge 下载，以及创建和分享 Modpack。
 
 ## 功能亮点
 

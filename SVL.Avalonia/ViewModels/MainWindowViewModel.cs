@@ -60,7 +60,7 @@ public partial class MainWindowViewModel : ObservableObject
     private ObservableObject? _currentPageViewModel;
 
     [ObservableProperty]
-    private string _windowTitle = "Stardew Valley Launcher";
+    private string _windowTitle = "Stardew Valley Mod Manager";
 
     /// <summary>顶栏“启动”文案（来自 LocalizationService Nav.Launch）。</summary>
     [ObservableProperty]
@@ -182,7 +182,7 @@ public partial class MainWindowViewModel : ObservableObject
         _localizationService.LanguageChanged += ApplyLocalizedTexts;
         _imageResourceService.ResourcesChanged += ApplyImageResources;
         var initialSettings = _settingsStore.Load();
-        LauncherAppNameText = string.IsNullOrWhiteSpace(initialSettings.LauncherAppName) ? "SVL" : initialSettings.LauncherAppName;
+        LauncherAppNameText = string.IsNullOrWhiteSpace(initialSettings.LauncherAppName) ? "SVMM" : initialSettings.LauncherAppName;
         ApplyLocalizedTexts();
         ApplyImageResources();
 

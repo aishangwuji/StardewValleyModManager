@@ -334,7 +334,7 @@
             <StackPanel Spacing="8">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <Image Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="14" Height="14" VerticalAlignment="Center" />
-                <TextBlock Text="Stardew Valley Launcher" Classes="hintTitle" VerticalAlignment="Center" />
+                <TextBlock Text="Stardew Valley Mod Manager" Classes="hintTitle" VerticalAlignment="Center" />
               </StackPanel>
               <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
                 <TextBlock Text="版本号：" Opacity="0.85" />
