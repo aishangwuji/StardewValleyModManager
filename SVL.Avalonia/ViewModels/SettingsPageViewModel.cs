@@ -533,6 +533,8 @@ public partial class SettingsPageViewModel : ObservableObject
         ThemeService.RestoreFromSettings(settings);
 
         SelectedUiLanguage = string.IsNullOrWhiteSpace(settings.UiLanguage) ? "zh-CN" : settings.UiLanguage;
+        SelectedUiLanguageOption = UiLanguageOptions.FirstOrDefault(o => string.Equals(o.Code, SelectedUiLanguage, StringComparison.OrdinalIgnoreCase))
+                                   ?? UiLanguageOptions.First();
         ShowNotifications = settings.ShowNotifications;
         DebugMode = settings.DebugMode;
         MinimizeToTrayOnStartup = settings.MinimizeToTrayOnStartup;

@@ -248,9 +248,7 @@ public partial class LaunchPageViewModel : ObservableObject
         StatusHeadline = ShowModManageButton
             ? _localizationService.Get("Launch.Status.ReadySmapiTitle")
             : _localizationService.Get("Launch.Status.ReadyVanillaTitle");
-        StatusSubline = string.IsNullOrWhiteSpace(ActionStatus)
-            ? _localizationService.Get("Launch.Status.ReadySubtitle")
-            : ActionStatus;
+        StatusSubline = _localizationService.Get("Launch.Status.ReadySubtitle");
     }
 
     private void ApplyLocalizedTexts()
@@ -317,7 +315,7 @@ public partial class LaunchPageViewModel : ObservableObject
             var rawName = string.IsNullOrWhiteSpace(settings.InstanceName)
                 ? Path.GetFileName(preferredPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
                 : settings.InstanceName;
-            GameVersion = Text("Launch.Instance.SelectedLoaded");
+            GameVersion = string.Empty;
 
             var preferredHasSmapi = InstanceIconResolver.IsSmapiRuntime(preferredPath);
             var selectedModeToken = NormalizeLaunchModeToken(settings.PreferredLaunchMode);
@@ -345,11 +343,15 @@ public partial class LaunchPageViewModel : ObservableObject
             var gameVersion = DetectGameVersion(preferredPath);
             var smapiVersion = preferredHasSmapi ? DetectSmapiVersion(preferredPath) : "未安装";
 
+            GameVersion = string.IsNullOrWhiteSpace(gameVersion) || string.Equals(gameVersion, "未知版本", StringComparison.OrdinalIgnoreCase)
+                ? "星露谷物语"
+                : $"游戏版本: {gameVersion}";
+
             ShowModManageButton = preferredHasSmapi;
             VersionStatus = BuildVersionStatusText(selectedIsSmapi, gameVersion, smapiVersion);
             SetInstanceIconSource(ResolveInstanceIconSource(preferredPath, selectedIsSmapi));
             ReloadModProfiles();
-            ActionStatus = Format("Launch.Action.LoadedInstance", InstanceName);
+            ActionStatus = "已就绪";
             return;
         }
 
@@ -375,17 +377,20 @@ public partial class LaunchPageViewModel : ObservableObject
         HasInstances = true;
         _currentGamePath = gamePath;
         InstanceName = Path.GetFileName(gamePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        GameVersion = Text("Launch.Instance.DetectedLocal");
 
         var hasSmapi = InstanceIconResolver.IsSmapiRuntime(gamePath);
         var detectedGameVersion = DetectGameVersion(gamePath);
         var detectedSmapiVersion = hasSmapi ? DetectSmapiVersion(gamePath) : "未安装";
 
+        GameVersion = string.IsNullOrWhiteSpace(detectedGameVersion) || string.Equals(detectedGameVersion, "未知版本", StringComparison.OrdinalIgnoreCase)
+            ? "星露谷物语"
+            : $"游戏版本: {detectedGameVersion}";
+
         ShowModManageButton = hasSmapi;
         VersionStatus = BuildVersionStatusText(hasSmapi, detectedGameVersion, detectedSmapiVersion);
         SetInstanceIconSource(ResolveInstanceIconSource(gamePath, hasSmapi));
         ReloadModProfiles();
-        ActionStatus = Format("Launch.Action.DetectedPath", gamePath);
+        ActionStatus = "已就绪";
     }
 
     private void SetInstanceIconSource(string source)

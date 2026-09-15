@@ -156,6 +156,12 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>是否为一级页面“设置”。</summary>
     public bool IsSettingsPage => string.Equals(CurrentPage, "设置", StringComparison.Ordinal);
 
+    /// <summary>是否为 Mod 管理或版本设置页面（共用 VersionSettingsPageView 视图）。</summary>
+    public bool IsVersionSettingsOrModManagePage => IsLocalModManagePage || string.Equals(CurrentPage, "版本设置", StringComparison.Ordinal);
+
+    /// <summary>是否为二级页面（由 ContentControl 动态呈现）。</summary>
+    public bool IsSecondaryPage => !IsLaunchPage && !IsVersionSettingsOrModManagePage && !IsDownloadPage && !IsTasksPage && !IsSettingsPage;
+
     /// <summary>是否显示 Windows 标题栏控制按钮（仅 Windows）。</summary>
     public bool ShowWindowControlButtons => OperatingSystem.IsWindows();
 
@@ -448,6 +454,8 @@ public partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsDownloadPage));
         OnPropertyChanged(nameof(IsTasksPage));
         OnPropertyChanged(nameof(IsSettingsPage));
+        OnPropertyChanged(nameof(IsVersionSettingsOrModManagePage));
+        OnPropertyChanged(nameof(IsSecondaryPage));
         OnPropertyChanged(nameof(ShowBackButton));
         OnPropertyChanged(nameof(ShowResourceDetailHeaderTitle));
         OnPropertyChanged(nameof(ShowBrandIdentity));
@@ -787,8 +795,16 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void NavigateToLaunch()
     {
-        LaunchPage.RefreshFromSettingsAndEnvironment();
+        if (IsLaunchPage)
+        {
+            return;
+        }
+
         NavigateToPage("启动", LaunchPage, clearBackStack: true);
+        global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            LaunchPage.RefreshFromSettingsAndEnvironment();
+        }, global::Avalonia.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -800,15 +816,28 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void NavigateToLocalModManage()
     {
-        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
+        if (IsLocalModManagePage)
+        {
+            return;
+        }
+
         VersionSettingsPage.SwitchToModManage();
         NavigateToPage("本地Mod管理", VersionSettingsPage, clearBackStack: true);
+        global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
+        }, global::Avalonia.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>导航到一级页面“下载”。</summary>
     [RelayCommand]
     private void NavigateToDownload()
     {
+        if (IsDownloadPage)
+        {
+            return;
+        }
+
         NavigateToPage("下载", DownloadPage, clearBackStack: true);
     }
 
@@ -1032,6 +1061,11 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void NavigateToTasks()
     {
+        if (IsTasksPage)
+        {
+            return;
+        }
+
         TaskStatusPage.SyncTasks(DownloadPage.DownloadTasks);
         NavigateToPage("任务", TaskStatusPage, clearBackStack: true);
     }
@@ -1046,6 +1080,11 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void NavigateToSettings()
     {
+        if (IsSettingsPage)
+        {
+            return;
+        }
+
         NavigateToPage("设置", SettingsPage, clearBackStack: true);
     }
 

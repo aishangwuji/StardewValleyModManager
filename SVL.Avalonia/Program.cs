@@ -17,6 +17,13 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // 强制默认语言为中文 (zh-CN)
+        var defaultCulture = new System.Globalization.CultureInfo("zh-CN");
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = defaultCulture;
+        System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = defaultCulture;
+        System.Threading.Thread.CurrentThread.CurrentCulture = defaultCulture;
+        System.Threading.Thread.CurrentThread.CurrentUICulture = defaultCulture;
+
         // 1. 扫描命令行参数，提取 nxm:// 链接（浏览器协议回调传入）。
         PendingNxmUrl = ExtractNxmUrl(args);
 
