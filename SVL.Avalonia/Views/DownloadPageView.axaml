@@ -12,17 +12,17 @@
   <Grid ColumnDefinitions="280,*">
     <Border Grid.Column="0" Classes="panel">
       <Grid RowDefinitions="Auto,*">
-        <!-- 上区（Auto）：4 类别卡，永远完整可见，不被挤走 -->
+        <!-- 上区（Auto）：4 类别卡，按用户常用频次排序：Mods -> SMAPI -> Modpacks -> 游戏本体 -->
         <StackPanel Grid.Row="0" Spacing="8">
           <TextBlock Text="{Binding DownloadCategoryTitleText}" Classes="sectionTitle" />
-          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Game}">
+          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Mods}">
             <Grid ColumnDefinitions="4,Auto,*">
-              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsGameCategory}" />
-              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsGameCategory}" />
-              <Image Grid.Column="1" Source="{Binding CategoryGameIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModsCategory}" />
+              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsModsCategory}" />
+              <Image Grid.Column="1" Source="{Binding CategoryModsIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
               <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-                <TextBlock Text="{Binding CategoryGameText}" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding CategoryGameSubText}" FontSize="11" Opacity="0.72" />
+                <TextBlock Text="{Binding CategoryModsText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CategoryModsSubText}" FontSize="11" Opacity="0.72" />
               </StackPanel>
             </Grid>
           </Button>
@@ -37,17 +37,6 @@
               </StackPanel>
             </Grid>
           </Button>
-          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Mods}">
-            <Grid ColumnDefinitions="4,Auto,*">
-              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModsCategory}" />
-              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsModsCategory}" />
-              <Image Grid.Column="1" Source="{Binding CategoryModsIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
-              <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
-                <TextBlock Text="{Binding CategoryModsText}" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding CategoryModsSubText}" FontSize="11" Opacity="0.72" />
-              </StackPanel>
-            </Grid>
-          </Button>
           <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Modpacks}">
             <Grid ColumnDefinitions="4,Auto,*">
               <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsModpacksCategory}" />
@@ -56,6 +45,17 @@
               <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
                 <TextBlock Text="{Binding CategoryModpacksText}" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding CategoryModpacksSubText}" FontSize="11" Opacity="0.72" />
+              </StackPanel>
+            </Grid>
+          </Button>
+          <Button Classes="downloadCategory" Command="{Binding SelectCategoryCommand}" CommandParameter="{x:Static model:DownloadCategory.Game}">
+            <Grid ColumnDefinitions="4,Auto,*">
+              <Border Grid.ColumnSpan="3" Background="{DynamicResource CategorySelectedBg}" CornerRadius="6" IsVisible="{Binding IsGameCategory}" />
+              <Border Grid.Column="0" Background="{DynamicResource CategoryIndicator}" CornerRadius="2" IsVisible="{Binding IsGameCategory}" />
+              <Image Grid.Column="1" Source="{Binding CategoryGameIconSource, Converter={StaticResource AssetImageConverter}}" Width="18" Height="18" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <StackPanel Grid.Column="2" Spacing="1" Margin="8,0,0,0">
+                <TextBlock Text="{Binding CategoryGameText}" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding CategoryGameSubText}" FontSize="11" Opacity="0.72" />
               </StackPanel>
             </Grid>
           </Button>

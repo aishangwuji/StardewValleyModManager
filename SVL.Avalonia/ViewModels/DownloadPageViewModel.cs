@@ -164,7 +164,7 @@ public partial class DownloadPageViewModel : ObservableObject
     public Func<IReadOnlyList<ModInstallTarget>>? AvailableModInstancesProvider { get; set; }
 
     [ObservableProperty]
-    private DownloadCategory _selectedCategory = DownloadCategory.Smapi;
+    private DownloadCategory _selectedCategory = DownloadCategory.Mods;
 
     [ObservableProperty]
     private string _title = "下载中心";

@@ -69,7 +69,16 @@
           <TextBlock Text="{Binding ResourceDetailsHeaderTitle}" Classes="brand" Foreground="White" VerticalAlignment="Center" IsVisible="{Binding ShowResourceDetailHeaderTitle}" />
         </StackPanel>
 
-        <Border Grid.Column="1" Background="#18000000" CornerRadius="20" Padding="4,3" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <!-- 胶囊导航槽：微光磨砂玻璃凹槽 (Frosted Glass Trough) -->
+        <Border Grid.Column="1"
+                Background="#22000000"
+                BorderBrush="#33FFFFFF"
+                BorderThickness="1"
+                BoxShadow="0 2 8 0 #18000000"
+                CornerRadius="20"
+                Padding="4,3"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center">
           <StackPanel Orientation="Horizontal" Spacing="4">
             <Button Classes="nav" Classes.selected="{Binding IsLaunchPage}" Command="{Binding NavigateToLaunchCommand}">
               <TextBlock Text="{Binding NavLaunchText}" VerticalAlignment="Center" />
@@ -120,13 +129,23 @@
                     StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
             </Grid>
           </Button>
-          <Button Grid.Row="0" Grid.Column="1" Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化/还原"
+          <Button x:Name="MaximizeButton" Grid.Row="0" Grid.Column="1" Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化"
                   Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
             <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-              <Path Data="M 5,19 L 5,5 L 19,5 L 19,19 Z" Stroke="White" StrokeThickness="2"
+              <!-- 未最大化时显示的单框图标 -->
+              <Path x:Name="MaximizeIcon" Data="M 5,19 L 5,5 L 19,5 L 19,19 Z" Stroke="White" StrokeThickness="2"
                     Fill="Transparent"
                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+              <!-- 最大化时显示的还原双框图标 (两个重叠矩形) -->
+              <Canvas x:Name="RestoreIcon" IsVisible="False">
+                <!-- 后置小方块 -->
+                <Path Data="M 8,4 L 19,4 L 19,15 L 16,15 M 8,7 L 8,4" Stroke="White" StrokeThickness="2"
+                      Fill="Transparent" />
+                <!-- 前置小方块 -->
+                <Path Data="M 5,8 L 16,8 L 16,19 L 5,19 Z" Stroke="White" StrokeThickness="2"
+                      Fill="Transparent" />
+              </Canvas>
             </Grid>
           </Button>
           <Button Grid.Row="0" Grid.Column="2" Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭"

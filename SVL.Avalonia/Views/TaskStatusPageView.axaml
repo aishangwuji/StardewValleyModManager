@@ -100,14 +100,35 @@
         <StackPanel Spacing="12">
           <TextBlock Text="{Binding DetailTitleText}" Classes="heroTitle" />
 
-          <!-- 空选中提示 -->
-          <Border Classes="hintCard" IsVisible="{Binding !HasSelectedTask}">
-            <StackPanel Spacing="8" HorizontalAlignment="Center">
-              <TextBlock Text="{Binding DetailEmptyTitleText}" Classes="hintTitle" HorizontalAlignment="Center" />
-              <TextBlock Text="{Binding DetailEmptyDescText}"
-                         Opacity="0.75" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420" />
-            </StackPanel>
-          </Border>
+          <!-- 空选中提示与全景概览卡片（充实未选中时的右侧大片空白） -->
+          <StackPanel Spacing="12" IsVisible="{Binding !HasSelectedTask}">
+            <Border Classes="hintCard" Padding="20">
+              <StackPanel Spacing="10" HorizontalAlignment="Center">
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Inbox.png" Width="48" Height="48" Stretch="Uniform" HorizontalAlignment="Center" Opacity="0.5" />
+                <TextBlock Text="{Binding DetailEmptyTitleText}" Classes="hintTitle" FontSize="16" HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding DetailEmptyDescText}"
+                           Opacity="0.75" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="440" />
+              </StackPanel>
+            </Border>
+
+            <!-- 快捷提示与下载指引 -->
+            <Grid ColumnDefinitions="*,*">
+              <Border Grid.Column="0" Classes="statCard" Margin="0,0,6,0">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="下载队列提示" FontWeight="SemiBold" FontSize="13" />
+                  <TextBlock Text="• 支持多任务并发与大文件多线程分块下载&#x0a;• 下载中的任务支持随时暂停、取消或重试&#x0a;• 整合包与 Mod 会在下载后自动执行安全解压"
+                             FontSize="12" Opacity="0.75" TextWrapping="Wrap" LineHeight="18" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Classes="statCard" Margin="6,0,0,0">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="快捷直达" FontWeight="SemiBold" FontSize="13" />
+                  <TextBlock Text="想要寻找新的 Mod 或整合包？" FontSize="12" Opacity="0.75" Margin="0,0,0,4" />
+                  <Button Content="{Binding GoDownloadText}" Command="{Binding GoToDownloadCommand}" Classes="launchSecondary" Height="32" Padding="14,0" HorizontalAlignment="Left" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </StackPanel>
 
           <!-- 选中任务详情 -->
           <Border Classes="hintCard" IsVisible="{Binding HasSelectedTask}">

@@ -55,33 +55,34 @@
     <Border Grid.Column="1" Classes="panel" Margin="12,0,0,0">
       <ScrollViewer>
         <StackPanel Spacing="12">
-          <Grid ColumnDefinitions="*,Auto">
-            <TextBlock Text="{Binding PageTitleText}" Classes="heroTitle" />
-            <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" VerticalAlignment="Center" />
-          </Grid>
+          <!-- 页面顶栏：标题与操作整合栏 -->
+          <Border Classes="hintCard" Padding="16,12">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                <Grid ColumnDefinitions="Auto,Auto" Margin="0,0,0,2">
+                  <TextBlock Grid.Column="0" Text="{Binding PageTitleText}" Classes="heroTitle" VerticalAlignment="Center" />
+                  <Border Grid.Column="1" Background="{DynamicResource PillBg}" CornerRadius="10" Padding="8,2" Margin="10,0,0,0" VerticalAlignment="Center" IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                    <TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="{DynamicResource AccentBrush}" FontWeight="Medium" />
+                  </Border>
+                </Grid>
+                <TextBlock Text="{Binding SettingsPath, StringFormat=配置文件: {0}}" Opacity="0.65" FontSize="11" TextWrapping="Wrap" />
+              </StackPanel>
 
-          <Border Classes="hintCard">
-            <StackPanel Spacing="4">
-              <TextBlock Text="{Binding SettingsPath, StringFormat=配置文件: {0}}" Opacity="0.8" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding OperationPathHint}" Opacity="0.7" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
-
-          <!-- 顶部操作栏 -->
-          <Border Classes="hintCard" Padding="12,8">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
-              <Button Grid.Column="0" Content="{Binding SaveButtonText}"
-                      Command="{Binding SaveSettingsCommand}"
-                      MinWidth="100" Height="30" Padding="14,0" />
-              <Button Grid.Column="1" Content="{Binding OpenSettingsJsonButtonText}"
-                      Command="{Binding OpenSettingsJsonCommand}"
-                      MinWidth="90" Height="30" Padding="14,0" Margin="8,0,0,0" />
-              <TextBlock Grid.Column="2" Text="{Binding StatusMessage}"
-                         VerticalAlignment="Center" Opacity="0.75" FontSize="12"
-                         Margin="12,0,12,0" TextWrapping="Wrap" />
-              <Button Grid.Column="3" Content="{Binding ResetSettingsButtonText}"
-                      Command="{Binding ResetSettingsCommand}"
-                      MinWidth="112" Height="30" Padding="12,0" />
+              <!-- 右侧快捷操作按钮组 -->
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button Content="{Binding OpenSettingsJsonButtonText}"
+                        Command="{Binding OpenSettingsJsonCommand}"
+                        Classes="launchSecondary"
+                        Height="34" Padding="12,0" FontSize="12" />
+                <Button Content="{Binding ResetSettingsButtonText}"
+                        Command="{Binding ResetSettingsCommand}"
+                        Classes="launchSecondary"
+                        Height="34" Padding="12,0" FontSize="12" />
+                <Button Content="{Binding SaveButtonText}"
+                        Command="{Binding SaveSettingsCommand}"
+                        Classes="launchPrimary"
+                        Height="34" Padding="16,0" FontSize="13" />
+              </StackPanel>
             </Grid>
           </Border>
 

@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -53,6 +54,27 @@ public partial class MainWindow : Window
 
         // DataContext 由 App 的对象初始化器在构造函数后设置，故用事件订阅置顶请求。
         DataContextChanged += OnDataContextChanged;
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+
+        if (change.Property == WindowStateProperty && change.NewValue is WindowState state)
+        {
+            UpdateMaximizeRestoreButton(state);
+        }
+    }
+
+    private void UpdateMaximizeRestoreButton(WindowState state)
+    {
+        if (MaximizeIcon == null || RestoreIcon == null || MaximizeButton == null)
+            return;
+
+        bool isMaximized = state == WindowState.Maximized;
+        MaximizeIcon.IsVisible = !isMaximized;
+        RestoreIcon.IsVisible = isMaximized;
+        ToolTip.SetTip(MaximizeButton, isMaximized ? "还原" : "最大化");
     }
 
     private void OnDataContextChanged(object? sender, System.EventArgs e)
@@ -149,7 +171,16 @@ public partial class MainWindow : Window
 
         if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
-            BeginMoveDrag(e);
+            if (e.ClickCount == 2)
+            {
+                WindowState = WindowState == WindowState.Maximized
+                    ? WindowState.Normal
+                    : WindowState.Maximized;
+            }
+            else
+            {
+                BeginMoveDrag(e);
+            }
         }
     }
 }

@@ -146,23 +146,44 @@
   <Style Selector="Button.nav">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{DynamicResource NavTextBrush}" />
-    <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="Padding" Value="14,6" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Padding" Value="14,5" />
     <Setter Property="CornerRadius" Value="16" />
     <Setter Property="Transitions">
       <Transitions>
-        <BrushTransition Property="Background" Duration="0:0:0.15" />
-        <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+        <BrushTransition Property="Background" Duration="0:0:0.18" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.18" />
+        <DoubleTransition Property="Opacity" Duration="0:0:0.18" />
       </Transitions>
     </Setter>
   </Style>
 
   <Style Selector="Button.nav:pointerover">
-    <Setter Property="Background" Value="#2BFFFFFF" />
+    <!-- 玻璃悬停：轻透光与细微菲涅尔上缘亮光 -->
+    <Setter Property="Background">
+      <Setter.Value>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+          <GradientStop Color="#33FFFFFF" Offset="0.0" />
+          <GradientStop Color="#1AFFFFFF" Offset="1.0" />
+        </LinearGradientBrush>
+      </Setter.Value>
+    </Setter>
+    <Setter Property="BorderBrush" Value="#33FFFFFF" />
   </Style>
 
   <Style Selector="Button.nav.selected">
-    <Setter Property="Background" Value="#45FFFFFF" />
+    <!-- 液态玻璃透镜选中态：上沿纯白折射高光 + 中部半透流动体 + 柔和内发光感 -->
+    <Setter Property="Background">
+      <Setter.Value>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+          <GradientStop Color="#66FFFFFF" Offset="0.0" />
+          <GradientStop Color="#3DFFFFFF" Offset="0.3" />
+          <GradientStop Color="#28FFFFFF" Offset="1.0" />
+        </LinearGradientBrush>
+      </Setter.Value>
+    </Setter>
+    <Setter Property="BorderBrush" Value="#80FFFFFF" />
     <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
@@ -354,6 +375,32 @@
     <Setter Property="BorderBrush" Value="{DynamicResource CardHighlightBorder}" />
     <Setter Property="BoxShadow" Value="0 6 20 0 #18000000" />
     <Setter Property="Padding" Value="20" />
+  </Style>
+
+  <!-- 液态玻璃拟态卡片 (Liquid Glass Card) -->
+  <Style Selector="Border.liquidGlass">
+    <Setter Property="CornerRadius" Value="14" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="BorderBrush" Value="#66FFFFFF" />
+    <Setter Property="BoxShadow" Value="0 4 16 0 #1A000000, 0 1 2 0 #33FFFFFF" />
+    <Setter Property="Background">
+      <Setter.Value>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Color="#55FFFFFF" Offset="0.0" />
+          <GradientStop Color="#22FFFFFF" Offset="1.0" />
+        </LinearGradientBrush>
+      </Setter.Value>
+    </Setter>
+    <Setter Property="Transitions">
+      <Transitions>
+        <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.2" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.2" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.liquidGlass:pointerover">
+    <Setter Property="BorderBrush" Value="#A0FFFFFF" />
+    <Setter Property="BoxShadow" Value="0 6 22 0 #28000000, 0 1 4 0 #66FFFFFF" />
   </Style>
 
   <!-- 仪表盘统计小方卡 -->

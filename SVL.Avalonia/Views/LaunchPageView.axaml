@@ -13,19 +13,33 @@
       <Grid RowDefinitions="Auto,*,Auto">
         <!-- 顶部：实例头像与版本概览 -->
         <StackPanel Grid.Row="0" Margin="10,12,10,14" Spacing="10">
-          <Border Width="110" Height="110" CornerRadius="18"
-                  Background="{DynamicResource CardBrush}"
-                  BorderBrush="{DynamicResource BorderBrush}"
+          <!-- 实例头像：液态透镜镜面卡片 -->
+          <Border Width="112" Height="112" CornerRadius="20"
+                  BorderBrush="#80FFFFFF"
                   BorderThickness="1.5"
-                  BoxShadow="0 4 14 0 #14000000"
+                  BoxShadow="0 6 18 0 #18000000, 0 1 3 0 #4DFFFFFF"
+                  ClipToBounds="True"
                   HorizontalAlignment="Center">
-            <Image Source="{Binding InstanceIconSource, Converter={StaticResource AssetImageConverter}}"
-                   angif:ImageBehavior.AnimatedSource="{Binding InstanceIconSource, Converter={StaticResource AssetImageConverter}, ConverterParameter=animate}"
-                   Width="76"
-                   Height="76"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Stretch="Uniform" />
+            <Panel>
+              <!-- 底层柔色背景 -->
+              <Border Background="{DynamicResource CardBrush}" />
+              <!-- 顶部玻璃反光折射弧 -->
+              <Border VerticalAlignment="Top" Height="36">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Color="#4DFFFFFF" Offset="0.0" />
+                    <GradientStop Color="#00FFFFFF" Offset="1.0" />
+                  </LinearGradientBrush>
+                </Border.Background>
+              </Border>
+              <Image Source="{Binding InstanceIconSource, Converter={StaticResource AssetImageConverter}}"
+                     angif:ImageBehavior.AnimatedSource="{Binding InstanceIconSource, Converter={StaticResource AssetImageConverter}, ConverterParameter=animate}"
+                     Width="76"
+                     Height="76"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center"
+                     Stretch="Uniform" />
+            </Panel>
           </Border>
           <TextBlock Text="{Binding InstanceName}" Classes="sectionValue" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" />
           <TextBlock Text="{Binding GameVersion}" HorizontalAlignment="Center" Opacity="0.82" FontSize="13" />
@@ -68,22 +82,40 @@
     <Border Grid.Column="1" Classes="panel" Margin="14,0,0,0">
       <ScrollViewer>
         <StackPanel Spacing="14">
-          <!-- 1. 沉浸式 Hero 横幅（游戏氛围大卡） -->
-          <Border CornerRadius="14" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" BoxShadow="0 6 18 0 #15000000" ClipToBounds="True">
-            <Border.Background>
-              <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
-                <GradientStop Color="#E38350" Offset="0.0" />
-                <GradientStop Color="#D47748" Offset="0.55" />
-                <GradientStop Color="#B85D30" Offset="1.0" />
-              </LinearGradientBrush>
-            </Border.Background>
-            <Grid ColumnDefinitions="*,Auto" Margin="22,16">
-              <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="6">
-                <TextBlock Text="{Binding WelcomeTitle}" FontSize="22" FontWeight="Bold" Foreground="White" />
-                <TextBlock Text="{Binding BrandText}" FontSize="13" Foreground="#F5FFFFFF" Opacity="0.92" TextWrapping="Wrap" />
-              </StackPanel>
-              <Image Grid.Column="1" Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="64" Height="64" VerticalAlignment="Center" Margin="16,0,8,0" Opacity="0.95" />
-            </Grid>
+          <!-- 1. 沉浸式 Hero 横幅（晨露琥珀琉璃 Liquid Glass 横幅） -->
+          <Border CornerRadius="14" BorderThickness="1" BorderBrush="#80FFFFFF" BoxShadow="0 8 24 0 #20000000, 0 1 3 0 #4DFFFFFF" ClipToBounds="True">
+            <Panel>
+              <!-- 琥珀基底渐变 -->
+              <Border>
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                    <GradientStop Color="#E68A55" Offset="0.0" />
+                    <GradientStop Color="#D47748" Offset="0.5" />
+                    <GradientStop Color="#B35629" Offset="1.0" />
+                  </LinearGradientBrush>
+                </Border.Background>
+              </Border>
+
+              <!-- 液态玻璃弧面镜面反光层 (Liquid Glass Specular Sheen) -->
+              <Border VerticalAlignment="Top" Height="46">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Color="#55FFFFFF" Offset="0.0" />
+                    <GradientStop Color="#18FFFFFF" Offset="0.7" />
+                    <GradientStop Color="#00FFFFFF" Offset="1.0" />
+                  </LinearGradientBrush>
+                </Border.Background>
+              </Border>
+
+              <!-- 横幅主内容 -->
+              <Grid ColumnDefinitions="*,Auto" Margin="24,18">
+                <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="6">
+                  <TextBlock Text="{Binding WelcomeTitle}" FontSize="22" FontWeight="Bold" Foreground="White" />
+                  <TextBlock Text="{Binding BrandText}" FontSize="13" Foreground="#F5FFFFFF" Opacity="0.92" TextWrapping="Wrap" />
+                </StackPanel>
+                <Image Grid.Column="1" Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="64" Height="64" VerticalAlignment="Center" Margin="16,0,8,0" Opacity="0.95" />
+              </Grid>
+            </Panel>
           </Border>
 
           <!-- 2. 快捷操作矩阵（一键进入 Mod 管理、打开 Mods 目录、游戏目录） -->
