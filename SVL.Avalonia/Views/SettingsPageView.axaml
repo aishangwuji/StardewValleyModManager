@@ -66,6 +66,7 @@
                   </Border>
                 </Grid>
                 <TextBlock Text="{Binding SettingsPath, StringFormat=配置文件: {0}}" Opacity="0.65" FontSize="11" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding SavePromptText}" Opacity="0.72" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
               </StackPanel>
 
               <!-- 右侧快捷操作按钮组 -->
@@ -372,13 +373,6 @@
               </Grid>
               <Button Content="{Binding CheckUpdateButtonText}" Command="{Binding CheckLauncherUpdateCommand}" IsEnabled="{Binding CanCheckLauncherUpdate}" HorizontalAlignment="Left" />
             </StackPanel>
-          </Border>
-
-          <Border Classes="hintCard">
-            <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="{Binding SavePromptText}" VerticalAlignment="Center" Opacity="0.75" />
-              <Button Grid.Column="1" Content="{Binding SaveButtonText}" Command="{Binding SaveSettingsCommand}" HorizontalAlignment="Right" MinWidth="120" />
-            </Grid>
           </Border>
         </StackPanel>
       </ScrollViewer>
