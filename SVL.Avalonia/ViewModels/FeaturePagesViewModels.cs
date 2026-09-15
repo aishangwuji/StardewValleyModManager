@@ -6015,14 +6015,28 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         var scanVersion = ++_modConflictScanVersion;
-        var snapshot = Mods
-            .Where(mod => !mod.IsBackupItem && !mod.IsChildMod && !mod.IsCompositeParent)
-            .ToList();
+        var snapshot = new List<ModManageItem>();
+        foreach (var mod in Mods)
+        {
+            if (mod.IsBackupItem)
+            {
+                continue;
+            }
+
+            if (mod.IsCompositeParent)
+            {
+                snapshot.AddRange(mod.ChildMods.Where(child => !child.IsBackupItem));
+            }
+            else if (!mod.IsChildMod)
+            {
+                snapshot.Add(mod);
+            }
+        }
 
         IsCheckingModConflicts = true;
         IsModConflictCheckCompleted = false;
         ModConflicts.Clear();
-        Status = "正在检测启用 Mod 的 ID、前置和文件冲突…";
+        Status = "正在检测启用 Mod 的 ID、前置、互斥与资产冲突…";
 
         try
         {

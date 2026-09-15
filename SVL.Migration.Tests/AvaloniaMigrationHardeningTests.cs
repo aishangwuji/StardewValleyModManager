@@ -4051,18 +4051,32 @@ public sealed class AvaloniaMigrationHardeningTests
     }
 
     [TestMethod]
-    public void ModConflictAnalyzer_ShouldDetectDuplicateDependencyAndFileConflicts()
+    public void ModConflictAnalyzer_ShouldDetectDuplicateDependencyAndAssetConflicts()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
             "svl-mod-conflict-test-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var firstPath = CreateModFolder(root, "First", "shared/content.json", "shared/icon.png");
-            var secondPath = CreateModFolder(root, "Second", "shared/content.json", "shared/icon.png");
+            var firstPath = CreateModFolder(root, "First", "i18n/default.json", "config.json", "icon.png");
+            var secondPath = CreateModFolder(root, "Second", "i18n/default.json", "config.json", "icon.png");
             var duplicateOnePath = CreateModFolder(root, "DuplicateOne", "one.json");
             var duplicateTwoPath = CreateModFolder(root, "DuplicateTwo", "two.json");
             var disabledPath = CreateModFolder(root, "DisabledDependency", "disabled.json");
+
+            File.WriteAllText(
+                Path.Combine(firstPath, "content.json"),
+                "{\"Format\":\"2.0.0\",\"Changes\":[{\"Action\":\"Load\",\"Target\":\"Characters/Abigail\"}]}");
+            File.WriteAllText(
+                Path.Combine(secondPath, "content.json"),
+                "{\"Format\":\"2.0.0\",\"Changes\":[{\"Action\":\"Load\",\"Target\":\"characters/abigail\"}]}");
+
+            File.WriteAllText(
+                Path.Combine(firstPath, "manifest.json"),
+                "{\"UniqueID\":\"Author.First\",\"Name\":\"First Mod\",\"Version\":\"1.0.0\",\"Incompatible\":[\"Author.Second\"]}");
+            File.WriteAllText(
+                Path.Combine(secondPath, "manifest.json"),
+                "{\"UniqueID\":\"Author.Second\",\"Name\":\"Second Mod\",\"Version\":\"1.0.0\"}");
 
             var first = new ModManageItem
             {
@@ -4162,13 +4176,31 @@ public sealed class AvaloniaMigrationHardeningTests
             Assert.AreEqual(1, cycleConflicts.Count, "同一个循环依赖应只展示一条结果");
             StringAssert.Contains(cycleConflicts[0].Description, "First Mod");
             StringAssert.Contains(cycleConflicts[0].Description, "Second Mod");
+
+#pragma warning disable CS0618
+            CollectionAssert.DoesNotContain(
+                conflicts.Select(item => item.Kind).ToList(),
+                ModConflictKind.FileConflict,
+                "跨 Mod 目录的常规同名文件（如 i18n/default.json、config.json）不应误报文件冲突");
+#pragma warning restore CS0618
+
             CollectionAssert.Contains(
                 conflicts.Select(item => item.Kind).ToList(),
-                ModConflictKind.FileConflict);
+                ModConflictKind.AssetConflict,
+                "两 Mod 均以 Action: Load 独占加载相同目标资产时应检出 CP 资产冲突");
             Assert.IsTrue(
-                conflicts.Where(item => item.Kind == ModConflictKind.FileConflict)
-                    .All(item => item.Description.Contains("shared/content.json", StringComparison.OrdinalIgnoreCase)),
-                "icon.png 等展示资源不应制造文件冲突");
+                conflicts.Any(item => item.Kind == ModConflictKind.AssetConflict &&
+                                      item.Description.Contains("Characters/Abigail", StringComparison.OrdinalIgnoreCase)),
+                "应指明具体冲突的目标游戏资产“Characters/Abigail”");
+
+            CollectionAssert.Contains(
+                conflicts.Select(item => item.Kind).ToList(),
+                ModConflictKind.IncompatibleMod,
+                "Mod manifest 中声明的不兼容应检出互斥冲突");
+            Assert.IsTrue(
+                conflicts.Any(item => item.Kind == ModConflictKind.IncompatibleMod &&
+                                      item.Description.Contains("Second Mod", StringComparison.OrdinalIgnoreCase)),
+                "应指出与 Second Mod 互斥不兼容");
         }
         finally
         {

@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.IO;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using SVL.Avalonia.ViewModels;
 
@@ -12,7 +14,10 @@ public enum ModConflictKind
     DisabledDependency,
     VersionMismatch,
     CircularDependency,
-    FileConflict
+    [Obsolete("星露谷各 Mod 目录物理隔离，跨目录相对路径比对易造成伪误报，已弃用")]
+    FileConflict,
+    AssetConflict,
+    IncompatibleMod
 }
 
 /// <summary>一次本地 Mod 冲突的可展示结果。</summary>
@@ -29,7 +34,11 @@ public sealed record ModConflictResult(
         ModConflictKind.DisabledDependency => "前置已禁用",
         ModConflictKind.VersionMismatch => "前置版本不满足",
         ModConflictKind.CircularDependency => "循环依赖",
+        ModConflictKind.AssetConflict => "CP资产冲突",
+        ModConflictKind.IncompatibleMod => "已知互斥",
+#pragma warning disable CS0618
         ModConflictKind.FileConflict => "文件冲突",
+#pragma warning restore CS0618
         _ => "冲突"
     };
 
@@ -46,6 +55,20 @@ public static class ModConflictAnalyzer
 {
     private static readonly Regex s_versionPartRegex = new(@"\d+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly JsonDocumentOptions s_jsonDocOptions = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
+
+    private static readonly string[] s_incompatibleFieldNames =
+    [
+        "Incompatible",
+        "Incompatibilities",
+        "Conflicts",
+        "IncompatibleMods"
+    ];
+
     public static IReadOnlyList<ModConflictResult> Analyze(IEnumerable<ModManageItem> source)
     {
         var candidates = source
@@ -59,7 +82,8 @@ public static class ModConflictAnalyzer
         DetectDuplicateIds(enabledMods, conflicts);
         DetectDependencyConflicts(enabledMods, candidates, conflicts);
         DetectCircularDependencies(enabledMods, candidates, conflicts);
-        DetectFileConflicts(enabledMods, conflicts);
+        DetectIncompatibleModConflicts(enabledMods, conflicts);
+        DetectContentPatcherAssetConflicts(enabledMods, conflicts);
 
         return conflicts
             .OrderBy(item => item.Kind)
@@ -71,10 +95,9 @@ public static class ModConflictAnalyzer
 
     private static bool IsCandidateMod(ModManageItem item)
     {
-        // 复合 Mod 的父项只是分组头，文件实际归属于子项；子项由其父项代表，
-        // 否则同一份文件会在父/子之间产生大量误报。
+        // 复合 Mod 的父项只是分组头，实际文件和 manifest 归属于子项；
+        // 普通 Mod 和复合子项均作为有效 Mod 参与检测。
         return item.IsNormalItem &&
-               !item.IsChildMod &&
                !item.IsCompositeParent &&
                !string.IsNullOrWhiteSpace(item.FullPath) &&
                Directory.Exists(item.FullPath);
@@ -153,7 +176,377 @@ public static class ModConflictAnalyzer
         }
     }
 
-    private static void DetectFileConflicts(
+    private static void DetectIncompatibleModConflicts(
+        IReadOnlyList<ModManageItem> enabledMods,
+        ICollection<ModConflictResult> conflicts)
+    {
+        var modsById = enabledMods
+            .Where(item => !string.IsNullOrWhiteSpace(item.UniqueId))
+            .GroupBy(item => item.UniqueId.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        var reportedPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var mod in enabledMods)
+        {
+            var incompatibleIds = ExtractIncompatibleIds(mod);
+            foreach (var targetId in incompatibleIds)
+            {
+                if (modsById.TryGetValue(targetId, out var conflictingMod))
+                {
+                    if (ReferenceEquals(mod, conflictingMod))
+                    {
+                        continue;
+                    }
+
+                    var modNameA = GetModName(mod);
+                    var modNameB = GetModName(conflictingMod);
+                    var pairKey = string.Compare(mod.UniqueId, conflictingMod.UniqueId, StringComparison.OrdinalIgnoreCase) < 0
+                        ? $"{mod.UniqueId}|{conflictingMod.UniqueId}"
+                        : $"{conflictingMod.UniqueId}|{mod.UniqueId}";
+
+                    if (reportedPairs.Add(pairKey))
+                    {
+                        conflicts.Add(new ModConflictResult(
+                            ModConflictKind.IncompatibleMod,
+                            modNameA,
+                            modNameB,
+                            $"明确声明与“{modNameB}”互斥不兼容"));
+                    }
+                }
+            }
+        }
+    }
+
+    private static HashSet<string> ExtractIncompatibleIds(ModManageItem mod)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(mod.FullPath) || !Directory.Exists(mod.FullPath))
+        {
+            return ids;
+        }
+
+        var manifestPath = Path.Combine(mod.FullPath, "manifest.json");
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                var text = File.ReadAllText(manifestPath);
+                using var doc = JsonDocument.Parse(text, s_jsonDocOptions);
+                var root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var fieldName in s_incompatibleFieldNames)
+                    {
+                        if (TryGetCaseInsensitiveProperty(root, fieldName, out var element) &&
+                            element.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in element.EnumerateArray())
+                            {
+                                if (item.ValueKind == JsonValueKind.String)
+                                {
+                                    var val = item.GetString()?.Trim();
+                                    if (!string.IsNullOrWhiteSpace(val))
+                                    {
+                                        ids.Add(val);
+                                    }
+                                }
+                                else if (item.ValueKind == JsonValueKind.Object)
+                                {
+                                    if (TryGetCaseInsensitiveProperty(item, "UniqueID", out var idElem) &&
+                                        idElem.ValueKind == JsonValueKind.String)
+                                    {
+                                        var val = idElem.GetString()?.Trim();
+                                        if (!string.IsNullOrWhiteSpace(val))
+                                        {
+                                            ids.Add(val);
+                                        }
+                                    }
+                                    else if (TryGetCaseInsensitiveProperty(item, "UniqueId", out var idElem2) &&
+                                             idElem2.ValueKind == JsonValueKind.String)
+                                    {
+                                        var val = idElem2.GetString()?.Trim();
+                                        if (!string.IsNullOrWhiteSpace(val))
+                                        {
+                                            ids.Add(val);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // manifest 读取异常不中断冲突检测流程
+            }
+        }
+
+        var sourcePath = Path.Combine(mod.FullPath, "svl-source.json");
+        if (File.Exists(sourcePath))
+        {
+            try
+            {
+                var text = File.ReadAllText(sourcePath);
+                using var doc = JsonDocument.Parse(text, s_jsonDocOptions);
+                var root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object &&
+                    TryGetCaseInsensitiveProperty(root, "hardConflicts", out var conflictsElem) &&
+                    conflictsElem.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in conflictsElem.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.String)
+                        {
+                            var val = item.GetString()?.Trim();
+                            if (!string.IsNullOrWhiteSpace(val))
+                            {
+                                ids.Add(val);
+                            }
+                        }
+                        else if (item.ValueKind == JsonValueKind.Object &&
+                                 TryGetCaseInsensitiveProperty(item, "id", out var idElem) &&
+                                 idElem.ValueKind == JsonValueKind.String)
+                        {
+                            var val = idElem.GetString()?.Trim();
+                            if (!string.IsNullOrWhiteSpace(val))
+                            {
+                                ids.Add(val);
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // svl-source 读取异常忽略
+            }
+        }
+
+        return ids;
+    }
+
+    private static void DetectContentPatcherAssetConflicts(
+        IReadOnlyList<ModManageItem> enabledMods,
+        ICollection<ModConflictResult> conflicts)
+    {
+        var assetsByMod = new Dictionary<ModManageItem, HashSet<string>>();
+
+        foreach (var mod in enabledMods)
+        {
+            var assets = ExtractLoadedAssets(mod.FullPath);
+            if (assets.Count > 0)
+            {
+                assetsByMod[mod] = assets;
+            }
+        }
+
+        if (assetsByMod.Count < 2)
+        {
+            return;
+        }
+
+        var modsWithAssets = assetsByMod.Keys.ToList();
+        var reportedPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < modsWithAssets.Count - 1; i++)
+        {
+            var modA = modsWithAssets[i];
+            var assetsA = assetsByMod[modA];
+
+            for (var j = i + 1; j < modsWithAssets.Count; j++)
+            {
+                var modB = modsWithAssets[j];
+                var assetsB = assetsByMod[modB];
+
+                var commonAssets = assetsA.Intersect(assetsB, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (commonAssets.Count > 0)
+                {
+                    var modAName = GetModName(modA);
+                    var modBName = GetModName(modB);
+                    var pairKey = $"{modAName}|{modBName}";
+
+                    if (reportedPairs.Add(pairKey))
+                    {
+                        var description = commonAssets.Count == 1
+                            ? $"都尝试独占加载（Action: Load）游戏资产“{commonAssets[0]}”"
+                            : $"都尝试独占加载（Action: Load）游戏资产“{commonAssets[0]}”等 {commonAssets.Count} 项资产";
+
+                        conflicts.Add(new ModConflictResult(
+                            ModConflictKind.AssetConflict,
+                            modAName,
+                            modBName,
+                            description));
+                    }
+                }
+            }
+        }
+    }
+
+    private static HashSet<string> ExtractLoadedAssets(string modDir)
+    {
+        var loadedAssets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(modDir) || !Directory.Exists(modDir))
+        {
+            return loadedAssets;
+        }
+
+        var contentJsonPath = Path.Combine(modDir, "content.json");
+        if (!File.Exists(contentJsonPath))
+        {
+            return loadedAssets;
+        }
+
+        var visitedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        ParseContentChangesFile(contentJsonPath, modDir, loadedAssets, visitedFiles, 0);
+        return loadedAssets;
+    }
+
+    private static void ParseContentChangesFile(
+        string filePath,
+        string modDir,
+        ISet<string> loadedAssets,
+        ISet<string> visitedFiles,
+        int depth)
+    {
+        if (depth > 4)
+        {
+            return;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(filePath);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (!visitedFiles.Add(fullPath) || !File.Exists(fullPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(fullPath);
+            using var doc = JsonDocument.Parse(content, s_jsonDocOptions);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            if (!TryGetCaseInsensitiveProperty(root, "Changes", out var changesElement) ||
+                changesElement.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (var change in changesElement.EnumerateArray())
+            {
+                if (change.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (!TryGetCaseInsensitiveProperty(change, "Action", out var actionElement) ||
+                    actionElement.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var action = actionElement.GetString()?.Trim();
+                if (string.Equals(action, "Load", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TryGetCaseInsensitiveProperty(change, "Target", out var targetElement) &&
+                        targetElement.ValueKind == JsonValueKind.String)
+                    {
+                        var target = NormalizeAssetTarget(targetElement.GetString());
+                        if (!string.IsNullOrWhiteSpace(target))
+                        {
+                            loadedAssets.Add(target);
+                        }
+                    }
+
+                    if (TryGetCaseInsensitiveProperty(change, "Targets", out var targetsElement) &&
+                        targetsElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in targetsElement.EnumerateArray())
+                        {
+                            if (item.ValueKind == JsonValueKind.String)
+                            {
+                                var target = NormalizeAssetTarget(item.GetString());
+                                if (!string.IsNullOrWhiteSpace(target))
+                                {
+                                    loadedAssets.Add(target);
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (string.Equals(action, "Include", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TryGetCaseInsensitiveProperty(change, "FromFile", out var fromFileElement) &&
+                        fromFileElement.ValueKind == JsonValueKind.String)
+                    {
+                        var fromFile = fromFileElement.GetString()?.Trim();
+                        if (!string.IsNullOrWhiteSpace(fromFile))
+                        {
+                            var includedPath = Path.Combine(modDir, fromFile);
+                            ParseContentChangesFile(includedPath, modDir, loadedAssets, visitedFiles, depth + 1);
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 忽略损坏的 JSON 格式或语法错误
+        }
+    }
+
+    private static string NormalizeAssetTarget(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return string.Empty;
+        }
+
+        return target.Replace('\\', '/').Trim().Trim('/');
+    }
+
+    private static bool TryGetCaseInsensitiveProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.NameEquals(propertyName) ||
+                    string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    /// <summary>
+    /// 保留历史实现供向后兼容，但不再参与常规冲突分析，避免因同名文件导致大面积伪误报。
+    /// </summary>
+    [Obsolete("星露谷各 Mod 目录物理隔离，跨目录相对路径比对易造成大量伪误报，已弃用")]
+    public static void DetectFileConflicts(
         IReadOnlyList<ModManageItem> mods,
         ICollection<ModConflictResult> conflicts)
     {
