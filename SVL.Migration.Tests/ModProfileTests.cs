@@ -170,6 +170,82 @@ public class ModProfileTests
         Assert.IsTrue(customArgs.Contains("SveSaves"));
     }
 
+    [TestMethod]
+    public void LaunchPageViewModel_WhenLaunchModeIsVanilla_HidesModProfileSelectorAndShowsNotice()
+    {
+        var settingsStore = new AppUserSettingsStore(_tempDir);
+        var initialSettings = settingsStore.Load();
+        var gamePath = Path.Combine(_tempDir, "StardewGameWithSmapi");
+        Directory.CreateDirectory(gamePath);
+        File.WriteAllText(Path.Combine(gamePath, "Stardew Valley.exe"), "dummy");
+        File.WriteAllText(Path.Combine(gamePath, "StardewModdingAPI.exe"), "dummy");
+        initialSettings.PreferredInstancePath = gamePath;
+        initialSettings.InstanceName = "VanillaTestInstance";
+        initialSettings.PreferredLaunchMode = "Vanilla";
+        settingsStore.Save(initialSettings);
+
+        var profileStore = new ModProfileStore(_tempDir);
+        var localization = new LocalizationService(settingsStore);
+        var imageService = new ImageResourceService(localization);
+
+        var launchVm = (LaunchPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(LaunchPageViewModel));
+        SetField(launchVm, "_settingsStore", settingsStore);
+        SetField(launchVm, "_localizationService", localization);
+        SetField(launchVm, "_imageResourceService", imageService);
+        SetField(launchVm, "_profileStore", profileStore);
+
+        launchVm.RefreshFromSettingsAndEnvironment();
+
+        // 验证原版模式下不展示预设选择器，展示原版提示且允许切回 SMAPI
+        Assert.IsFalse(launchVm.IsModProfileSelectorVisible, "原版模式下不应显示 Mod 预设下拉选择器");
+        Assert.IsTrue(launchVm.IsVanillaLaunchNoticeVisible, "原版模式下应显示原版纯净说明卡片");
+        Assert.IsTrue(launchVm.CanSwitchToSmapi, "已安装 SMAPI 的原版模式下应允许切换到 SMAPI 模式");
+        Assert.IsTrue(launchVm.StatusHeadline.Contains("运行环境"), "状态栏标题应为功能性运行环境标题");
+        Assert.IsTrue(launchVm.StatusSubline.Contains("原版"), "副标题应提示原版启动");
+
+        // 执行一键切换至 SMAPI 启动
+        launchVm.SwitchToSmapiLaunchCommand.Execute(null);
+
+        Assert.AreEqual("SMAPI", settingsStore.Load().PreferredLaunchMode);
+        Assert.IsTrue(launchVm.IsModProfileSelectorVisible, "切为 SMAPI 后应恢复显示 Mod 预设下拉选择器");
+        Assert.IsFalse(launchVm.IsVanillaLaunchNoticeVisible, "切为 SMAPI 后不应展示原版提示");
+        Assert.IsFalse(launchVm.CanSwitchToSmapi, "切为 SMAPI 后无需再显示切换 SMAPI 按钮");
+        Assert.IsTrue(launchVm.StatusSubline.Contains("SMAPI"), "副标题应提示 SMAPI 模式");
+    }
+
+    [TestMethod]
+    public void LaunchPageViewModel_WhenLaunchModeIsSmapi_ShowsModProfileSelector()
+    {
+        var settingsStore = new AppUserSettingsStore(_tempDir);
+        var initialSettings = settingsStore.Load();
+        var gamePath = Path.Combine(_tempDir, "StardewGameSmapiDefault");
+        Directory.CreateDirectory(gamePath);
+        File.WriteAllText(Path.Combine(gamePath, "Stardew Valley.exe"), "dummy");
+        File.WriteAllText(Path.Combine(gamePath, "StardewModdingAPI.exe"), "dummy");
+        initialSettings.PreferredInstancePath = gamePath;
+        initialSettings.InstanceName = "SmapiTestInstance";
+        initialSettings.PreferredLaunchMode = "SMAPI";
+        settingsStore.Save(initialSettings);
+
+        var profileStore = new ModProfileStore(_tempDir);
+        var localization = new LocalizationService(settingsStore);
+        var imageService = new ImageResourceService(localization);
+
+        var launchVm = (LaunchPageViewModel)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(
+            typeof(LaunchPageViewModel));
+        SetField(launchVm, "_settingsStore", settingsStore);
+        SetField(launchVm, "_localizationService", localization);
+        SetField(launchVm, "_imageResourceService", imageService);
+        SetField(launchVm, "_profileStore", profileStore);
+
+        launchVm.RefreshFromSettingsAndEnvironment();
+
+        Assert.IsTrue(launchVm.IsModProfileSelectorVisible);
+        Assert.IsFalse(launchVm.IsVanillaLaunchNoticeVisible);
+        Assert.IsFalse(launchVm.CanSwitchToSmapi);
+    }
+
     private static void SetField(object target, string fieldName, object? value)
     {
         var field = target.GetType().GetField(fieldName,

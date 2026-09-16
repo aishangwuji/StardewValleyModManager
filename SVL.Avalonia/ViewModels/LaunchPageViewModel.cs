@@ -30,6 +30,8 @@ public partial class LaunchPageViewModel : ObservableObject
     private ModProfileStore? _profileStore;
     private string _currentGamePath = string.Empty;
     private string _preferredLaunchModeToken = "auto";
+    private bool _hasSmapiInstalled;
+    private bool _selectedIsSmapi;
 
     private ObservableCollection<ModProfileRecord>? _modProfiles;
     public ObservableCollection<ModProfileRecord> ModProfiles => _modProfiles ??= [];
@@ -42,6 +44,27 @@ public partial class LaunchPageViewModel : ObservableObject
     public bool IsSaveSharedNoticeVisible => SelectedModProfile != null && !SelectedModProfile.IsDefault && !SelectedModProfile.EnableCustomSavePath;
 
     public bool IsCustomSaveActive => SelectedModProfile != null && SelectedModProfile.EnableCustomSavePath;
+
+    /// <summary>是否展示 Mod 整合包/预设快速切换区域卡片（只要配置了实例即展示卡片骨架）。</summary>
+    public bool ShowModProfileSection => HasInstances;
+
+    /// <summary>是否展示预设下拉选择器与管理按钮（当且仅当当前启动目标真正以 SMAPI 启动）。</summary>
+    public bool IsModProfileSelectorVisible => HasInstances && _selectedIsSmapi;
+
+    /// <summary>是否展示原版启动提示（当前为纯原版启动模式）。</summary>
+    public bool IsVanillaLaunchNoticeVisible => HasInstances && !_selectedIsSmapi;
+
+    /// <summary>当前为原版启动但本地装有 SMAPI，支持一键切换为 SMAPI 模式。</summary>
+    public bool CanSwitchToSmapi => HasInstances && !_selectedIsSmapi && _hasSmapiInstalled;
+
+    [ObservableProperty]
+    private string _vanillaNoticeTitle = string.Empty;
+
+    [ObservableProperty]
+    private string _vanillaNoticeDescription = string.Empty;
+
+    [ObservableProperty]
+    private string _switchToSmapiButtonText = string.Empty;
 
     partial void OnSelectedModProfileChanged(ModProfileRecord? value)
     {
@@ -194,6 +217,7 @@ public partial class LaunchPageViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowOnboardingCard));
         OnPropertyChanged(nameof(CanOpenVersionSettings));
         NotifyInstanceFlavorIconVisibilityChanged();
+        NotifyModProfileSectionStateChanged();
         RefreshStatusBanner();
     }
 
@@ -245,10 +269,44 @@ public partial class LaunchPageViewModel : ObservableObject
             return;
         }
 
-        StatusHeadline = ShowModManageButton
-            ? _localizationService.Get("Launch.Status.ReadySmapiTitle")
-            : _localizationService.Get("Launch.Status.ReadyVanillaTitle");
-        StatusSubline = _localizationService.Get("Launch.Status.ReadySubtitle");
+        StatusHeadline = _localizationService.Get("Launch.Status.EnvironmentTitle");
+        StatusSubline = _selectedIsSmapi
+            ? _localizationService.Get("Launch.Status.ReadySmapiSubtitle")
+            : _localizationService.Get("Launch.Status.ReadyVanillaSubtitle");
+    }
+
+    private void NotifyModProfileSectionStateChanged()
+    {
+        OnPropertyChanged(nameof(ShowModProfileSection));
+        OnPropertyChanged(nameof(IsModProfileSelectorVisible));
+        OnPropertyChanged(nameof(IsVanillaLaunchNoticeVisible));
+        OnPropertyChanged(nameof(CanSwitchToSmapi));
+        UpdateVanillaNoticeTexts();
+        RefreshStatusBanner();
+    }
+
+    private void UpdateVanillaNoticeTexts()
+    {
+        VanillaNoticeTitle = Text("Launch.Profile.VanillaModeNoticeTitle");
+        VanillaNoticeDescription = _hasSmapiInstalled
+            ? Text("Launch.Profile.VanillaModeNoticeDesc")
+            : Text("Launch.Profile.NoSmapiNoticeDesc");
+        SwitchToSmapiButtonText = Text("Launch.Profile.SwitchToSmapiBtn");
+    }
+
+    /// <summary>一键将启动模式切换为 SMAPI（供原版模式下快速启用 Mod 预设）。</summary>
+    [RelayCommand]
+    private void SwitchToSmapiLaunch()
+    {
+        if (!HasInstances || !_hasSmapiInstalled)
+        {
+            return;
+        }
+
+        var settings = _settingsStore.Load();
+        settings.PreferredLaunchMode = "SMAPI";
+        _settingsStore.Save(settings);
+        RefreshFromSettingsAndEnvironment(updateStatus: false);
     }
 
     private void ApplyLocalizedTexts()
@@ -276,6 +334,7 @@ public partial class LaunchPageViewModel : ObservableObject
         LaunchButtonText = IsLaunching ? Text("Launch.Button.Launching") : Text("Launch.Button.Launch");
         PreferredLaunchMode = GetLaunchModeDisplayText(_preferredLaunchModeToken);
         SafeLaunchState = GetSafeLaunchStateText(EnableSafeLaunch);
+        UpdateVanillaNoticeTexts();
         RefreshStatusBanner();
     }
 
@@ -347,10 +406,13 @@ public partial class LaunchPageViewModel : ObservableObject
                 ? "星露谷物语"
                 : $"游戏版本: {gameVersion}";
 
+            _hasSmapiInstalled = preferredHasSmapi;
+            _selectedIsSmapi = selectedIsSmapi;
             ShowModManageButton = preferredHasSmapi;
             VersionStatus = BuildVersionStatusText(selectedIsSmapi, gameVersion, smapiVersion);
             SetInstanceIconSource(ResolveInstanceIconSource(preferredPath, selectedIsSmapi));
             ReloadModProfiles();
+            NotifyModProfileSectionStateChanged();
             ActionStatus = "已就绪";
             return;
         }
@@ -364,12 +426,15 @@ public partial class LaunchPageViewModel : ObservableObject
         {
             HasInstances = false;
             _currentGamePath = string.Empty;
+            _hasSmapiInstalled = false;
+            _selectedIsSmapi = false;
             InstanceName = Text("Launch.Instance.NoneName");
             GameVersion = Text("Launch.Instance.NoneVersion");
             VersionStatus = Text("Launch.Instance.NoneStatus");
             ShowModManageButton = false;
             SetInstanceIconSource(ResolveNoneInstanceIcon());
             ReloadModProfiles();
+            NotifyModProfileSectionStateChanged();
             ActionStatus = Text("Launch.Action.NoPathDetected");
             return;
         }
@@ -381,15 +446,22 @@ public partial class LaunchPageViewModel : ObservableObject
         var hasSmapi = InstanceIconResolver.IsSmapiRuntime(gamePath);
         var detectedGameVersion = DetectGameVersion(gamePath);
         var detectedSmapiVersion = hasSmapi ? DetectSmapiVersion(gamePath) : "未安装";
+        var fallbackModeToken = NormalizeLaunchModeToken(settings.PreferredLaunchMode);
+        var fallbackIsSmapi = hasSmapi &&
+                              (string.Equals(fallbackModeToken, "smapi", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(fallbackModeToken, "auto", StringComparison.OrdinalIgnoreCase));
 
         GameVersion = string.IsNullOrWhiteSpace(detectedGameVersion) || string.Equals(detectedGameVersion, "未知版本", StringComparison.OrdinalIgnoreCase)
             ? "星露谷物语"
             : $"游戏版本: {detectedGameVersion}";
 
+        _hasSmapiInstalled = hasSmapi;
+        _selectedIsSmapi = fallbackIsSmapi;
         ShowModManageButton = hasSmapi;
         VersionStatus = BuildVersionStatusText(hasSmapi, detectedGameVersion, detectedSmapiVersion);
         SetInstanceIconSource(ResolveInstanceIconSource(gamePath, hasSmapi));
         ReloadModProfiles();
+        NotifyModProfileSectionStateChanged();
         ActionStatus = "已就绪";
     }
 
