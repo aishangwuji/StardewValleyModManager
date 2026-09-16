@@ -156,12 +156,6 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>是否为一级页面“设置”。</summary>
     public bool IsSettingsPage => string.Equals(CurrentPage, "设置", StringComparison.Ordinal);
 
-    /// <summary>是否为 Mod 管理或版本设置页面（共用 VersionSettingsPageView 视图）。</summary>
-    public bool IsVersionSettingsOrModManagePage => IsLocalModManagePage || string.Equals(CurrentPage, "版本设置", StringComparison.Ordinal);
-
-    /// <summary>是否为二级页面（由 ContentControl 动态呈现）。</summary>
-    public bool IsSecondaryPage => !IsLaunchPage && !IsVersionSettingsOrModManagePage && !IsDownloadPage && !IsTasksPage && !IsSettingsPage;
-
     /// <summary>是否显示 Windows 标题栏控制按钮（仅 Windows）。</summary>
     public bool ShowWindowControlButtons => OperatingSystem.IsWindows();
 
@@ -454,8 +448,6 @@ public partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsDownloadPage));
         OnPropertyChanged(nameof(IsTasksPage));
         OnPropertyChanged(nameof(IsSettingsPage));
-        OnPropertyChanged(nameof(IsVersionSettingsOrModManagePage));
-        OnPropertyChanged(nameof(IsSecondaryPage));
         OnPropertyChanged(nameof(ShowBackButton));
         OnPropertyChanged(nameof(ShowResourceDetailHeaderTitle));
         OnPropertyChanged(nameof(ShowBrandIdentity));
@@ -470,21 +462,21 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void HandleNavigateToVersionSettings()
     {
-        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         VersionSettingsPage.SwitchToModManage();
+        NavigateToPage("版本设置", VersionSettingsPage, pushCurrentToBackStack: true);
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         // 预加载版本选择页面的路径列表，确保 SMAPI 安装对话框能获取所有 Base 路径
         if (!InstancesPage.HasPathEntries)
         {
             InstancesPage.RefreshFromSettingsChange();
         }
-        NavigateToPage("版本设置", VersionSettingsPage, pushCurrentToBackStack: true);
     }
 
     private void HandleNavigateToModManage()
     {
-        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         VersionSettingsPage.SwitchToModManage();
         NavigateToPage("本地Mod管理", VersionSettingsPage, clearBackStack: true);
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
     }
 
     private void HandleInstanceContextChanged()
@@ -544,9 +536,9 @@ public partial class MainWindowViewModel : ObservableObject
 
     private void HandleInstanceSettingsRequested(InstanceItem _)
     {
-        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
         VersionSettingsPage.SwitchToModManage();
         NavigateToPage("版本设置", VersionSettingsPage, pushCurrentToBackStack: true);
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
     }
 
     private void HandleModpackImportRequested()
@@ -801,10 +793,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         NavigateToPage("启动", LaunchPage, clearBackStack: true);
-        global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            LaunchPage.RefreshFromSettingsAndEnvironment();
-        }, global::Avalonia.Threading.DispatcherPriority.Background);
+        LaunchPage.RefreshFromSettingsAndEnvironment();
     }
 
     /// <summary>
@@ -823,10 +812,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         VersionSettingsPage.SwitchToModManage();
         NavigateToPage("本地Mod管理", VersionSettingsPage, clearBackStack: true);
-        global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
-        }, global::Avalonia.Threading.DispatcherPriority.Background);
+        VersionSettingsPage.ReloadFromSettings(reloadModsWhenActive: true);
     }
 
     /// <summary>导航到一级页面“下载”。</summary>

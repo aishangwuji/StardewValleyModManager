@@ -162,17 +162,7 @@
 
     <Grid Grid.Row="1" Margin="16">
       <Border Classes="panel">
-        <Panel>
-          <!-- 一级核心页面常驻视图缓存：彻底消除反复销毁/重新构造 XAML 视觉树导致的切换卡顿与顿挫感 -->
-          <views:LaunchPageView DataContext="{Binding LaunchPage}" IsVisible="{Binding IsLaunchPage}" />
-          <views:VersionSettingsPageView DataContext="{Binding VersionSettingsPage}" IsVisible="{Binding IsVersionSettingsOrModManagePage}" />
-          <views:DownloadPageView DataContext="{Binding DownloadPage}" IsVisible="{Binding IsDownloadPage}" />
-          <views:TaskStatusPageView DataContext="{Binding TaskStatusPage}" IsVisible="{Binding IsTasksPage}" />
-          <views:SettingsPageView DataContext="{Binding SettingsPage}" IsVisible="{Binding IsSettingsPage}" />
-
-          <!-- 二级子页面（实例选择、资源详情、整合包搜索等）走 ContentControl 动态呈现 -->
-          <ContentControl Content="{Binding CurrentPageViewModel}" IsVisible="{Binding IsSecondaryPage}" />
-        </Panel>
+        <ContentControl Content="{Binding CurrentPageViewModel}" />
       </Border>
 
       <controls:DownloadFloatingButton
