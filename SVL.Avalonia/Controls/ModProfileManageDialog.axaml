@@ -16,7 +16,11 @@
           CornerRadius="12">
     <Grid RowDefinitions="Auto,*,Auto">
       <!-- 顶部标题与说明 -->
-      <Border Grid.Row="0" Margin="0,0,0,16" Padding="14,12" Background="{DynamicResource HintBackgroundBrush}" CornerRadius="8">
+      <Border Grid.Row="0" Margin="0,0,0,16" Padding="14,12"
+              Background="{DynamicResource CardHighlightBg}"
+              BorderBrush="{DynamicResource CardHighlightBorder}"
+              BorderThickness="1"
+              CornerRadius="8">
         <Grid ColumnDefinitions="Auto,*">
           <TextBlock Grid.Column="0" Text="📦" FontSize="26" VerticalAlignment="Center" Margin="0,0,14,0" />
           <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
