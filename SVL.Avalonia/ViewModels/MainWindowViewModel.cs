@@ -1,3 +1,4 @@
+using Avalonia;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SVL.Avalonia.Services;
@@ -158,6 +159,15 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>是否显示 Windows 标题栏控制按钮（仅 Windows）。</summary>
     public bool ShowWindowControlButtons => OperatingSystem.IsWindows();
+
+    /// <summary>
+    /// 标题栏左侧内容起始内缩量。
+    /// Reason: macOS 使用 ExtendClientArea 时原生红绿灯按钮会绘制在自定义头栏左侧，
+    /// 需预留避让空间，避免品牌 Logo/返回按钮被遮挡；其余平台无额外内缩。
+    /// </summary>
+    public Thickness TitleBarLeadingInset => OperatingSystem.IsMacOS()
+        ? new Thickness(76, 0, 0, 0)
+        : new Thickness(0);
 
     /// <summary>是否显示左上角返回按钮。Reason: 仅二级页面（实例/版本设置/资源详情）且返回栈非空时显示，一级页面始终显示 Logo 避免跳动。</summary>
     public bool ShowBackButton => IsBackPage(CurrentPage) && _backStack.Count > 0;

@@ -31,11 +31,16 @@ public partial class MainWindow : Window
         }
         else
         {
-            // Keep native title bar on non-Windows platforms.
+            // 非 Windows：保留原生窗口装饰（macOS 红绿灯 / Linux 窗口按钮），
+            // 但把内容延伸进原生标题栏，让自定义橙头栏本身充当标题栏。
+            // Reason: 此前为 false，导致"原生标题栏 + 自定义 48px 头栏"双层堆叠，
+            // 既浪费纵向空间又割裂视觉风格。
+            // Business Rule: 仅改变内容延伸，不接管窗口装饰；平台若不支持该 hint
+            // 会安全退化为原生标题栏 + 自定义头栏（与旧行为一致），不会破坏窗口管理。
             SystemDecorations = SystemDecorations.Full;
-            ExtendClientAreaToDecorationsHint = false;
-            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.Default;
-            ExtendClientAreaTitleBarHeightHint = -1;
+            ExtendClientAreaToDecorationsHint = true;
+            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
+            ExtendClientAreaTitleBarHeightHint = 48;
         }
 
         try
