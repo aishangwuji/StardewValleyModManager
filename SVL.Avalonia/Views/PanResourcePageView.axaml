@@ -1,0 +1,40 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:SVL.Avalonia.ViewModels"
+             x:Class="SVL.Avalonia.Views.PanResourcePageView"
+             x:DataType="vm:PanResourcePageViewModel">
+  <Border Classes="panel">
+    <StackPanel Spacing="8">
+      <TextBlock Text="{Binding Title}" Classes="heroTitle" VerticalAlignment="Center" />
+      <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Opacity="0.75" />
+      <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+        <TextBox Grid.Column="0" Text="{Binding Query}" Watermark="输入 Mod 关键词" Margin="0,0,8,0" />
+        <Button Grid.Column="1" Content="搜索" Command="{Binding SearchCommand}" />
+      </Grid>
+      <TextBlock Text="{Binding StatusText}" Opacity="0.75" />
+      <TextBlock Text="正在加载..." IsVisible="{Binding IsLoading}" Opacity="0.7" />
+      <ItemsControl ItemsSource="{Binding Results}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button Classes="flatTask"
+                    Command="{Binding DataContext.OpenPanLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                    Padding="8" Margin="0,0,0,4">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Margin="0,0,8,0" Spacing="2">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Description}" TextWrapping="Wrap" MaxLines="2"
+                             TextTrimming="CharacterEllipsis" FontSize="12" Opacity="0.7" />
+                  <TextBlock Text="{Binding Source}" FontSize="11" Opacity="0.6" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="获取网盘链接" FontSize="12" Opacity="0.7"
+                           VerticalAlignment="Center" />
+              </Grid>
+            </Button>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+  </Border>
+</UserControl>

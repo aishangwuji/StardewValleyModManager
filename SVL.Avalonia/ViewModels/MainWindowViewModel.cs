@@ -10,7 +10,7 @@ namespace SVL.Avalonia.ViewModels;
 
 /// <summary>
 /// 主窗口导航中枢（Navigation Hub）。
-/// <para>职责：管理顶栏 5 个一级页面（启动/Mod管理/下载/任务/设置）与 3 个二级页面（实例/版本设置/资源详情）的栈式导航。</para>
+/// <para>职责：管理顶栏 6 个一级页面（启动/Mod管理/下载/网盘资源/任务/设置）与 3 个二级页面（实例/版本设置/资源详情）的栈式导航。</para>
 /// <para>历史重命名：顶栏“Mod管理”在 2026-01 前显示为“本地Mod管理”，为保持导航标识稳定，内部 CurrentPage 仍沿用 "本地Mod管理" 作为一级页面 key，显示文本通过 LocalizationService(Nav.LocalModManage) 控制，zh-CN 现为 "Mod管理"，en-US 为 "Local Mods"。</para>
 /// <para>Business Rule: 一级页面切换需清空返回栈（clearBackStack），二级页面需压栈（pushCurrentToBackStack），确保左上角 Logo/返回按钮与面包屑一致。</para>
 /// <para>Reason: Avalonia 无内置导航框架，手动维护 CurrentPage + CurrentPageViewModel + _backStack 避免页面状态丢失。</para>
@@ -31,6 +31,9 @@ public partial class MainWindowViewModel : ObservableObject
     public LaunchPageViewModel LaunchPage { get; }
 
     public DownloadPageViewModel DownloadPage { get; }
+
+    /// <summary>网盘资源页（顶栏一级页面，位于下载与任务之间；数据由 PanResourceService 提供，接口联调后展示 Mod 网盘链接）。</summary>
+    public PanResourcePageViewModel PanResourcePage { get; }
 
     public SettingsPageViewModel SettingsPage { get; }
 
@@ -75,6 +78,10 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>顶栏“下载”文案。</summary>
     [ObservableProperty]
     private string _navDownloadText = "下载";
+
+    /// <summary>顶栏“网盘资源”文案（Nav.PanResource），位于下载与任务之间。</summary>
+    [ObservableProperty]
+    private string _navPanResourceText = "网盘资源";
 
     [ObservableProperty]
     private string _navTasksText = "任务";
@@ -150,6 +157,9 @@ public partial class MainWindowViewModel : ObservableObject
 
     /// <summary>是否为一级页面“下载”。</summary>
     public bool IsDownloadPage => string.Equals(CurrentPage, "下载", StringComparison.Ordinal);
+
+    /// <summary>是否为一级页面“网盘资源”。</summary>
+    public bool IsPanResourcePage => string.Equals(CurrentPage, "网盘资源", StringComparison.Ordinal);
 
     /// <summary>是否为一级页面“任务”。</summary>
     public bool IsTasksPage => string.Equals(CurrentPage, "任务", StringComparison.Ordinal);
@@ -247,7 +257,10 @@ public partial class MainWindowViewModel : ObservableObject
         SettingsPage = new SettingsPageViewModel(_settingsStore, dialogService, nexusAuthService, nexusOAuthService, launcherUpdateService, externalProcessService, nxmProtocolRegistrationService, _localizationService, _imageResourceService);
         InstancesPage = new InstancesPageViewModel(_gameInstallPathLocator, dialogService, instanceRegistryStore, _settingsStore, _imageResourceService, _localizationService);
         TaskStatusPage = new TaskStatusPageViewModel(_localizationService);
-
+        PanResourcePage = new PanResourcePageViewModel(
+            new Services.PanResourceService(),
+            _localizationService,
+            externalProcessService);
         ModpackSearchPage = new ModpackSearchPageViewModel(remoteCatalogService);
         ModDetailsPage = new ModDetailsPageViewModel(remoteCatalogService, dialogService);
         ModDetailsPage.QueueDownloadRequested += HandleQueueDownload;
@@ -432,6 +445,7 @@ public partial class MainWindowViewModel : ObservableObject
         NavLaunchText = _localizationService.Get("Nav.Launch");
         NavLocalModManageText = _localizationService.Get("Nav.LocalModManage");
         NavDownloadText = _localizationService.Get("Nav.Download");
+        NavPanResourceText = _localizationService.Get("Nav.PanResource");
         NavTasksText = _localizationService.Get("Nav.Tasks");
         NavSettingsText = _localizationService.Get("Nav.Settings");
         SidebarCurrentPageText = _localizationService.Get("Sidebar.CurrentPage");
@@ -456,6 +470,7 @@ public partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsLaunchPage));
         OnPropertyChanged(nameof(IsLocalModManagePage));
         OnPropertyChanged(nameof(IsDownloadPage));
+        OnPropertyChanged(nameof(IsPanResourcePage));
         OnPropertyChanged(nameof(IsTasksPage));
         OnPropertyChanged(nameof(IsSettingsPage));
         OnPropertyChanged(nameof(ShowBackButton));
@@ -835,6 +850,19 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         NavigateToPage("下载", DownloadPage, clearBackStack: true);
+    }
+
+    /// <summary>导航到一级页面“网盘资源”。</summary>
+    [RelayCommand]
+    private void NavigateToPanResource()
+    {
+        if (IsPanResourcePage)
+        {
+            return;
+        }
+
+        NavigateToPage("网盘资源", PanResourcePage, clearBackStack: true);
+        _ = PanResourcePage.InitializeAsync();
     }
 
     /// <summary>当外部 NXM 链接需要把窗口置顶时触发。MainWindow 订阅并调用 Activate()。</summary>

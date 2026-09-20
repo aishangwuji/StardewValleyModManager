@@ -32,6 +32,9 @@
     <DataTemplate DataType="vm:DownloadPageViewModel">
       <views:DownloadPageView />
     </DataTemplate>
+    <DataTemplate DataType="vm:PanResourcePageViewModel">
+      <views:PanResourcePageView />
+    </DataTemplate>
     <DataTemplate DataType="vm:SettingsPageViewModel">
       <views:SettingsPageView DataContext="{Binding}" />
     </DataTemplate>
@@ -88,6 +91,9 @@
             </Button>
             <Button Classes="nav" Classes.selected="{Binding IsDownloadPage}" Command="{Binding NavigateToDownloadCommand}">
               <TextBlock Text="{Binding NavDownloadText}" VerticalAlignment="Center" />
+            </Button>
+            <Button Classes="nav" Classes.selected="{Binding IsPanResourcePage}" Command="{Binding NavigateToPanResourceCommand}">
+              <TextBlock Text="{Binding NavPanResourceText}" VerticalAlignment="Center" />
             </Button>
             <Button Classes="nav" Classes.selected="{Binding IsTasksPage}" Command="{Binding NavigateToTasksCommand}">
               <Grid>
