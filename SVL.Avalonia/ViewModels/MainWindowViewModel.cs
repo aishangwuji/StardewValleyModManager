@@ -258,7 +258,7 @@ public partial class MainWindowViewModel : ObservableObject
         InstancesPage = new InstancesPageViewModel(_gameInstallPathLocator, dialogService, instanceRegistryStore, _settingsStore, _imageResourceService, _localizationService);
         TaskStatusPage = new TaskStatusPageViewModel(_localizationService);
         PanResourcePage = new PanResourcePageViewModel(
-            new Services.PanResourceService(),
+            new Services.PanResourceService(null, _settingsStore),
             _localizationService,
             externalProcessService);
         ModpackSearchPage = new ModpackSearchPageViewModel(remoteCatalogService);

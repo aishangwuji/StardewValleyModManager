@@ -1,40 +1,226 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:SVL.Avalonia.ViewModels"
+             xmlns:services="using:SVL.Avalonia.Services"
+             mc:Ignorable="d"
              x:Class="SVL.Avalonia.Views.PanResourcePageView"
              x:DataType="vm:PanResourcePageViewModel">
-  <Border Classes="panel">
-    <StackPanel Spacing="8">
-      <TextBlock Text="{Binding Title}" Classes="heroTitle" VerticalAlignment="Center" />
-      <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Opacity="0.75" />
-      <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-        <TextBox Grid.Column="0" Text="{Binding Query}" Watermark="输入 Mod 关键词" Margin="0,0,8,0" />
-        <Button Grid.Column="1" Content="搜索" Command="{Binding SearchCommand}" />
-      </Grid>
-      <TextBlock Text="{Binding StatusText}" Opacity="0.75" />
-      <TextBlock Text="正在加载..." IsVisible="{Binding IsLoading}" Opacity="0.7" />
-      <ItemsControl ItemsSource="{Binding Results}">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24,18,24,28" Spacing="16">
+
+      <!-- 1. 顶部商店横幅 (Store Hero Header) -->
+      <Border Classes="heroCard" Background="{DynamicResource PanelBackgroundBrush}" Padding="20,16">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <TextBlock Text="🛒" FontSize="24" VerticalAlignment="Center" />
+              <TextBlock Text="星露谷网盘资源集市" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
+              <Border Background="{DynamicResource AccentBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center" Margin="6,0,0,0">
+                <TextBlock Text="北行高速源" FontSize="11" Foreground="{DynamicResource TextOnAccentBrush}" FontWeight="SemiBold" />
+              </Border>
+            </StackPanel>
+            <TextBlock Text="{Binding Description}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <!-- 右侧：搜索与刷新 -->
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBox Text="{Binding Query}" Watermark="搜索资源名称/作者/描述..." Width="230" VerticalAlignment="Center" />
+            <Button Content="搜索" Command="{Binding SearchCommand}" VerticalAlignment="Center" />
+            <Button Command="{Binding RefreshCommand}" VerticalAlignment="Center" ToolTip.Tip="刷新网盘资源">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="14" Height="14" />
+                <TextBlock Text="刷新" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- 2. 分类筛选胶囊栏 (Filter Chips) -->
+      <ItemsControl ItemsSource="{Binding Categories}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
-          <DataTemplate>
-            <Button Classes="flatTask"
-                    Command="{Binding DataContext.OpenPanLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                    CommandParameter="{Binding}"
-                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                    Padding="8" Margin="0,0,0,4">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Grid.Column="0" Margin="0,0,8,0" Spacing="2">
-                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Text="{Binding Description}" TextWrapping="Wrap" MaxLines="2"
-                             TextTrimming="CharacterEllipsis" FontSize="12" Opacity="0.7" />
-                  <TextBlock Text="{Binding Source}" FontSize="11" Opacity="0.6" />
-                </StackPanel>
-                <TextBlock Grid.Column="1" Text="获取网盘链接" FontSize="12" Opacity="0.7"
-                           VerticalAlignment="Center" />
-              </Grid>
+          <DataTemplate DataType="services:PanCategoryOption">
+            <Button Classes="nav"
+                    Classes.selected="{Binding IsSelected}"
+                    Command="{Binding DataContext.SelectCategoryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding Key}"
+                    Margin="0,0,8,8">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="{Binding Icon}" IsVisible="{Binding HasIcon}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Name}" FontWeight="Medium" VerticalAlignment="Center" />
+                <Border IsVisible="{Binding HasCount}" Background="#33FFFFFF" CornerRadius="8" Padding="5,1" Margin="4,0,0,0" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Count}" FontSize="10" Opacity="0.85" />
+                </Border>
+              </StackPanel>
             </Button>
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
+
+      <!-- 3. 操作反馈与状态提示条 (Toast / Notification / Error) -->
+      <Border IsVisible="{Binding HasStatusMessage}"
+              Background="{DynamicResource CardHighlightBg}"
+              BorderBrush="{DynamicResource AccentBrush}"
+              BorderThickness="1" CornerRadius="8" Padding="14,8">
+        <TextBlock Text="{Binding StatusMessage}" FontSize="12" Foreground="{DynamicResource AccentBrush}" FontWeight="Medium" />
+      </Border>
+
+      <Border IsVisible="{Binding IsLoading}"
+              Background="{DynamicResource CardBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
+              BorderThickness="1" CornerRadius="8" Padding="14,8">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="🔄" FontSize="14" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding StatusText}" FontSize="12" Opacity="0.85" VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+
+      <Border IsVisible="{Binding HasError}"
+              Background="#33FF4D4F" BorderBrush="#80FF4D4F" BorderThickness="1"
+              CornerRadius="8" Padding="14,10">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="{Binding ErrorMessage}" Foreground="#FF7875" FontSize="12" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Content="重试连接" Command="{Binding RetryCommand}"
+                  Height="28" Padding="12,2" FontSize="11" Classes="primaryAction" VerticalAlignment="Center" />
+        </Grid>
+      </Border>
+
+      <!-- 4. 资源卡片网格列表 (Card Grid Showcase) -->
+      <ItemsControl ItemsSource="{Binding FilteredResults}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate DataType="services:PanResourceItem">
+            <Border Width="284" Margin="0,0,16,16"
+                    Background="{DynamicResource CardBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    ClipToBounds="True"
+                    BoxShadow="0 2 8 0 #0B000000">
+              <Grid RowDefinitions="124,*,Auto">
+
+                <!-- 封面图与角标徽章 -->
+                <Border Grid.Row="0" Background="#222530" ClipToBounds="True">
+                  <Panel>
+                    <Image Source="{Binding IconSource, Converter={StaticResource AssetImageConverter}}"
+                           Stretch="UniformToFill"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Opacity="0.95" />
+
+                    <!-- 底部渐变遮罩增强文字对比 -->
+                    <Border VerticalAlignment="Bottom" Height="36">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                          <GradientStop Color="#00000000" Offset="0" />
+                          <GradientStop Color="#B3000000" Offset="1" />
+                        </LinearGradientBrush>
+                      </Border.Background>
+                    </Border>
+
+                    <!-- 左上角：网盘厂商徽标 -->
+                    <Border VerticalAlignment="Top" HorizontalAlignment="Left"
+                            Margin="8,8,0,0" Background="#CC1E293B" CornerRadius="4" Padding="6,2">
+                      <TextBlock Text="{Binding CloudTypeName}" FontSize="11" Foreground="#F39C12" FontWeight="SemiBold" />
+                    </Border>
+
+                    <!-- 右上角：热门推荐角标 -->
+                    <Border IsVisible="{Binding IsRecommended}" VerticalAlignment="Top" HorizontalAlignment="Right"
+                            Margin="0,8,8,0" Background="#E0C0392B" CornerRadius="4" Padding="6,2">
+                      <TextBlock Text="🔥 热门推荐" FontSize="11" Foreground="White" FontWeight="Bold" />
+                    </Border>
+
+                    <!-- 左下角：分类标签 -->
+                    <Border VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                            Margin="8,0,0,6" Background="#CC111827" CornerRadius="4" Padding="6,2">
+                      <TextBlock Text="{Binding CategoryDisplay}" FontSize="11" Foreground="#E5E7EB" FontWeight="SemiBold" />
+                    </Border>
+
+                    <!-- 右下角：文件大小 -->
+                    <Border IsVisible="{Binding HasSize}" VerticalAlignment="Bottom" HorizontalAlignment="Right"
+                            Margin="0,0,8,6" Background="#B3000000" CornerRadius="4" Padding="6,2">
+                      <TextBlock Text="{Binding SizeFormatted}" FontSize="10" Foreground="#D1D5DB" />
+                    </Border>
+                  </Panel>
+                </Border>
+
+                <!-- 卡片中部信息 -->
+                <StackPanel Grid.Row="1" Margin="14,12,14,8" Spacing="6">
+                  <!-- 标题 -->
+                  <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="14"
+                             TextTrimming="CharacterEllipsis" MaxLines="2"
+                             ToolTip.Tip="{Binding Name}" />
+
+                  <!-- 元数据徽标：版本 / 作者 -->
+                  <WrapPanel Orientation="Horizontal">
+                    <Border IsVisible="{Binding HasVersion}" Background="#1AFFFFFF" CornerRadius="3" Padding="5,1" Margin="0,0,6,4">
+                      <TextBlock Text="{Binding VersionDisplay}" FontSize="10" Opacity="0.85" />
+                    </Border>
+                    <Border IsVisible="{Binding HasAuthor}" Background="#1AFFFFFF" CornerRadius="3" Padding="5,1" Margin="0,0,6,4">
+                      <TextBlock Text="{Binding AuthorDisplay}" FontSize="10" Opacity="0.85" TextTrimming="CharacterEllipsis" MaxWidth="140" />
+                    </Border>
+                  </WrapPanel>
+
+                  <!-- 提取码胶囊（若有提取码，高亮呈现并提供单键复制） -->
+                  <Border IsVisible="{Binding HasPassword}"
+                          Background="#1E48CAE4" BorderBrush="#6048CAE4" BorderThickness="1"
+                          CornerRadius="5" Padding="8,4" Margin="0,2,0,2">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Grid.Column="0" Text="{Binding PasswordTag}" FontSize="11" Foreground="#48CAE4" FontWeight="SemiBold" VerticalAlignment="Center" />
+                      <Button Grid.Column="1" Content="复制" Classes="taskAction" Height="22" Padding="6,1" FontSize="10"
+                              Command="{Binding DataContext.CopyPasswordCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              CommandParameter="{Binding}" />
+                    </Grid>
+                  </Border>
+
+                  <!-- 简述说明 -->
+                  <TextBlock Text="{Binding Description}" FontSize="12" Opacity="0.75"
+                             TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
+                             ToolTip.Tip="{Binding Description}" Margin="0,2,0,2" />
+                </StackPanel>
+
+                <!-- 卡片底部主操作按钮 -->
+                <Border Grid.Row="2" Margin="14,0,14,14">
+                  <Button Classes="primaryAction" HorizontalAlignment="Stretch" Height="34"
+                          Command="{Binding DataContext.OpenPanLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                          CommandParameter="{Binding}">
+                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/ExternalLink.png"
+                             Width="13" Height="13" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding ActionButtonText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                  </Button>
+                </Border>
+
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <!-- 5. 空态展示 (Empty State) -->
+      <Border IsVisible="{Binding IsEmpty}" Classes="hintCard" Padding="36,28" Margin="0,20,0,0" HorizontalAlignment="Center">
+        <StackPanel Spacing="10" HorizontalAlignment="Center">
+          <TextBlock Text="📦" FontSize="36" HorizontalAlignment="Center" />
+          <TextBlock Text="未检索到符合条件的网盘资源" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" />
+          <TextBlock Text="可以尝试切换顶部分类或重置搜索词" FontSize="12" Opacity="0.7" HorizontalAlignment="Center" />
+          <Button Content="重置筛选" Command="{Binding ResetFilterCommand}"
+                  HorizontalAlignment="Center" Classes="primaryAction" Margin="0,6,0,0" Padding="16,6" />
+        </StackPanel>
+      </Border>
+
     </StackPanel>
-  </Border>
+  </ScrollViewer>
 </UserControl>
