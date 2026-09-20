@@ -1419,20 +1419,8 @@ public sealed class CollectionInstallService
         try
         {
             var store = new InstanceRegistryStore();
-            var records = store.LoadManualInstances();
-            // 实例名只在同一个路径下唯一；不同 Base 允许拥有同名 Collection。
-            var existingIndex = records.FindIndex(r =>
-                string.Equals(r.Path, runtimePath, StringComparison.OrdinalIgnoreCase));
-            var record = new ManualInstanceRecord { Name = instanceName, Path = runtimePath };
-            if (existingIndex >= 0)
-            {
-                records[existingIndex] = record;
-            }
-            else
-            {
-                records.Add(record);
-            }
-            store.SaveManualInstances(records);
+            // 与 ModpackInstallService 一致：注册表内部原子 Upsert，避免并行安装互相覆盖。
+            store.UpsertManualInstance(instanceName, runtimePath);
         }
         catch { }
     }
