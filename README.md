@@ -32,6 +32,8 @@
 
 ## 关于
 
+> 本项目 Fork 自 [panda-lsy/SVL-StardewValleyLauncher](https://github.com/panda-lsy/SVL-StardewValleyLauncher)，在此基础上持续开发。
+
 **Stardew Valley Mod Manager (SVMM)** 是一个功能完整的星露谷物语启动器和 Mod 管理器。基于 Avalonia UI 和 .NET 10 构建，提供跨平台的现代化桌面体验，让你轻松管理游戏实例、安装和组织 Mod、集成 NexusMods / CurseForge 下载，以及创建和分享 Modpack。
 
 ## 功能亮点
@@ -106,8 +108,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/panda-lsy/SVL.git
-cd SVL
+git clone https://github.com/aishangwuji/StardewValleyModManager.git
+cd StardewValleyModManager
 
 # Debug 构建
 dotnet build SVL.sln --configuration Debug
