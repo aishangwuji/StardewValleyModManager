@@ -454,16 +454,16 @@ public partial class SettingsPageViewModel : ObservableObject
     [ObservableProperty]
     private string _appVersion = "1.0.0.0";
 
-    /// <summary>赞助支持：打开爱发电赞助页。</summary>
-    [RelayCommand]
-    private void Sponsor()
-    {
-        _externalProcessService.TryOpenUrl("https://ifdian.net/a/mcshengxia");
-    }
-
-    /// <summary>查看源码：打开 GitHub 仓库。</summary>
+    /// <summary>查看源码：打开当前 Fork 仓库（第二作者：观雪）。</summary>
     [RelayCommand]
     private void ViewSource()
+    {
+        _externalProcessService.TryOpenUrl("https://github.com/aishangwuji/StardewValleyModManager");
+    }
+
+    /// <summary>原项目地址：打开上游原作者仓库（第一作者：盛夏de背影）。</summary>
+    [RelayCommand]
+    private void OpenOriginalProject()
     {
         _externalProcessService.TryOpenUrl("https://github.com/panda-lsy/SVL-StardewValleyLauncher");
     }
