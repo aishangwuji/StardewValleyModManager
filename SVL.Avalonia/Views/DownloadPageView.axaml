@@ -449,6 +449,40 @@
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
                 </StackPanel>
+
+                <StackPanel Spacing="8" IsVisible="{Binding HasSmapiWanPanItems}">
+                  <TextBlock Text="网盘高速源" Classes="sectionTitle" />
+                  <ItemsControl ItemsSource="{Binding SmapiWanPanItems}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Classes="hintCard" Margin="0,0,0,10">
+                          <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Border Grid.Column="0" Width="72" Height="72" Background="{DynamicResource IconBg}" CornerRadius="6" BorderBrush="{DynamicResource IconBorder}" BorderThickness="1">
+                              <Image Source="{Binding IconSource, Converter={StaticResource AssetImageConverter}}" Width="64" Height="64" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="4" Margin="12,0,0,0">
+                              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                              <WrapPanel Orientation="Horizontal" ItemHeight="24" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SourceTag}" Classes="pill" />
+                                <TextBlock Text="{Binding CloudTag}" Classes="pill" IsVisible="{Binding HasCloudTag}" Margin="6,0,0,0" />
+                                <TextBlock Text="{Binding PasswordTag}" Classes="pill" IsVisible="{Binding HasPassword}" Margin="6,0,0,0" />
+                                <TextBlock Text="{Binding MetricTag}" Classes="pill" IsVisible="{Binding HasMetricTag}" Margin="6,0,0,0" />
+                                <TextBlock Text="{Binding TimeTag}" Classes="pill" IsVisible="{Binding HasTimeTag}" Margin="6,0,0,0" />
+                              </WrapPanel>
+                              <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Opacity="0.75" />
+                            </StackPanel>
+                            <Button Grid.Column="2"
+                              Content="{Binding DetailEnterText}"
+                              Command="{Binding DataContext.OpenCatalogItemDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              CommandParameter="{Binding}"
+                              VerticalAlignment="Center"
+                              Margin="8,0,0,0" />
+                          </Grid>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
               </StackPanel>
             </Border>
 
@@ -493,6 +527,8 @@
 
                               <WrapPanel Orientation="Horizontal" ItemHeight="24" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding SourceTag}" Classes="pill" />
+                                <TextBlock Text="{Binding CloudTag}" Classes="pill" IsVisible="{Binding HasCloudTag}" Margin="6,0,0,0" />
+                                <TextBlock Text="{Binding PasswordTag}" Classes="pill" IsVisible="{Binding HasPassword}" Margin="6,0,0,0" />
                                 <TextBlock Text="{Binding Stat}" Classes="pill" IsVisible="{Binding HasMetricTag}" Margin="6,0,0,0" />
                                 <TextBlock Text="{Binding TimeTag}" Classes="pill" IsVisible="{Binding HasTimeTag}" Margin="6,0,0,0" />
                                 <TextBlock Text="{Binding ModTypeTag}" Classes="pill" IsVisible="{Binding HasModTypeTag}" Margin="6,0,0,0" />

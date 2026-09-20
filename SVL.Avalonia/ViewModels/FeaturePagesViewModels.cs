@@ -1373,6 +1373,12 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
             return CatalogSource.Curseforge;
         }
 
+        if (sourceToken.Contains("wanpan", StringComparison.OrdinalIgnoreCase) ||
+            sourceToken.Contains("网盘", StringComparison.OrdinalIgnoreCase))
+        {
+            return CatalogSource.WanPan;
+        }
+
         return CatalogSource.Unknown;
     }
 
@@ -1811,6 +1817,52 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
             }
         }
 
+        var option = SelectedDownloadOption ?? string.Empty;
+        var directUrl = TryResolveDownloadOptionUrl(option);
+        var password = DownloadPageViewModel.TryExtractPasswordFromOption(option);
+        var isWanPanCloud = !string.IsNullOrWhiteSpace(password) ||
+                            (!string.IsNullOrWhiteSpace(_currentSourceToken) && _currentSourceToken.Contains("wanpan", StringComparison.OrdinalIgnoreCase)) ||
+                            (!string.IsNullOrWhiteSpace(ResourceSource) && ResourceSource.Contains("网盘", StringComparison.OrdinalIgnoreCase));
+
+        // 若为网盘分享链接且非直链压缩包，自动复制提取码并唤起系统浏览器
+        if (isWanPanCloud && !DownloadPageViewModel.IsDirectArchiveUrl(directUrl))
+        {
+            if (!string.IsNullOrWhiteSpace(password))
+            {
+                var clipboard = GetClipboard();
+                if (clipboard != null)
+                {
+                    await clipboard.SetTextAsync(password);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(directUrl))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = directUrl,
+                        UseShellExecute = true
+                    });
+                    DetailsStatus = !string.IsNullOrWhiteSpace(password)
+                        ? $"已复制提取码【{password}】并在浏览器中打开网盘"
+                        : "已在浏览器中打开网盘链接";
+                }
+                catch
+                {
+                    DetailsStatus = "打开网盘链接失败";
+                }
+            }
+            else
+            {
+                DetailsStatus = "未找到可用网盘链接";
+            }
+
+            OnPropertyChanged(nameof(DetailsStatus));
+            return;
+        }
+
         var request = BuildExternalDownloadRequest(ExternalDownloadAction.Install);
         QueueDownloadRequested?.Invoke(request);
         DetailsStatus = IsSmapiResource ? "已提交 SMAPI 安装任务" : "已提交安装任务";
@@ -1845,9 +1897,20 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
     }
 
     [RelayCommand]
-    private void OpenSelectedDownloadOptionInBrowser()
+    private async Task OpenSelectedDownloadOptionInBrowser()
     {
-        var url = TryResolveDownloadOptionUrl(SelectedDownloadOption);
+        var option = SelectedDownloadOption ?? string.Empty;
+        var url = TryResolveDownloadOptionUrl(option);
+        var password = DownloadPageViewModel.TryExtractPasswordFromOption(option);
+        if (!string.IsNullOrWhiteSpace(password))
+        {
+            var clipboard = GetClipboard();
+            if (clipboard != null)
+            {
+                await clipboard.SetTextAsync(password);
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(url))
         {
             DetailsStatus = "当前条目不支持浏览器打开";
@@ -1862,7 +1925,9 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
                 FileName = url,
                 UseShellExecute = true
             });
-            DetailsStatus = "已在浏览器打开下载链接";
+            DetailsStatus = !string.IsNullOrWhiteSpace(password)
+                ? $"已复制提取码【{password}】并在浏览器打开下载链接"
+                : "已在浏览器打开下载链接";
         }
         catch
         {
@@ -3228,6 +3293,11 @@ public sealed partial class ModDetailsPageViewModel : FeaturePageViewModelBase
         if (markerIndex >= 0)
         {
             var candidate = trimmed[markerIndex..].Trim();
+            var pipeIndex = candidate.IndexOf('|');
+            if (pipeIndex > 0)
+            {
+                candidate = candidate[..pipeIndex].Trim();
+            }
             if (Uri.TryCreate(candidate, UriKind.Absolute, out var parsedByMarker) &&
                 (parsedByMarker.Scheme == Uri.UriSchemeHttp || parsedByMarker.Scheme == Uri.UriSchemeHttps))
             {
@@ -6603,8 +6673,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
             try
             {
-                Directory.Delete(backup.FullPath, true);
-                deleted++;
+                if (RecycleBinService.TryMoveToRecycleBin(backup.FullPath, out _))
+                {
+                    deleted++;
+                }
             }
             catch
             {
@@ -6711,9 +6783,11 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(item.FullPath) && Directory.Exists(item.FullPath))
+            if (!string.IsNullOrWhiteSpace(item.FullPath) && Directory.Exists(item.FullPath) &&
+                !RecycleBinService.TryMoveToRecycleBin(item.FullPath, out var recycleError))
             {
-                Directory.Delete(item.FullPath, true);
+                Status = $"移入回收站失败：{recycleError}";
+                return;
             }
 
             if (TryGetCurrentModsPath(out var modsPath))
@@ -6911,6 +6985,19 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
         catch
         {
+            // 快照未完成时直接清理残留目录：它还不是可用备份，进回收站反而污染恢复区。
+            try
+            {
+                if (Directory.Exists(snapshotDir))
+                {
+                    Directory.Delete(snapshotDir, true);
+                }
+            }
+            catch
+            {
+                // 清理失败由下次备份覆盖或用户手动处理，不阻塞主流程。
+            }
+
             return false;
         }
     }
@@ -6931,27 +7018,58 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         var targetPath = Path.Combine(modsPath, targetName);
+        var stagingPath = Path.Combine(
+            backupRoot,
+            $".svl-restore-staging_{SanitizeFileName(targetName)}_{Guid.NewGuid():N}");
+        string? conflictPath = null;
+        var targetStateChanged = false;
         try
         {
-            if (Directory.Exists(targetPath))
-            {
-                var conflictPath = Path.Combine(
-                    backupRoot,
-                    $"conflict_{DateTime.Now:yyyyMMdd_HHmmss}_{SanitizeFileName(targetName)}");
-                Directory.Move(targetPath, conflictPath);
-            }
-
-            CopyDirectory(backup.FullPath, targetPath);
-            var copiedMetaPath = Path.Combine(targetPath, BackupMetaFileName);
+            // 先复制到暂存目录，成功后再替换目标，避免恢复中途失败留下半个 Mod。
+            CopyDirectory(backup.FullPath, stagingPath);
+            var copiedMetaPath = Path.Combine(stagingPath, BackupMetaFileName);
             if (File.Exists(copiedMetaPath))
             {
                 File.Delete(copiedMetaPath);
             }
 
+            if (Directory.Exists(targetPath))
+            {
+                conflictPath = Path.Combine(
+                    backupRoot,
+                    $"conflict_{DateTime.Now:yyyyMMdd_HHmmss}_{SanitizeFileName(targetName)}");
+                Directory.Move(targetPath, conflictPath);
+                targetStateChanged = true;
+            }
+
+            Directory.Move(stagingPath, targetPath);
+            targetStateChanged = true;
+            stagingPath = string.Empty;
+
             return true;
         }
         catch
         {
+            // 回滚：移除半成品目标，把 conflict 快照搬回原位；回滚再失败则保留 conflict，
+            // 用户仍可从备份栏手动恢复，而不是丢最后一份可用数据。
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(stagingPath) && Directory.Exists(stagingPath))
+                {
+                    Directory.Delete(stagingPath, true);
+                }
+
+                if (targetStateChanged && !Directory.Exists(targetPath) &&
+                    !string.IsNullOrWhiteSpace(conflictPath) && Directory.Exists(conflictPath))
+                {
+                    Directory.Move(conflictPath, targetPath);
+                }
+            }
+            catch
+            {
+                // 保留现场与 conflict 目录，交由用户手动恢复。
+            }
+
             return false;
         }
     }
@@ -8492,20 +8610,28 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return null;
         }
 
+        // svl-source.json 中的 FileID 是本地已安装发布文件的稳定身份。
+        // 传给远端判定：远端最新 FileID 未变化时不再重复提示可更新，
+        // 避免 manifest 版本文本滞后导致的反复提示。
+        var credential = TryReadSourceCredential(mod.FullPath);
+        var currentFileId = TryParsePositiveLong(credential?.FileId, out var persistedFileId)
+            ? persistedFileId
+            : 0;
+
         if (string.Equals(normalizedPlatform, "NexusMods", StringComparison.OrdinalIgnoreCase))
         {
-            return await CheckNexusUpdateAsync(mod, normalizedProjectId);
+            return await CheckNexusUpdateAsync(mod, normalizedProjectId, currentFileId);
         }
 
         if (string.Equals(normalizedPlatform, "Curseforge", StringComparison.OrdinalIgnoreCase))
         {
-            return await CheckCurseforgeUpdateAsync(mod, normalizedProjectId);
+            return await CheckCurseforgeUpdateAsync(mod, normalizedProjectId, currentFileId);
         }
 
         return null;
     }
 
-    private async Task<LocalModUpdateCheckResult> CheckNexusUpdateAsync(ModManageItem mod, string projectId)
+    private async Task<LocalModUpdateCheckResult> CheckNexusUpdateAsync(ModManageItem mod, string projectId, long currentFileId = 0)
     {
         var result = new LocalModUpdateCheckResult
         {
@@ -8569,7 +8695,14 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                     GetJsonStringFlexibleByCandidates(latest.Value, "version"),
                     ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "file_name", "fileName", "name")));
                 result.LatestVersion = remoteVersion;
-                result.HasUpdate = IsRemoteVersionNewer(mod.Version, remoteVersion);
+                // 文件身份优先于 manifest 版本文本：本地已记录稳定 FileID 时，
+                // 远端最新 FileID 变化即说明发布文件已变化；本地无 FileID 时仍
+                // 要求版本号明确变新，防止历史 Mod 被误报。
+                result.HasUpdate = ShouldMarkRemoteFileAsUpdate(
+                    currentFileId,
+                    latestFileId,
+                    mod.Version,
+                    remoteVersion);
                 result.IsChecked = true;
                 result.UpdateFileId = latestFileId;
                 // 构造 NXM 链接供批量更新入队（DownloadPage 会解析并下载）
@@ -8587,7 +8720,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
     }
 
-    private static async Task<LocalModUpdateCheckResult> CheckCurseforgeUpdateAsync(ModManageItem mod, string projectId)
+    private static async Task<LocalModUpdateCheckResult> CheckCurseforgeUpdateAsync(ModManageItem mod, string projectId, long currentFileId = 0)
     {
         var result = new LocalModUpdateCheckResult
         {
@@ -8615,30 +8748,27 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
                 await using var stream = await response.Content.ReadAsStreamAsync();
                 using var doc = await JsonDocument.ParseAsync(stream);
-                if (!doc.RootElement.TryGetProperty("data", out var files) || files.ValueKind != JsonValueKind.Array)
+                if (!TryGetCurseforgeFilesArray(doc.RootElement, out var files))
                 {
                     continue;
                 }
 
-                JsonElement? latest = null;
-                long latestFileId = -1;
-                foreach (var file in files.EnumerateArray())
-                {
-                    var fileId = GetJsonLongByCandidates(file, "id", "fileId");
-                    if (latest == null || fileId > latestFileId)
-                    {
-                        latest = file;
-                        latestFileId = fileId;
-                    }
-                }
+                var latest = TrySelectLatestCurseforgeFile(files, out var latestFileId);
 
-                if (latest.HasValue)
+                if (latest.HasValue && latestFileId > 0)
                 {
                     var remoteVersion = FirstNonEmpty(
                         ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "displayName", "display_name")),
                         ExtractVersionFromText(GetJsonStringFlexibleByCandidates(latest.Value, "fileName", "file_name", "name")));
                     result.LatestVersion = remoteVersion;
-                    result.HasUpdate = IsRemoteVersionNewer(mod.Version, remoteVersion);
+                    // 与 Nexus 一样，CurseForge FileID 比 manifest 版本更能
+                    // 代表当前安装的发布文件；处理“文件已更新、manifest 仍旧”
+                    // 的 Mod，避免更新完成后再次提示同一文件可更新。
+                    result.HasUpdate = ShouldMarkRemoteFileAsUpdate(
+                        currentFileId,
+                        latestFileId,
+                        mod.Version,
+                        remoteVersion);
                     result.IsChecked = true;
                     result.UpdateFileId = latestFileId;
                     // 提取 Curseforge 直链供批量更新入队
@@ -8680,6 +8810,173 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             ExtractVersionFromText(remoteVersion),
             ExtractVersionFromText(localVersion),
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 文件身份优先于 manifest 版本文本。
+    /// 很多 CurseForge/Nexus 发布包沿用旧 manifest.json 版本，或者文件名没有
+    /// 可解析的版本号。只要本地已记录稳定 FileID，远端最新 FileID 变化就说明
+    /// 发布文件已经变化；这能避免更新完成后因为元信息没同步而反复提示更新。
+    /// 当本地没有 FileID 时仍要求版本号明确变新，防止历史 Mod 被误报。
+    /// </summary>
+    private static bool ShouldMarkRemoteFileAsUpdate(
+        long currentFileId,
+        long remoteFileId,
+        string localVersion,
+        string remoteVersion)
+    {
+        if (remoteFileId <= 0 || remoteFileId == currentFileId)
+        {
+            return false;
+        }
+
+        return IsRemoteVersionNewer(localVersion, remoteVersion) ||
+               (currentFileId > 0 && !string.IsNullOrWhiteSpace(remoteVersion));
+    }
+
+    private static bool TryGetCurseforgeFilesArray(
+        JsonElement root,
+        out JsonElement files)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            files = root;
+            return true;
+        }
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            files = default;
+            return false;
+        }
+
+        // curse.tools 的响应有 data、result、files、results 等多个历史包装；
+        // 先按语义字段查找，再递归其它对象，避免把 dependencies/modules 等
+        // 数组误当成文件列表。
+        var preferredNames = new[] { "data", "files", "result", "results", "items" };
+        foreach (var name in preferredNames)
+        {
+            if (TryGetJsonPropertyIgnoreCase(root, name, out var candidate) &&
+                TryGetCurseforgeFilesArray(candidate, out files))
+            {
+                return true;
+            }
+        }
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (preferredNames.Any(name =>
+                    string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            if (TryGetCurseforgeFilesArray(property.Value, out files))
+            {
+                return true;
+            }
+        }
+
+        files = default;
+        return false;
+    }
+
+    private static JsonElement? TrySelectLatestCurseforgeFile(
+        JsonElement files,
+        out long fileId)
+    {
+        fileId = 0;
+        if (files.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        JsonElement latest = default;
+        var found = false;
+        var latestHasDate = false;
+        var latestDate = DateTimeOffset.MinValue;
+        var latestId = 0L;
+
+        foreach (var file in files.EnumerateArray())
+        {
+            if (file.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var availability = GetJsonStringFlexibleByCandidates(file, "isAvailable", "available");
+            if (string.Equals(availability, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var candidateId = GetJsonLongByCandidates(file, "id", "fileId", "file_id");
+            var candidateDate = TryGetCurseforgeFileDate(file, out var parsedDate);
+            var isNewer = !found ||
+                          (candidateDate && !latestHasDate) ||
+                          (candidateDate && latestHasDate && parsedDate > latestDate) ||
+                          (candidateDate == latestHasDate &&
+                           (!candidateDate || parsedDate == latestDate) &&
+                           candidateId > latestId);
+            if (!isNewer)
+            {
+                continue;
+            }
+
+            latest = file;
+            latestId = candidateId;
+            latestHasDate = candidateDate;
+            latestDate = candidateDate ? parsedDate : DateTimeOffset.MinValue;
+            found = true;
+        }
+
+        fileId = latestId;
+        return found ? latest : null;
+    }
+
+    private static bool TryGetCurseforgeFileDate(
+        JsonElement file,
+        out DateTimeOffset date)
+    {
+        var rawDate = GetJsonStringFlexibleByCandidates(
+            file,
+            "fileDate",
+            "file_date",
+            "releaseDate",
+            "release_date",
+            "uploadedAt",
+            "uploaded_at",
+            "date");
+        if (DateTimeOffset.TryParse(
+                rawDate,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out date))
+        {
+            return true;
+        }
+
+        var timestamp = GetJsonLongByCandidates(
+            file,
+            "uploadedTimestamp",
+            "uploaded_timestamp",
+            "releaseTimestamp",
+            "release_timestamp");
+        if (timestamp > 0)
+        {
+            try
+            {
+                date = DateTimeOffset.FromUnixTimeSeconds(timestamp);
+                return true;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Ignore malformed timestamps and fall back to FileID ordering.
+            }
+        }
+
+        date = default;
+        return false;
     }
 
     private static bool TryParseComparableVersion(string? rawVersion, out Version parsed)

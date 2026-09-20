@@ -9,7 +9,8 @@ public enum CatalogSource
     Unknown,
     GitHub,
     NexusMods,
-    Curseforge
+    Curseforge,
+    WanPan
 }
 
 /// <summary>资源身份标识。用于跨页面传递资源唯一身份（ResourceId + Source + IsModpack）。</summary>
@@ -48,21 +49,36 @@ public sealed class ModSearchResultItem
     /// <summary>游戏版本标签（兼容版本提示）。</summary>
     public string GameVersionTag { get; init; } = string.Empty;
 
-    /// <summary>来源显示文本（如 "NexusMods"、"Curseforge"、"GitHub"）。</summary>
+    /// <summary>来源显示文本（如 "NexusMods"、"Curseforge"、"GitHub"、"网盘高速源"）。</summary>
     public string SourceDisplay => Identity.Source switch
     {
         CatalogSource.NexusMods => "NexusMods",
         CatalogSource.Curseforge => "Curseforge",
         CatalogSource.GitHub => "GitHub",
+        CatalogSource.WanPan => "网盘高速源",
         _ => string.Empty
     };
 
     /// <summary>是否为整合包（区分 Mod/Modpack 搜索）。</summary>
     public bool IsModpack => Identity.IsModpack;
 
-    /// <summary>Nexus Collection 的 slug（仅 IsModpack 且来源为 NexusMods 时有值，用于详情页拉取 revisions）。</summary>
+    /// <summary>Nexus Collection 的 slug 或网盘资源 ID（用于详情页拉取）。</summary>
     public string CollectionSlug => Identity.CollectionSlug ?? string.Empty;
 
-    /// <summary>来源前缀标签（UI 显示用，如 "NexusMod#123"）。</summary>
-    public string SourceTag => $"{SourceDisplay}{(Identity.IsModpack ? "Pack" : "")}#{Identity.ResourceId}";
+    /// <summary>来源前缀标签（UI 显示用，如 "NexusMod#123" 或 "网盘高速源"）。</summary>
+    public string SourceTag => Identity.Source == CatalogSource.WanPan
+        ? "网盘高速源"
+        : $"{SourceDisplay}{(Identity.IsModpack ? "Pack" : "")}#{Identity.ResourceId}";
+
+    /// <summary>网盘分享/直链下载地址。</summary>
+    public string DownloadUrl { get; init; } = string.Empty;
+
+    /// <summary>网盘提取码/访问密码。</summary>
+    public string Password { get; init; } = string.Empty;
+
+    /// <summary>网盘平台代码（quark, baidu, local 等）。</summary>
+    public string CloudType { get; init; } = string.Empty;
+
+    /// <summary>网盘平台名称（夸克网盘、百度网盘等）。</summary>
+    public string CloudTypeName { get; init; } = string.Empty;
 }

@@ -99,6 +99,50 @@ public partial class DownloadCatalogItem : ObservableObject
 
     public bool HasGameVersionTag => !string.IsNullOrWhiteSpace(GameVersionTag);
 
+    [ObservableProperty]
+    private string _downloadUrl = string.Empty;
+
+    [ObservableProperty]
+    private string _password = string.Empty;
+
+    [ObservableProperty]
+    private string _cloudType = string.Empty;
+
+    [ObservableProperty]
+    private string _cloudTypeName = string.Empty;
+
+    public bool HasPassword => !string.IsNullOrWhiteSpace(Password);
+
+    public bool HasDownloadUrl => !string.IsNullOrWhiteSpace(DownloadUrl);
+
+    public bool HasCloudType => !string.IsNullOrWhiteSpace(CloudType) || !string.IsNullOrWhiteSpace(CloudTypeName);
+
+    public string PasswordTag => HasPassword ? $"提取码: {Password}" : string.Empty;
+
+    public string CloudTag => !string.IsNullOrWhiteSpace(CloudTypeName) ? CloudTypeName : (HasCloudType ? CloudType : string.Empty);
+
+    public bool HasCloudTag => !string.IsNullOrWhiteSpace(CloudTag);
+
+    partial void OnPasswordChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasPassword));
+        OnPropertyChanged(nameof(PasswordTag));
+    }
+
+    partial void OnCloudTypeChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasCloudType));
+        OnPropertyChanged(nameof(CloudTag));
+        OnPropertyChanged(nameof(HasCloudTag));
+    }
+
+    partial void OnCloudTypeNameChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasCloudType));
+        OnPropertyChanged(nameof(CloudTag));
+        OnPropertyChanged(nameof(HasCloudTag));
+    }
+
     public bool HasLocalizedName => !string.IsNullOrWhiteSpace(LocalizedName);
 
     public bool HasLocalizedSummary => !string.IsNullOrWhiteSpace(LocalizedSummary);

@@ -172,15 +172,207 @@ public sealed class RemoteCatalogService
         return false;
     }
 
+    public string GetWanPanBaseUrl(AppUserSettings? settings = null)
+    {
+        settings ??= _settingsStore.Load();
+        var baseUri = settings.WanPanApiBaseUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(baseUri))
+        {
+            return "https://pan.originagent.cn";
+        }
+
+        return baseUri.TrimEnd('/');
+    }
+
+    public async Task<(List<ModSearchResultItem> Items, int Total)> SearchWanPanResourcesPagedAsync(
+        string category = "all",
+        string keyword = "",
+        int page = 1,
+        int size = 20,
+        string cloudType = "")
+    {
+        var settings = _settingsStore.Load();
+        var baseUrl = GetWanPanBaseUrl(settings);
+        var query = $"?category={Uri.EscapeDataString(category)}&keyword={Uri.EscapeDataString(keyword)}&page={page}&size={size}";
+        if (!string.IsNullOrWhiteSpace(cloudType))
+        {
+            query += $"&cloud_type={Uri.EscapeDataString(cloudType)}";
+        }
+
+        LogDebug($"[WanPan] Search start category={category}, keyword='{keyword}', url={baseUrl}/api/v1/stardew/catalog{query}");
+
+        try
+        {
+            var httpClient = GetHttpClient(settings);
+            var response = await httpClient.GetAsync($"{baseUrl}/api/v1/stardew/catalog{query}");
+            if (!response.IsSuccessStatusCode)
+            {
+                LogDebug($"[WanPan] Search failed with status: {response.StatusCode}");
+                return ([], 0);
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<WanPanCatalogResponse>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (result?.Code != 0 || result.Data?.Items == null)
+            {
+                LogDebug($"[WanPan] Search returned code {result?.Code}, msg={result?.Msg}");
+                return ([], 0);
+            }
+
+            var items = result.Data.Items.Select(item =>
+            {
+                var isModpack = string.Equals(item.Category, "modpacks", StringComparison.OrdinalIgnoreCase);
+                var modType = item.Category switch
+                {
+                    "smapi" => "SMAPI",
+                    "modpacks" => "整合包",
+                    "game" => "游戏本体",
+                    _ => "精选模组"
+                };
+
+                return new ModSearchResultItem
+                {
+                    Identity = new CatalogResourceIdentity(
+                        ResourceId: Math.Abs(item.Id.GetHashCode()),
+                        Name: item.Name,
+                        Source: CatalogSource.WanPan,
+                        IsModpack: isModpack,
+                        CollectionSlug: item.Id
+                    ),
+                    Name = item.Name,
+                    Summary = item.Summary,
+                    Stat = string.IsNullOrWhiteSpace(item.SizeFormatted)
+                        ? item.CloudTypeName
+                        : (string.IsNullOrWhiteSpace(item.CloudTypeName) ? item.SizeFormatted : $"{item.CloudTypeName} · {item.SizeFormatted}"),
+                    TimeTag = string.IsNullOrWhiteSpace(item.Version) ? item.UpdatedAt : item.Version,
+                    IconUrl = item.IconUrl,
+                    FullIconUrl = item.IconUrl,
+                    ModType = modType,
+                    GameVersionTag = item.Version,
+                    DownloadUrl = item.DownloadUrl,
+                    Password = item.Password,
+                    CloudType = item.CloudType,
+                    CloudTypeName = item.CloudTypeName
+                };
+            }).ToList();
+
+            return (items, result.Data.Total);
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"[WanPan] Search exception: {ex.Message}");
+            return ([], 0);
+        }
+    }
+
+    public async Task<List<ModSearchResultItem>> SearchWanPanResourcesAsync(
+        string category = "all",
+        string keyword = "",
+        int page = 1,
+        int size = 20,
+        string cloudType = "")
+    {
+        var (items, _) = await SearchWanPanResourcesPagedAsync(category, keyword, page, size, cloudType);
+        return items;
+    }
+
+    public async Task<CatalogResourceDetails> GetWanPanResourceDetailsAsync(CatalogResourceIdentity identity)
+    {
+        var settings = _settingsStore.Load();
+        var baseUrl = GetWanPanBaseUrl(settings);
+        var id = !string.IsNullOrWhiteSpace(identity.CollectionSlug)
+            ? identity.CollectionSlug
+            : identity.Name;
+
+        LogDebug($"[WanPan] GetDetails start id={id}");
+
+        try
+        {
+            var httpClient = GetHttpClient(settings);
+            var response = await httpClient.GetAsync($"{baseUrl}/api/v1/stardew/items/{Uri.EscapeDataString(id)}");
+            if (!response.IsSuccessStatusCode)
+            {
+                LogDebug($"[WanPan] GetDetails failed with status: {response.StatusCode}");
+                return CatalogResourceDetails.Empty;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<WanPanItemDetailResponse>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            var item = result?.Data;
+            if (result?.Code != 0 || item == null)
+            {
+                return CatalogResourceDetails.Empty;
+            }
+
+            var versionList = new List<string>();
+            if (!string.IsNullOrWhiteSpace(item.Version))
+            {
+                versionList.Add(item.Version);
+            }
+            else
+            {
+                versionList.Add("最新版");
+            }
+
+            var downloadOptions = new List<string>();
+            if (!string.IsNullOrWhiteSpace(item.DownloadUrl))
+            {
+                var cloudName = string.IsNullOrWhiteSpace(item.CloudTypeName) ? "网盘" : item.CloudTypeName;
+                var sizeText = string.IsNullOrWhiteSpace(item.SizeFormatted) ? "" : $" ({item.SizeFormatted})";
+                var pwdText = string.IsNullOrWhiteSpace(item.Password) ? "" : $" 提取码: {item.Password}";
+                var optText = $"{cloudName}{sizeText}{pwdText} | url={item.DownloadUrl}";
+                if (!string.IsNullOrWhiteSpace(item.Password))
+                {
+                    optText += $" | pwd={item.Password}";
+                }
+                downloadOptions.Add(optText);
+            }
+
+            return new CatalogResourceDetails
+            {
+                Name = item.Name,
+                Source = string.IsNullOrWhiteSpace(item.CloudTypeName) ? "网盘高速源" : $"网盘高速源 · {item.CloudTypeName}",
+                Summary = item.Summary,
+                IconUrl = item.IconUrl,
+                FullIconUrl = item.IconUrl,
+                VersionOptions = versionList,
+                DownloadOptions = downloadOptions,
+                Dependencies = item.Tags
+            };
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"[WanPan] GetDetails exception: {ex.Message}");
+            return CatalogResourceDetails.Empty;
+        }
+    }
+
     public async Task<List<ModSearchResultItem>> SearchModsAsync(string keyword, string source = "全部")
     {
         var settings = _settingsStore.Load();
+        var includeWanPan = string.Equals(source, "全部", StringComparison.Ordinal) ||
+                            string.Equals(source, "网盘高速源", StringComparison.Ordinal) ||
+                            string.Equals(source, "WanPan", StringComparison.OrdinalIgnoreCase);
         var includeNexus = string.Equals(source, "全部", StringComparison.Ordinal) ||
                            string.Equals(source, "NexusMods", StringComparison.Ordinal);
         var includeCurseforge = string.Equals(source, "全部", StringComparison.Ordinal) ||
                                 string.Equals(source, "Curseforge", StringComparison.Ordinal);
 
         var results = new List<ModSearchResultItem>();
+
+        if (includeWanPan)
+        {
+            var wanpanResults = await SearchWanPanResourcesAsync("mods", keyword);
+            results.AddRange(wanpanResults);
+        }
 
         if (includeNexus)
         {
@@ -241,6 +433,18 @@ public sealed class RemoteCatalogService
         var normalizedModTypeFilter = NormalizeFilterToken(modType);
         var safePage = Math.Max(1, page);
         var safePageSize = Math.Clamp(pageSize, 1, 30);
+
+        var isOnlyWanPan = string.Equals(source, "网盘高速源", StringComparison.Ordinal) ||
+                           string.Equals(source, "WanPan", StringComparison.OrdinalIgnoreCase);
+        if (isOnlyWanPan)
+        {
+            var (wanpanItems, wanpanTotal) = await SearchWanPanResourcesPagedAsync("mods", normalizedKeyword, safePage, safePageSize);
+            return new CatalogPagedResult
+            {
+                Items = wanpanItems,
+                HasMore = safePage * safePageSize < wanpanTotal
+            };
+        }
         // 多请求 1 个用于判断是否有下一页
         var fetchCount = safePageSize + 1;
         var offsetLong = (long)(safePage - 1) * safePageSize;
@@ -498,6 +702,19 @@ public sealed class RemoteCatalogService
 
         var safePage = Math.Max(1, page);
         var safePageSize = Math.Clamp(pageSize, 1, 30);
+
+        var isOnlyWanPan = string.Equals(source, "网盘高速源", StringComparison.Ordinal) ||
+                           string.Equals(source, "WanPan", StringComparison.OrdinalIgnoreCase);
+        if (isOnlyWanPan)
+        {
+            var (wanpanItems, wanpanTotal) = await SearchWanPanResourcesPagedAsync("modpacks", keyword, safePage, safePageSize);
+            return new CatalogPagedResult
+            {
+                Items = wanpanItems,
+                HasMore = safePage * safePageSize < wanpanTotal
+            };
+        }
+
         var perSourceFetchCount = safePageSize;
         var offsetLong = (long)(safePage - 1) * perSourceFetchCount;
         var offset = offsetLong > int.MaxValue ? int.MaxValue : (int)offsetLong;
@@ -648,9 +865,19 @@ public sealed class RemoteCatalogService
                            string.Equals(source, "NexusMods", StringComparison.Ordinal);
         var includeCurseforge = string.Equals(source, "全部", StringComparison.Ordinal) ||
                                 string.Equals(source, "Curseforge", StringComparison.Ordinal);
+        var includeWanPan = string.Equals(source, "全部", StringComparison.Ordinal) ||
+                            string.Equals(source, "网盘高速源", StringComparison.Ordinal) ||
+                            string.Equals(source, "WanPan", StringComparison.OrdinalIgnoreCase);
 
         LogDebug($"SearchSmapi/start source={source}, keyword='{normalizedKeyword}', query='{searchKeyword}'");
         var results = new List<ModSearchResultItem>();
+
+        if (includeWanPan)
+        {
+            var wanpanResults = await SearchWanPanResourcesAsync("smapi", normalizedKeyword);
+            LogDebug($"SearchSmapi/wanpan raw={wanpanResults.Count}");
+            results.AddRange(wanpanResults);
+        }
 
         if (includeGithub)
         {
@@ -720,8 +947,17 @@ public sealed class RemoteCatalogService
                            string.Equals(source, "NexusMods", StringComparison.Ordinal);
         var includeCurseforge = string.Equals(source, "全部", StringComparison.Ordinal) ||
                                 string.Equals(source, "Curseforge", StringComparison.Ordinal);
+        var includeWanPan = string.Equals(source, "全部", StringComparison.Ordinal) ||
+                            string.Equals(source, "网盘高速源", StringComparison.Ordinal) ||
+                            string.Equals(source, "WanPan", StringComparison.OrdinalIgnoreCase);
 
         var results = new List<ModSearchResultItem>();
+
+        if (includeWanPan)
+        {
+            var wanpanModpacks = await SearchWanPanResourcesAsync("modpacks", keyword);
+            results.AddRange(wanpanModpacks);
+        }
 
         if (includeNexus)
         {
@@ -742,7 +978,7 @@ public sealed class RemoteCatalogService
 
     public async Task<CatalogResourceDetails> GetResourceDetailsAsync(CatalogResourceIdentity identity)
     {
-        if (identity.ResourceId <= 0 && identity.Source == CatalogSource.Unknown)
+        if (identity.ResourceId <= 0 && string.IsNullOrWhiteSpace(identity.CollectionSlug) && identity.Source == CatalogSource.Unknown)
         {
             return CatalogResourceDetails.Empty;
         }
@@ -751,6 +987,7 @@ public sealed class RemoteCatalogService
         var details = identity.Source switch
         {
             CatalogSource.GitHub => await GetGithubSmapiDetailsAsync(identity),
+            CatalogSource.WanPan => await GetWanPanResourceDetailsAsync(identity),
             // NexusMods Collection（IsModpack 或有 CollectionSlug）走 Collection 详情流程
             CatalogSource.NexusMods when identity.IsModpack || !string.IsNullOrWhiteSpace(identity.CollectionSlug)
                 => await GetNexusCollectionDetailsAsync(identity, settings),
@@ -848,6 +1085,12 @@ public sealed class RemoteCatalogService
         if (sourceToken.Contains("curse", StringComparison.OrdinalIgnoreCase))
         {
             return CatalogSource.Curseforge;
+        }
+
+        if (sourceToken.Contains("wanpan", StringComparison.OrdinalIgnoreCase) ||
+            sourceToken.Contains("网盘", StringComparison.OrdinalIgnoreCase))
+        {
+            return CatalogSource.WanPan;
         }
 
         return CatalogSource.Unknown;

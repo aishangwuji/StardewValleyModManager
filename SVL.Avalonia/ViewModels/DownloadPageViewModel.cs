@@ -574,7 +574,7 @@ public partial class DownloadPageViewModel : ObservableObject
     [ObservableProperty]
     private int _totalModpackPages = 1;
 
-    public ObservableCollection<string> SmapiSources { get; } = ["全部", "GitHub", "NexusMods", "Curseforge"];
+    public ObservableCollection<string> SmapiSources { get; } = ["全部", "GitHub", "NexusMods", "Curseforge", "网盘高速源"];
 
     // ---- 游戏本体下载（SteamCMD） ----
 
@@ -690,9 +690,9 @@ public partial class DownloadPageViewModel : ObservableObject
 
 
 
-    public ObservableCollection<string> ModSources { get; } = ["全部", "Curseforge", "NexusMods"];
+    public ObservableCollection<string> ModSources { get; } = ["全部", "Curseforge", "NexusMods", "网盘高速源"];
 
-    public ObservableCollection<string> ModpackSources { get; } = ["全部", "Curseforge", "NexusMods"];
+    public ObservableCollection<string> ModpackSources { get; } = ["全部", "Curseforge", "NexusMods", "网盘高速源"];
 
     public ObservableCollection<string> ModGameVersions { get; } = ["全部", "1.6", "1.5", "1.4"];
 
@@ -715,6 +715,8 @@ public partial class DownloadPageViewModel : ObservableObject
     public ObservableCollection<DownloadCatalogItem> SmapiNexusModsItems { get; } = [];
 
     public ObservableCollection<DownloadCatalogItem> SmapiCurseforgeItems { get; } = [];
+
+    public ObservableCollection<DownloadCatalogItem> SmapiWanPanItems { get; } = [];
 
     public bool IsSmapiCategory => SelectedCategory == DownloadCategory.Smapi;
 
@@ -748,11 +750,14 @@ public partial class DownloadPageViewModel : ObservableObject
 
     public bool HasSmapiCurseforgeItems => SmapiCurseforgeItems.Count > 0;
 
+    public bool HasSmapiWanPanItems => SmapiWanPanItems.Count > 0;
+
     public bool HasNoSmapiItems =>
         !IsCatalogLoading &&
         !HasSmapiGithubItems &&
         !HasSmapiNexusModsItems &&
-        !HasSmapiCurseforgeItems;
+        !HasSmapiCurseforgeItems &&
+        !HasSmapiWanPanItems;
 
     public bool UseLocalizedModDescription =>
         string.Equals(SelectedModDescriptionMode, DescriptionModeLocalized, StringComparison.Ordinal);
@@ -883,6 +888,7 @@ public partial class DownloadPageViewModel : ObservableObject
         SmapiGithubItems.CollectionChanged += (_, _) => RaiseSmapiSourceState();
         SmapiNexusModsItems.CollectionChanged += (_, _) => RaiseSmapiSourceState();
         SmapiCurseforgeItems.CollectionChanged += (_, _) => RaiseSmapiSourceState();
+        SmapiWanPanItems.CollectionChanged += (_, _) => RaiseSmapiSourceState();
 
         Directory.CreateDirectory(_downloadRootPath);
         Directory.CreateDirectory(_smapiIconCachePath);
@@ -3771,6 +3777,47 @@ public partial class DownloadPageViewModel : ObservableObject
             }
         }
 
+        if (sourceToken == "wanpan" || (request.ResourceSource?.Contains("网盘", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            var pwd = TryExtractPasswordFromOption(request.SelectedDownloadOption);
+            if (IsDirectArchiveUrl(directUrl) && Uri.TryCreate(directUrl, UriKind.Absolute, out var directArchiveUri))
+            {
+                var fileName = ResolveDownloadFileName(directArchiveUri, request.ResolveSuggestedFileName());
+                return ResolvedExternalDownloadTarget.Success(directUrl, fileName);
+            }
+
+            // 外部网盘分享链接：复制提取码，唤起系统浏览器
+            if (!string.IsNullOrWhiteSpace(pwd))
+            {
+                var clipboard = GetClipboard();
+                if (clipboard != null)
+                {
+                    await clipboard.SetTextAsync(pwd);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(directUrl))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = directUrl,
+                        UseShellExecute = true
+                    });
+                }
+                catch
+                {
+                    // Ignore process start failure
+                }
+            }
+
+            var tip = !string.IsNullOrWhiteSpace(pwd)
+                ? $"已复制提取码【{pwd}】并在浏览器中打开网盘，请下载后解压/导入"
+                : "已在浏览器中打开网盘，请下载后解压/导入";
+            return ResolvedExternalDownloadTarget.Fail(tip, directUrl);
+        }
+
         if (!string.IsNullOrWhiteSpace(directUrl) &&
             Uri.TryCreate(directUrl, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
@@ -4317,7 +4364,38 @@ public partial class DownloadPageViewModel : ObservableObject
             return "github";
         }
 
+        if (raw.Contains("wanpan") || raw.Contains("网盘"))
+        {
+            return "wanpan";
+        }
+
         return string.Empty;
+    }
+
+    public static string TryExtractPasswordFromOption(string? option)
+    {
+        if (string.IsNullOrWhiteSpace(option)) return string.Empty;
+        var match = Regex.Match(option, @"(?i)pwd=([^\s|]+)");
+        if (match.Success)
+        {
+            return match.Groups[1].Value.Trim();
+        }
+        var matchZh = Regex.Match(option, @"提取码[:：\s]+([a-zA-Z0-9]+)");
+        if (matchZh.Success)
+        {
+            return matchZh.Groups[1].Value.Trim();
+        }
+        return string.Empty;
+    }
+
+    public static bool IsDirectArchiveUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        var clean = url.Split('?')[0].Trim();
+        return clean.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+               clean.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ||
+               clean.EndsWith(".rar", StringComparison.OrdinalIgnoreCase) ||
+               clean.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TryResolveDirectDownloadUrl(string? option)
@@ -4346,6 +4424,11 @@ public partial class DownloadPageViewModel : ObservableObject
         if (markerIndex >= 0)
         {
             var candidate = trimmed[markerIndex..].Trim();
+            var pipeIndex = candidate.IndexOf('|');
+            if (pipeIndex > 0)
+            {
+                candidate = candidate[..pipeIndex].Trim();
+            }
             if (Uri.TryCreate(candidate, UriKind.Absolute, out var byMarker) &&
                 (byMarker.Scheme == Uri.UriSchemeHttp || byMarker.Scheme == Uri.UriSchemeHttps))
             {
@@ -4958,6 +5041,9 @@ public partial class DownloadPageViewModel : ObservableObject
                 case "curseforge":
                     SmapiCurseforgeItems.Add(bestItem);
                     break;
+                case "wanpan":
+                    SmapiWanPanItems.Add(bestItem);
+                    break;
                 default:
                     break;
             }
@@ -4973,7 +5059,8 @@ public partial class DownloadPageViewModel : ObservableObject
             "GitHub" => ["github"],
             "NexusMods" => ["nexusmods"],
             "Curseforge" => ["curseforge"],
-            _ => ["github", "nexusmods", "curseforge"]
+            "网盘高速源" or "WanPan" => ["wanpan"],
+            _ => ["github", "nexusmods", "curseforge", "wanpan"]
         };
     }
 
@@ -5147,6 +5234,7 @@ public partial class DownloadPageViewModel : ObservableObject
             "github" => "avares://SVL.Avalonia/Assets/Icons/Modded.png",
             "nexusmods" => "avares://SVL.Avalonia/Assets/Icons/Junimo.png",
             "curseforge" => "avares://SVL.Avalonia/Assets/Icons/Junimo.png",
+            "wanpan" or "网盘" => "avares://SVL.Avalonia/Assets/Icons/Junimo.png",
             _ => "avares://SVL.Avalonia/Assets/Icons/Modded.png"
         };
     }
@@ -5156,6 +5244,7 @@ public partial class DownloadPageViewModel : ObservableObject
         var items = SmapiGithubItems
             .Concat(SmapiNexusModsItems)
             .Concat(SmapiCurseforgeItems)
+            .Concat(SmapiWanPanItems)
             .ToList();
 
         foreach (var item in items)
@@ -5333,6 +5422,7 @@ public partial class DownloadPageViewModel : ObservableObject
         SmapiGithubItems.Clear();
         SmapiNexusModsItems.Clear();
         SmapiCurseforgeItems.Clear();
+        SmapiWanPanItems.Clear();
         RaiseSmapiSourceState();
     }
 
@@ -5341,6 +5431,7 @@ public partial class DownloadPageViewModel : ObservableObject
         OnPropertyChanged(nameof(HasSmapiGithubItems));
         OnPropertyChanged(nameof(HasSmapiNexusModsItems));
         OnPropertyChanged(nameof(HasSmapiCurseforgeItems));
+        OnPropertyChanged(nameof(HasSmapiWanPanItems));
         OnPropertyChanged(nameof(HasNoSmapiItems));
     }
 
@@ -5364,6 +5455,10 @@ public partial class DownloadPageViewModel : ObservableObject
         AppendDisplaySegment(sb, "compat", item.GameVersionTag);
         // Collection slug 透传：DownloadPage 仍以 displayText 字符串携带身份，详情页据此拉取 revisions。
         AppendDisplaySegment(sb, "slug", item.CollectionSlug);
+        AppendDisplaySegment(sb, "dlUrl", item.DownloadUrl);
+        AppendDisplaySegment(sb, "pwd", item.Password);
+        AppendDisplaySegment(sb, "cloudType", item.CloudType);
+        AppendDisplaySegment(sb, "cloudName", item.CloudTypeName);
         // 显式传递汉化字段，让 ParseCatalogItem 能正确填充 LocalizedName/LocalizedSummary
         if (hasLocalization)
         {
@@ -5403,6 +5498,10 @@ public partial class DownloadPageViewModel : ObservableObject
         var localizedSummary = string.Empty;
         var modTypeTag = string.Empty;
         var gameVersionTag = string.Empty;
+        var downloadUrl = string.Empty;
+        var password = string.Empty;
+        var cloudType = string.Empty;
+        var cloudTypeName = string.Empty;
 
         for (var index = 1; index < parts.Length; index++)
         {
@@ -5474,6 +5573,30 @@ public partial class DownloadPageViewModel : ObservableObject
             if (segment.StartsWith("zhSummary=", StringComparison.OrdinalIgnoreCase))
             {
                 localizedSummary = segment[10..].Trim();
+                continue;
+            }
+
+            if (segment.StartsWith("dlUrl=", StringComparison.OrdinalIgnoreCase))
+            {
+                downloadUrl = segment[6..].Trim();
+                continue;
+            }
+
+            if (segment.StartsWith("pwd=", StringComparison.OrdinalIgnoreCase))
+            {
+                password = segment[4..].Trim();
+                continue;
+            }
+
+            if (segment.StartsWith("cloudType=", StringComparison.OrdinalIgnoreCase))
+            {
+                cloudType = segment[10..].Trim();
+                continue;
+            }
+
+            if (segment.StartsWith("cloudName=", StringComparison.OrdinalIgnoreCase))
+            {
+                cloudTypeName = segment[10..].Trim();
                 continue;
             }
 
@@ -5557,13 +5680,17 @@ public partial class DownloadPageViewModel : ObservableObject
             LocalizedName = localizedName,
             LocalizedSummary = localizedSummary,
             ModTypeTag = modTypeTag,
-            GameVersionTag = gameVersionTag
+            GameVersionTag = gameVersionTag,
+            DownloadUrl = downloadUrl,
+            Password = password,
+            CloudType = cloudType,
+            CloudTypeName = cloudTypeName
         };
     }
 
     private static bool HasUsableCatalogIdentity(CatalogResourceIdentity identity)
     {
-        return identity.ResourceId > 0 && identity.Source != CatalogSource.Unknown;
+        return (identity.ResourceId > 0 || !string.IsNullOrWhiteSpace(identity.CollectionSlug)) && identity.Source != CatalogSource.Unknown;
     }
 
     private static CatalogSource ResolveCatalogSource(string sourceKey)
@@ -5573,6 +5700,7 @@ public partial class DownloadPageViewModel : ObservableObject
             "github" => CatalogSource.GitHub,
             "nexusmods" => CatalogSource.NexusMods,
             "curseforge" => CatalogSource.Curseforge,
+            "wanpan" or "网盘" or "网盘高速源" => CatalogSource.WanPan,
             _ => CatalogSource.Unknown
         };
     }
@@ -5594,6 +5722,12 @@ public partial class DownloadPageViewModel : ObservableObject
             return "curseforge";
         }
 
+        if (sourceText.Contains("wanpan", StringComparison.OrdinalIgnoreCase) ||
+            sourceText.Contains("网盘", StringComparison.OrdinalIgnoreCase))
+        {
+            return "wanpan";
+        }
+
         return "unknown";
     }
 
@@ -5604,6 +5738,7 @@ public partial class DownloadPageViewModel : ObservableObject
             "github" => "GitHub",
             "nexusmods" => "NexusMods",
             "curseforge" => "Curseforge",
+            "wanpan" or "网盘" => "网盘高速源",
             _ => string.IsNullOrWhiteSpace(fallback) ? "未知来源" : fallback
         };
     }

@@ -135,4 +135,7 @@ public sealed class AppUserSettings
 
     /// <summary>社区汉化首选源（GitHub / Gitee），默认 Gitee（国内访问更稳定）。</summary>
     public string LocalizationPreferredSource { get; set; } = "Gitee";
+
+    /// <summary>网盘高速源 API 基地址（默认 https://pan.originagent.cn）。</summary>
+    public string WanPanApiBaseUrl { get; set; } = "https://pan.originagent.cn";
 }
