@@ -252,12 +252,8 @@
                   <Button Classes="accent" HorizontalAlignment="Stretch" Height="34"
                           Command="{Binding DataContext.OpenPanLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                           CommandParameter="{Binding}">
-                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-                      <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/ExternalLink.png"
-                             Width="13" Height="13" VerticalAlignment="Center" />
-                      <TextBlock Text="{Binding ActionButtonText}" FontSize="12" FontWeight="SemiBold"
-                                 Foreground="{DynamicResource TextOnAccentBrush}" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <TextBlock Text="{Binding ActionButtonText}" FontSize="12" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextOnAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                   </Button>
                 </Border>
 

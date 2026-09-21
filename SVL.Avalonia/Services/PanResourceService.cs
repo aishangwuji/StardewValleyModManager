@@ -95,7 +95,7 @@ public sealed partial class PanResourceItem : ObservableObject
         PanUrl.EndsWith(".rar", StringComparison.OrdinalIgnoreCase) ||
         PanUrl.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase);
 
-    public string ActionButtonText => IsDirectDownload ? "⬇️ 立即下载" : "🚀 获取网盘链接";
+    public string ActionButtonText => IsDirectDownload ? "立即下载" : "获取网盘链接";
 
     public PanResourceItem() { }
 
