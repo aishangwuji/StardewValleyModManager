@@ -574,6 +574,10 @@
     </Setter>
   </Style>
 
+  <Style Selector="Button.accent TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource TextOnAccentBrush}" />
+  </Style>
+
   <Style Selector="Button.accent:pointerover">
     <Setter Property="Background" Value="{DynamicResource ColorBrush2}" />
     <Setter Property="BorderBrush" Value="{DynamicResource ColorBrush2}" />
@@ -586,6 +590,45 @@
 
   <!-- 必须置于 Button:disabled 之后：二者特异性相同，靠源顺序保证禁用态不被强调色覆盖。 -->
   <Style Selector="Button.accent:disabled">
+    <Setter Property="Background" Value="{DynamicResource ColorBrushGray6}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource ColorBrushGray4}" />
+    <Setter Property="Opacity" Value="0.6" />
+  </Style>
+
+  <!-- primaryAction 别名（与 accent 保持一致，确保强调色按钮内文字使用 TextOnAccentBrush 高对比呈现） -->
+  <Style Selector="Button.primaryAction">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextOnAccentBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.15" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button.primaryAction TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource TextOnAccentBrush}" />
+  </Style>
+
+  <Style Selector="Button.primaryAction:pointerover">
+    <Setter Property="Background" Value="{DynamicResource ColorBrush2}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource ColorBrush2}" />
+    <Setter Property="Opacity" Value="0.95" />
+  </Style>
+
+  <Style Selector="Button.primaryAction:pressed">
+    <Setter Property="Opacity" Value="0.85" />
+  </Style>
+
+  <Style Selector="Button.primaryAction:disabled">
     <Setter Property="Background" Value="{DynamicResource ColorBrushGray6}" />
     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource ColorBrushGray4}" />

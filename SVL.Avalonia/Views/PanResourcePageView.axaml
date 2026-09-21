@@ -8,6 +8,60 @@
              x:Class="SVL.Avalonia.Views.PanResourcePageView"
              x:DataType="vm:PanResourcePageViewModel">
 
+  <UserControl.Styles>
+    <!-- 分类筛选胶囊按钮：独立卡片式胶囊，保证在浅色与深色主题下均有清晰边界与高对比度文字 -->
+    <Style Selector="Button.categoryChip">
+      <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="16" />
+      <Setter Property="Padding" Value="12,5" />
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Transitions">
+        <Transitions>
+          <BrushTransition Property="Background" Duration="0:0:0.15" />
+          <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+        </Transitions>
+      </Setter>
+    </Style>
+
+    <Style Selector="Button.categoryChip TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="Button.categoryChip:pointerover">
+      <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="Button.categoryChip.selected">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="Button.categoryChip.selected TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextOnAccentBrush}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- 胶囊内计数徽标：未选中使用主题弱强调底色，选中态使用半透白色胶囊 -->
+    <Style Selector="Button.categoryChip Border.chipBadge">
+      <Setter Property="Background" Value="{DynamicResource PillBg}" />
+    </Style>
+
+    <Style Selector="Button.categoryChip.selected Border.chipBadge">
+      <Setter Property="Background" Value="#33FFFFFF" />
+    </Style>
+
+    <Style Selector="Button.categoryChip Border.chipBadge TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style Selector="Button.categoryChip.selected Border.chipBadge TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextOnAccentBrush}" />
+    </Style>
+  </UserControl.Styles>
+
   <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="24,18,24,28" Spacing="16">
 
@@ -48,16 +102,16 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate DataType="services:PanCategoryOption">
-            <Button Classes="nav"
+            <Button Classes="categoryChip"
                     Classes.selected="{Binding IsSelected}"
                     Command="{Binding DataContext.SelectCategoryCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                     CommandParameter="{Binding Key}"
                     Margin="0,0,8,8">
-              <StackPanel Orientation="Horizontal" Spacing="4">
+              <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
                 <TextBlock Text="{Binding Icon}" IsVisible="{Binding HasIcon}" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding Name}" FontWeight="Medium" VerticalAlignment="Center" />
-                <Border IsVisible="{Binding HasCount}" Background="#33FFFFFF" CornerRadius="8" Padding="5,1" Margin="4,0,0,0" VerticalAlignment="Center">
-                  <TextBlock Text="{Binding Count}" FontSize="10" Opacity="0.85" />
+                <Border Classes="chipBadge" IsVisible="{Binding HasCount}" CornerRadius="8" Padding="6,1" Margin="4,0,0,0" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Count}" FontSize="10" Opacity="0.9" VerticalAlignment="Center" />
                 </Border>
               </StackPanel>
             </Button>
@@ -84,12 +138,13 @@
       </Border>
 
       <Border IsVisible="{Binding HasError}"
-              Background="#33FF4D4F" BorderBrush="#80FF4D4F" BorderThickness="1"
+              Background="{DynamicResource ColorBrushRedBack}" BorderBrush="{DynamicResource ColorBrushError}" BorderThickness="1"
               CornerRadius="8" Padding="14,10">
         <Grid ColumnDefinitions="*,Auto">
-          <TextBlock Grid.Column="0" Text="{Binding ErrorMessage}" Foreground="#FF7875" FontSize="12" VerticalAlignment="Center" />
+          <!-- 硬编码浅红 #FF7875 在浅色主题下对比度不足，改用主题文字色，红色语义由背景 tint 承担 -->
+          <TextBlock Grid.Column="0" Text="{Binding ErrorMessage}" Foreground="{DynamicResource TextPrimaryBrush}" FontSize="12" VerticalAlignment="Center" />
           <Button Grid.Column="1" Content="重试连接" Command="{Binding RetryCommand}"
-                  Height="28" Padding="12,2" FontSize="11" Classes="primaryAction" VerticalAlignment="Center" />
+                  Height="28" Padding="12,2" FontSize="11" Classes="accent" VerticalAlignment="Center" />
         </Grid>
       </Border>
 
@@ -165,20 +220,21 @@
 
                   <!-- 元数据徽标：版本 / 作者 -->
                   <WrapPanel Orientation="Horizontal">
-                    <Border IsVisible="{Binding HasVersion}" Background="#1AFFFFFF" CornerRadius="3" Padding="5,1" Margin="0,0,6,4">
-                      <TextBlock Text="{Binding VersionDisplay}" FontSize="10" Opacity="0.85" />
+                    <Border IsVisible="{Binding HasVersion}" Background="{DynamicResource PillBg}" CornerRadius="3" Padding="5,1" Margin="0,0,6,4">
+                      <TextBlock Text="{Binding VersionDisplay}" FontSize="10" Foreground="{DynamicResource TextPrimaryBrush}" Opacity="0.85" />
                     </Border>
-                    <Border IsVisible="{Binding HasAuthor}" Background="#1AFFFFFF" CornerRadius="3" Padding="5,1" Margin="0,0,6,4">
-                      <TextBlock Text="{Binding AuthorDisplay}" FontSize="10" Opacity="0.85" TextTrimming="CharacterEllipsis" MaxWidth="140" />
+                    <Border IsVisible="{Binding HasAuthor}" Background="{DynamicResource PillBg}" CornerRadius="3" Padding="5,1" Margin="0,0,6,4">
+                      <TextBlock Text="{Binding AuthorDisplay}" FontSize="10" Foreground="{DynamicResource TextPrimaryBrush}" Opacity="0.85" TextTrimming="CharacterEllipsis" MaxWidth="140" />
                     </Border>
                   </WrapPanel>
 
                   <!-- 提取码胶囊（若有提取码，高亮呈现并提供单键复制） -->
+                  <!-- 硬编码浅青 #48CAE4 在浅色主题下近乎白色，改用主题高亮 tint + 主文字色 -->
                   <Border IsVisible="{Binding HasPassword}"
-                          Background="#1E48CAE4" BorderBrush="#6048CAE4" BorderThickness="1"
+                          Background="{DynamicResource CardHighlightBg}" BorderBrush="{DynamicResource CardHighlightBorder}" BorderThickness="1"
                           CornerRadius="5" Padding="8,4" Margin="0,2,0,2">
                     <Grid ColumnDefinitions="*,Auto">
-                      <TextBlock Grid.Column="0" Text="{Binding PasswordTag}" FontSize="11" Foreground="#48CAE4" FontWeight="SemiBold" VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="0" Text="{Binding PasswordTag}" FontSize="11" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" VerticalAlignment="Center" />
                       <Button Grid.Column="1" Content="复制" Classes="taskAction" Height="22" Padding="6,1" FontSize="10"
                               Command="{Binding DataContext.CopyPasswordCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                               CommandParameter="{Binding}" />
@@ -193,13 +249,14 @@
 
                 <!-- 卡片底部主操作按钮 -->
                 <Border Grid.Row="2" Margin="14,0,14,14">
-                  <Button Classes="primaryAction" HorizontalAlignment="Stretch" Height="34"
+                  <Button Classes="accent" HorizontalAlignment="Stretch" Height="34"
                           Command="{Binding DataContext.OpenPanLinkCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                           CommandParameter="{Binding}">
                     <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                       <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/ExternalLink.png"
                              Width="13" Height="13" VerticalAlignment="Center" />
-                      <TextBlock Text="{Binding ActionButtonText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding ActionButtonText}" FontSize="12" FontWeight="SemiBold"
+                                 Foreground="{DynamicResource TextOnAccentBrush}" VerticalAlignment="Center" />
                     </StackPanel>
                   </Button>
                 </Border>
@@ -217,7 +274,7 @@
           <TextBlock Text="未检索到符合条件的网盘资源" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" />
           <TextBlock Text="可以尝试切换顶部分类或重置搜索词" FontSize="12" Opacity="0.7" HorizontalAlignment="Center" />
           <Button Content="重置筛选" Command="{Binding ResetFilterCommand}"
-                  HorizontalAlignment="Center" Classes="primaryAction" Margin="0,6,0,0" Padding="16,6" />
+                  HorizontalAlignment="Center" Classes="accent" Margin="0,6,0,0" Padding="16,6" />
         </StackPanel>
       </Border>
 
