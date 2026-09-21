@@ -110,6 +110,9 @@ public partial class LaunchPageViewModel : ObservableObject
     private bool _enableSafeLaunch;
 
     [ObservableProperty]
+    private bool _showGuidanceTips = true;
+
+    [ObservableProperty]
     private string _safeLaunchState = string.Empty;
 
     [ObservableProperty]
@@ -360,6 +363,7 @@ public partial class LaunchPageViewModel : ObservableObject
         _preferredLaunchModeToken = NormalizeLaunchModeToken(settings.PreferredLaunchMode);
         PreferredLaunchMode = GetLaunchModeDisplayText(_preferredLaunchModeToken);
         EnableSafeLaunch = settings.EnableSafeLaunch;
+        ShowGuidanceTips = settings.ShowGuidanceTips;
         SafeLaunchState = GetSafeLaunchStateText(EnableSafeLaunch);
     }
 

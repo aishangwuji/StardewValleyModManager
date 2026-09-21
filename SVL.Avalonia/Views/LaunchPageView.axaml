@@ -265,7 +265,7 @@
           </Border>
 
           <!-- 5. 使用指南与技巧卡片 -->
-          <Border Classes="hintCard">
+          <Border Classes="hintCard" IsVisible="{Binding ShowGuidanceTips}">
             <StackPanel Spacing="8">
               <TextBlock Text="{Binding GuideUsageTitle}" Classes="hintTitle" />
               <TextBlock Text="{Binding GuideUsageLine1}" TextWrapping="Wrap" />

@@ -89,6 +89,9 @@ public partial class SettingsPageViewModel : ObservableObject
     private string _showNotificationsLabelText = "显示通知";
 
     [ObservableProperty]
+    private string _showGuidanceTipsLabelText = "显示界面引导与帮助提示";
+
+    [ObservableProperty]
     private string _debugModeLabelText = "启用调试模式";
 
     [ObservableProperty]
@@ -331,6 +334,9 @@ public partial class SettingsPageViewModel : ObservableObject
     private bool _showNotifications = true;
 
     [ObservableProperty]
+    private bool _showGuidanceTips = true;
+
+    [ObservableProperty]
     private bool _debugMode;
 
     [ObservableProperty]
@@ -536,6 +542,7 @@ public partial class SettingsPageViewModel : ObservableObject
         SelectedUiLanguageOption = UiLanguageOptions.FirstOrDefault(o => string.Equals(o.Code, SelectedUiLanguage, StringComparison.OrdinalIgnoreCase))
                                    ?? UiLanguageOptions.First();
         ShowNotifications = settings.ShowNotifications;
+        ShowGuidanceTips = settings.ShowGuidanceTips;
         DebugMode = settings.DebugMode;
         MinimizeToTrayOnStartup = settings.MinimizeToTrayOnStartup;
         MinimizeToTrayOnClose = settings.MinimizeToTrayOnClose;
@@ -586,6 +593,7 @@ public partial class SettingsPageViewModel : ObservableObject
         settings.ThemeColorScheme = schemeName;
         ThemeService.SaveToSettings(settings);
         settings.ShowNotifications = ShowNotifications;
+        settings.ShowGuidanceTips = ShowGuidanceTips;
         settings.DebugMode = DebugMode;
         settings.MinimizeToTrayOnStartup = MinimizeToTrayOnStartup;
         settings.MinimizeToTrayOnClose = MinimizeToTrayOnClose;
@@ -622,6 +630,7 @@ public partial class SettingsPageViewModel : ObservableObject
         TabAboutText = _localizationService.Get("Settings.Tab.About");
         OtherSectionSubtitleText = _localizationService.Get("Settings.Other.Subtitle");
         ShowNotificationsLabelText = _localizationService.Get("Settings.Other.ShowNotifications");
+        ShowGuidanceTipsLabelText = _localizationService.Get("Settings.Other.ShowGuidanceTips");
         DebugModeLabelText = _localizationService.Get("Settings.Other.DebugMode");
         MinimizeOnStartupLabelText = _localizationService.Get("Settings.Other.MinimizeOnStartup");
         MinimizeOnCloseLabelText = _localizationService.Get("Settings.Other.MinimizeOnClose");
@@ -780,6 +789,12 @@ public partial class SettingsPageViewModel : ObservableObject
     partial void OnShowNotificationsChanged(bool value)
     {
         StatusMessage = value ? "已启用通知（已自动保存）" : "已禁用通知（已自动保存）";
+        ScheduleAutoSave();
+    }
+
+    partial void OnShowGuidanceTipsChanged(bool value)
+    {
+        StatusMessage = value ? "已开启界面引导提示（已自动保存）" : "已隐藏界面引导提示（已自动保存）";
         ScheduleAutoSave();
     }
 

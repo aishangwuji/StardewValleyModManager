@@ -257,6 +257,7 @@ public partial class MainWindowViewModel : ObservableObject
         SettingsPage = new SettingsPageViewModel(_settingsStore, dialogService, nexusAuthService, nexusOAuthService, launcherUpdateService, externalProcessService, nxmProtocolRegistrationService, _localizationService, _imageResourceService);
         InstancesPage = new InstancesPageViewModel(_gameInstallPathLocator, dialogService, instanceRegistryStore, _settingsStore, _imageResourceService, _localizationService);
         TaskStatusPage = new TaskStatusPageViewModel(_localizationService);
+        TaskStatusPage.ShowGuidanceTips = initialSettings.ShowGuidanceTips;
         PanResourcePage = new PanResourcePageViewModel(
             new Services.PanResourceService(null, _settingsStore),
             _localizationService,
@@ -1202,6 +1203,13 @@ public partial class MainWindowViewModel : ObservableObject
             LauncherAppNameText = string.IsNullOrWhiteSpace(SettingsPage.LauncherAppName)
                 ? "SVL"
                 : SettingsPage.LauncherAppName;
+            return;
+        }
+
+        if (string.Equals(e.PropertyName, nameof(SettingsPageViewModel.ShowGuidanceTips), StringComparison.Ordinal))
+        {
+            LaunchPage.RefreshLaunchPreferencesFromSettings();
+            TaskStatusPage.ShowGuidanceTips = SettingsPage.ShowGuidanceTips;
             return;
         }
 

@@ -4519,4 +4519,33 @@ public sealed class AvaloniaMigrationHardeningTests
                 SVL.Core.Platform.Abstractions.SmapiInstallResult.Success(versionRoot, versionRoot));
         }
     }
+
+    [TestMethod]
+    public void AppUserSettings_ShowGuidanceTips_DefaultsTrue_AndCanPersistRoundTrip()
+    {
+        var settings = new SVL.Avalonia.Models.AppUserSettings();
+        Assert.IsTrue(settings.ShowGuidanceTips);
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "svl_settings_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var store = new SVL.Avalonia.Services.AppUserSettingsStore(tempDir);
+            var loaded = store.Load();
+            Assert.IsTrue(loaded.ShowGuidanceTips);
+
+            loaded.ShowGuidanceTips = false;
+            store.Save(loaded);
+
+            var reloaded = store.Load();
+            Assert.IsFalse(reloaded.ShowGuidanceTips);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
 }

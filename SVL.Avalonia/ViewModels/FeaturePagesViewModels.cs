@@ -127,6 +127,9 @@ public sealed partial class TaskStatusPageViewModel : FeaturePageViewModelBase
     private bool _isEmptyState;
 
     [ObservableProperty]
+    private bool _showGuidanceTips = true;
+
+    [ObservableProperty]
     private string _adviceTitle = "建议操作";
 
     [ObservableProperty]

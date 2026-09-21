@@ -52,6 +52,8 @@ public sealed class AppUserSettings
 
     public bool ShowNotifications { get; set; } = true;
 
+    public bool ShowGuidanceTips { get; set; } = true;
+
     public bool DebugMode { get; set; }
 
     public string LogLevel { get; set; } = "Info";

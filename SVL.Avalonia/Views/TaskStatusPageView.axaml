@@ -113,7 +113,7 @@
 
             <!-- 快捷提示与下载指引 -->
             <Grid ColumnDefinitions="*,*">
-              <Border Grid.Column="0" Classes="statCard" Margin="0,0,6,0">
+              <Border Grid.Column="0" Classes="statCard" Margin="0,0,6,0" IsVisible="{Binding ShowGuidanceTips}">
                 <StackPanel Spacing="6">
                   <TextBlock Text="下载队列提示" FontWeight="SemiBold" FontSize="13" />
                   <TextBlock Text="• 支持多任务并发与大文件多线程分块下载&#x0a;• 下载中的任务支持随时暂停、取消或重试&#x0a;• 整合包与 Mod 会在下载后自动执行安全解压"

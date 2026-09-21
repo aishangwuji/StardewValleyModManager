@@ -133,7 +133,7 @@
               <CheckBox Content="启用下载代理" IsChecked="{Binding EnableDownloadProxy}" />
               <TextBlock Text="代理地址 (http://host:port)" />
               <TextBox Text="{Binding DownloadProxyUrl, UpdateSourceTrigger=PropertyChanged}" Watermark="例如: http://127.0.0.1:7890" />
-              <TextBlock Text="提示：Clash 等本地代理通常无需填写用户名/密码。" Opacity="0.68" TextWrapping="Wrap" />
+              <TextBlock Text="提示：Clash 等本地代理通常无需填写用户名/密码。" Opacity="0.68" TextWrapping="Wrap" IsVisible="{Binding ShowGuidanceTips}" />
               <TextBlock Text="代理用户名（可选）" />
               <TextBox Text="{Binding DownloadProxyUserName, UpdateSourceTrigger=PropertyChanged}" />
               <TextBlock Text="代理密码（可选）" />
@@ -145,7 +145,7 @@
               <ComboBox ItemsSource="{Binding CollectionDownloadParallelismOptions}" SelectedItem="{Binding SelectedCollectionDownloadParallelism}" />
               <TextBlock Text="下载线程数" />
               <ComboBox ItemsSource="{Binding DownloadThreadOptions}" SelectedItem="{Binding SelectedDownloadThreads}" />
-              <TextBlock Text="多线程分片下载可提升大文件速度，任务进度条将按线程分块显示；失败重试支持断点续传。" Opacity="0.68" TextWrapping="Wrap" />
+              <TextBlock Text="多线程分片下载可提升大文件速度，任务进度条将按线程分块显示；失败重试支持断点续传。" Opacity="0.68" TextWrapping="Wrap" IsVisible="{Binding ShowGuidanceTips}" />
             </StackPanel>
           </Border>
 
@@ -191,7 +191,7 @@
               <TextBlock Text="{Binding NxmProtocolStatusLabelText}" />
               <TextBlock Text="{Binding NxmProtocolStatusText}" />
               <CheckBox Content="{Binding NxmAutoRegisterLabelText}" IsChecked="{Binding RegisterNxmProtocolOnStartup}" />
-              <TextBlock Text="{Binding NxmProtocolDescriptionText}" Opacity="0.75" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding NxmProtocolDescriptionText}" Opacity="0.75" TextWrapping="Wrap" IsVisible="{Binding ShowGuidanceTips}" />
               <Button Content="{Binding NxmRegisterNowButtonText}" Command="{Binding RegisterNxmProtocolNowCommand}" HorizontalAlignment="Left" />
             </StackPanel>
           </Border>
@@ -205,7 +205,7 @@
               <TextBlock Text="社区汉化数据源与本地缓存清理" Opacity="0.72" TextWrapping="Wrap" />
               <TextBlock Text="社区汉化数据源" />
               <ComboBox ItemsSource="{Binding LocalizationSourceOptions}" SelectedItem="{Binding SelectedLocalizationSource}" />
-              <TextBlock Text="GitHub 为国际源，Gitee 为国内加速源。首选源失败时自动尝试备用源。" Opacity="0.68" TextWrapping="Wrap" />
+              <TextBlock Text="GitHub 为国际源，Gitee 为国内加速源。首选源失败时自动尝试备用源。" Opacity="0.68" TextWrapping="Wrap" IsVisible="{Binding ShowGuidanceTips}" />
               <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" Margin="0,2,0,2">
                 <TextBlock Text="总缓存大小" Opacity="0.85" />
                 <TextBlock Grid.Column="1" Text="{Binding TotalCacheSizeText}" />
@@ -304,6 +304,7 @@
               </StackPanel>
               <TextBlock Text="{Binding OtherSectionSubtitleText}" Opacity="0.72" TextWrapping="Wrap" />
               <CheckBox Content="{Binding ShowNotificationsLabelText}" IsChecked="{Binding ShowNotifications}" />
+              <CheckBox Content="{Binding ShowGuidanceTipsLabelText}" IsChecked="{Binding ShowGuidanceTips}" />
               <CheckBox Content="{Binding DebugModeLabelText}" IsChecked="{Binding DebugMode}" />
               <CheckBox Content="{Binding MinimizeOnStartupLabelText}" IsChecked="{Binding MinimizeToTrayOnStartup}" />
               <CheckBox Content="{Binding MinimizeOnCloseLabelText}" IsChecked="{Binding MinimizeToTrayOnClose}" />
