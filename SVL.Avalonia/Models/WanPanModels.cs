@@ -123,3 +123,19 @@ public sealed class WanPanItemDetailResponse
     [JsonPropertyName("data")]
     public WanPanResourceDto? Data { get; set; }
 }
+
+/// <summary>
+/// 星露谷网盘目录本地持久化缓存条目，包含缓存生成时间与分类及条目列表。
+/// </summary>
+public sealed class PanCatalogCacheEntry
+{
+    [JsonPropertyName("cached_at_utc")]
+    public DateTime CachedAtUtc { get; set; } = DateTime.UtcNow;
+
+    [JsonPropertyName("categories")]
+    public List<WanPanCategoryDto> Categories { get; set; } = [];
+
+    [JsonPropertyName("items")]
+    public List<WanPanResourceDto> Items { get; set; } = [];
+}
+

@@ -3,8 +3,10 @@ using SVL.Avalonia.Models;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -109,20 +111,47 @@ public sealed partial class PanResourceItem : ObservableObject
 
 /// <summary>
 /// 网盘资源服务：为顶栏“网盘资源”页提供卡片式 Mod/整合包/本体展示数据。
+/// <para>Business Rule: 本地磁盘与内存双层持久化缓存。仅当手动刷新、本地无缓存或超过设定周期时才调用后端接口，避免给服务端造成无谓压力。</para>
 /// </summary>
 public sealed class PanResourceService
 {
     private readonly HttpClient _httpClient;
     private readonly AppUserSettingsStore? _settingsStore;
+    private readonly string _cacheFilePath;
+    private PanCatalogCacheEntry? _memoryCache;
+    private readonly SemaphoreSlim _cacheLock = new(1, 1);
+
+    /// <summary>本地缓存有效周期（默认 24 小时）。</summary>
+    public TimeSpan CacheDuration { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>本地持久化缓存文件路径。</summary>
+    public string CacheFilePath => _cacheFilePath;
+
+    /// <summary>最近一次缓存生成的 UTC 时间。</summary>
+    public DateTime? LastCachedTimeUtc => _memoryCache?.CachedAtUtc;
 
     public Action<string>? DebugLogger { get; set; }
 
     public PanResourceService(
         HttpClient? httpClient = null,
-        AppUserSettingsStore? settingsStore = null)
+        AppUserSettingsStore? settingsStore = null,
+        string? cacheFilePath = null)
     {
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         _settingsStore = settingsStore;
+
+        if (!string.IsNullOrWhiteSpace(cacheFilePath))
+        {
+            _cacheFilePath = Path.GetFullPath(cacheFilePath);
+        }
+        else
+        {
+            var basePath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SVL",
+                "Avalonia");
+            _cacheFilePath = Path.Combine(basePath, "pan-catalog-cache.json");
+        }
     }
 
     public string GetWanPanBaseUrl()
@@ -137,11 +166,209 @@ public sealed class PanResourceService
 
     /// <summary>
     /// 获取网盘资源目录（包含分类元数据与卡片条目）。
+    /// <para>优先使用本地持久化缓存；仅当 forceReload 为 true、本地无有效缓存或缓存超过有效周期时才调用远程接口。</para>
     /// </summary>
     public async Task<(IReadOnlyList<PanCategoryOption> Categories, IReadOnlyList<PanResourceItem> Items)> GetCatalogAsync(
         string category = "all",
         string? keyword = null,
+        bool forceReload = false,
         CancellationToken cancellationToken = default)
+    {
+        var isFullCatalog = (string.IsNullOrWhiteSpace(category) || string.Equals(category, "all", StringComparison.OrdinalIgnoreCase))
+                            && string.IsNullOrWhiteSpace(keyword);
+
+        // 如果是常规全量浏览且未指定强制刷新，优先检查内存及本地磁盘缓存
+        if (isFullCatalog && !forceReload)
+        {
+            if (IsCacheValid(_memoryCache))
+            {
+                LogDebug("[PanResourceService] Returning full catalog from memory cache");
+                return MapCacheEntryToResult(_memoryCache!);
+            }
+
+            var diskCache = TryLoadDiskCache();
+            if (IsCacheValid(diskCache))
+            {
+                LogDebug($"[PanResourceService] Returning full catalog from valid disk cache (cached at {diskCache!.CachedAtUtc:u})");
+                _memoryCache = diskCache;
+                return MapCacheEntryToResult(diskCache);
+            }
+        }
+
+        // 需要从网络拉取（强制刷新 / 缓存不存在 / 缓存过期 / 带关键词定向检索）
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            // 加锁后复核：避免并发调用时重复穿透网络请求
+            if (isFullCatalog && !forceReload && IsCacheValid(_memoryCache))
+            {
+                return MapCacheEntryToResult(_memoryCache!);
+            }
+
+            try
+            {
+                var (dtoCategories, dtoItems) = await FetchFromRemoteAsync(category, keyword, cancellationToken);
+
+                if (isFullCatalog && dtoItems.Count > 0)
+                {
+                    var cacheEntry = new PanCatalogCacheEntry
+                    {
+                        CachedAtUtc = DateTime.UtcNow,
+                        Categories = dtoCategories,
+                        Items = dtoItems
+                    };
+
+                    _memoryCache = cacheEntry;
+                    SaveDiskCache(cacheEntry);
+                }
+
+                var categories = dtoCategories.Select(c => new PanCategoryOption(c.Key, c.Name)).ToList();
+                var items = dtoItems.Select(MapDtoToItem).ToList();
+                LogDebug($"[PanResourceService] Catalog fetched from remote: categories={categories.Count}, items={items.Count}");
+                return (categories, items);
+            }
+            catch (Exception ex)
+            {
+                // 弱网或服务端异常容错：若本地存在历史缓存（即使已过期），优雅降级返回本地缓存以保障可用性
+                var fallbackCache = _memoryCache ?? TryLoadDiskCache();
+                if (fallbackCache != null && fallbackCache.Items.Count > 0)
+                {
+                    LogDebug($"[PanResourceService] Remote fetch failed ({ex.Message}), falling back to disk cache (cached at {fallbackCache.CachedAtUtc:u})");
+                    _memoryCache = fallbackCache;
+                    return MapCacheEntryToResult(fallbackCache);
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 获取网盘资源列表（指定分类与关键词）。
+    /// </summary>
+    public async Task<IReadOnlyList<PanResourceItem>> GetPanResourcesAsync(
+        string category = "all",
+        string? keyword = null,
+        bool forceReload = false,
+        CancellationToken cancellationToken = default)
+    {
+        var (_, items) = await GetCatalogAsync(category, keyword, forceReload, cancellationToken);
+        return items;
+    }
+
+    /// <summary>
+    /// 兼容旧方法签名：获取网盘资源列表。
+    /// </summary>
+    public Task<IReadOnlyList<PanResourceItem>> GetPanResourcesAsync(
+        string? keyword = null,
+        CancellationToken cancellationToken = default)
+        => GetPanResourcesAsync("all", keyword, forceReload: false, cancellationToken);
+
+    /// <summary>
+    /// 手动清空内存与本地磁盘缓存。
+    /// </summary>
+    public void ClearCache()
+    {
+        _memoryCache = null;
+        try
+        {
+            if (File.Exists(_cacheFilePath))
+            {
+                File.Delete(_cacheFilePath);
+                LogDebug($"[PanResourceService] Deleted disk cache file: {_cacheFilePath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"[PanResourceService] Failed to clear disk cache: {ex.Message}");
+        }
+    }
+
+    private bool IsCacheValid(PanCatalogCacheEntry? entry)
+    {
+        if (entry == null || entry.Items == null || entry.Items.Count == 0)
+        {
+            return false;
+        }
+
+        return (DateTime.UtcNow - entry.CachedAtUtc) < CacheDuration;
+    }
+
+    private PanCatalogCacheEntry? TryLoadDiskCache()
+    {
+        try
+        {
+            if (!File.Exists(_cacheFilePath))
+            {
+                return null;
+            }
+
+            var json = File.ReadAllText(_cacheFilePath);
+            var entry = JsonSerializer.Deserialize<PanCatalogCacheEntry>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (entry != null && entry.Items != null && entry.Items.Count > 0)
+            {
+                return entry;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"[PanResourceService] Failed to read disk cache: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private void SaveDiskCache(PanCatalogCacheEntry entry)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(_cacheFilePath);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            var json = JsonSerializer.Serialize(entry, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNameCaseInsensitive = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+
+            AtomicFileWriter.WriteUtf8(_cacheFilePath, json);
+            LogDebug($"[PanResourceService] Atomically saved {entry.Items.Count} items to disk cache: {_cacheFilePath}");
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"[PanResourceService] Failed to write disk cache: {ex.Message}");
+        }
+    }
+
+    private static (IReadOnlyList<PanCategoryOption> Categories, IReadOnlyList<PanResourceItem> Items) MapCacheEntryToResult(PanCatalogCacheEntry entry)
+    {
+        var categories = (entry.Categories ?? [])
+            .Select(c => new PanCategoryOption(c.Key, c.Name))
+            .ToList();
+
+        var items = (entry.Items ?? [])
+            .Select(MapDtoToItem)
+            .ToList();
+
+        return (categories, items);
+    }
+
+    private async Task<(List<WanPanCategoryDto> Categories, List<WanPanResourceDto> Items)> FetchFromRemoteAsync(
+        string category,
+        string? keyword,
+        CancellationToken cancellationToken)
     {
         var baseUrl = GetWanPanBaseUrl();
         var queryParams = new List<string>();
@@ -183,37 +410,8 @@ public sealed class PanResourceService
             throw new InvalidOperationException(msg);
         }
 
-        var categories = (catalogResponse.Data.Categories ?? [])
-            .Select(c => new PanCategoryOption(c.Key, c.Name))
-            .ToList();
-
-        var items = (catalogResponse.Data.Items ?? [])
-            .Select(MapDtoToItem)
-            .ToList();
-
-        LogDebug($"[PanResourceService] Catalog loaded categories={categories.Count}, items={items.Count}");
-        return (categories, items);
+        return (catalogResponse.Data.Categories ?? [], catalogResponse.Data.Items ?? []);
     }
-
-    /// <summary>
-    /// 获取网盘资源列表（指定分类与关键词）。
-    /// </summary>
-    public async Task<IReadOnlyList<PanResourceItem>> GetPanResourcesAsync(
-        string category = "all",
-        string? keyword = null,
-        CancellationToken cancellationToken = default)
-    {
-        var (_, items) = await GetCatalogAsync(category, keyword, cancellationToken);
-        return items;
-    }
-
-    /// <summary>
-    /// 兼容旧方法签名：获取网盘资源列表。
-    /// </summary>
-    public Task<IReadOnlyList<PanResourceItem>> GetPanResourcesAsync(
-        string? keyword = null,
-        CancellationToken cancellationToken = default)
-        => GetPanResourcesAsync("all", keyword, cancellationToken);
 
     public static PanResourceItem MapDtoToItem(WanPanResourceDto dto)
     {

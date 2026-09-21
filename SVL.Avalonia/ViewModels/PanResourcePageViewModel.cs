@@ -193,10 +193,10 @@ public sealed partial class PanResourcePageViewModel : ObservableObject
     {
         ApplyFilters();
 
-        // 若本地没有筛选出结果，且有关键词输入，尝试向服务端发起关键词检索
+        // 若本地全量缓存中未检索到结果，且有关键词输入，尝试向服务端发起关键词定向检索
         if (FilteredResults.Count == 0 && !string.IsNullOrWhiteSpace(Query))
         {
-            await LoadAsync(forceReload: true);
+            await SearchRemoteKeywordAsync(Query.Trim());
         }
     }
 
@@ -232,10 +232,11 @@ public sealed partial class PanResourcePageViewModel : ObservableObject
 
         try
         {
-            var keywordParam = string.IsNullOrWhiteSpace(Query) ? null : Query.Trim();
+            // 全量目录拉取并走本地双层缓存，分类与关键词由本地 ApplyFilters 高速执行
             var (categories, items) = await _panResourceService.GetCatalogAsync(
                 category: "all",
-                keyword: keywordParam);
+                keyword: null,
+                forceReload: forceReload);
 
             if (generation != _loadGeneration)
             {
@@ -248,8 +249,13 @@ public sealed partial class PanResourcePageViewModel : ObservableObject
             // 更新分类计数
             UpdateCategoryCounts(_allLoadedItems);
 
-            // 应用筛选
+            // 应用本地筛选
             ApplyFilters();
+
+            if (forceReload)
+            {
+                StatusMessage = "网盘资源已更新至最新版本";
+            }
 
             // 启动异步图片缓存拉取
             _ = ResolveItemIconsAsync(_allLoadedItems, generation);
@@ -262,6 +268,54 @@ public sealed partial class PanResourcePageViewModel : ObservableObject
             }
 
             ErrorMessage = $"网盘资源加载失败: {ex.Message}";
+            UpdateStatusText();
+        }
+        finally
+        {
+            if (generation == _loadGeneration)
+            {
+                IsLoading = false;
+                UpdateStatusText();
+            }
+        }
+    }
+
+    private async Task SearchRemoteKeywordAsync(string keyword)
+    {
+        var generation = Interlocked.Increment(ref _loadGeneration);
+        IsLoading = true;
+        ErrorMessage = string.Empty;
+        StatusMessage = string.Empty;
+        UpdateStatusText();
+
+        try
+        {
+            var (_, items) = await _panResourceService.GetCatalogAsync(
+                category: "all",
+                keyword: keyword,
+                forceReload: true);
+
+            if (generation != _loadGeneration)
+            {
+                return;
+            }
+
+            _allLoadedItems.Clear();
+            _allLoadedItems.AddRange(items);
+
+            UpdateCategoryCounts(_allLoadedItems);
+            ApplyFilters();
+
+            _ = ResolveItemIconsAsync(_allLoadedItems, generation);
+        }
+        catch (Exception ex)
+        {
+            if (generation != _loadGeneration)
+            {
+                return;
+            }
+
+            ErrorMessage = $"远程检索失败: {ex.Message}";
             UpdateStatusText();
         }
         finally

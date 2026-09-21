@@ -260,4 +260,245 @@ public class WanPanCatalogTests
         Assert.AreEqual("夸克网盘", item.CloudTag);
         Assert.IsTrue(item.HasDownloadUrl);
     }
+
+    [TestMethod]
+    public async Task PanResourceService_GetCatalogAsync_WhenLocalCacheFresh_ShouldNotCallHttp()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "SVL_PanCacheTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var cacheFilePath = Path.Combine(tempDir, "pan-cache.json");
+
+        try
+        {
+            var initialEntry = new PanCatalogCacheEntry
+            {
+                CachedAtUtc = DateTime.UtcNow,
+                Categories = [new WanPanCategoryDto { Key = "mods", Name = "模组" }],
+                Items =
+                [
+                    new WanPanResourceDto
+                    {
+                        Id = "cached_item_1",
+                        Name = "本地缓存模组",
+                        Category = "mods",
+                        DownloadUrl = "https://pan.example.com/mod1"
+                    }
+                ]
+            };
+            File.WriteAllText(cacheFilePath, JsonSerializer.Serialize(initialEntry));
+
+            var httpCallCount = 0;
+            var handler = new MockHttpMessageHandler(_ =>
+            {
+                httpCallCount++;
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            });
+            var httpClient = new HttpClient(handler);
+            var service = new PanResourceService(httpClient, cacheFilePath: cacheFilePath);
+
+            var (categories, items) = await service.GetCatalogAsync(category: "all", keyword: null, forceReload: false);
+
+            Assert.AreEqual(0, httpCallCount, "有效本地缓存存在时，不得调用网络接口");
+            Assert.AreEqual(1, categories.Count);
+            Assert.AreEqual(1, items.Count);
+            Assert.AreEqual("本地缓存模组", items[0].Name);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task PanResourceService_GetCatalogAsync_WhenForceReload_ShouldCallHttpAndUpdateCache()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "SVL_PanCacheTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var cacheFilePath = Path.Combine(tempDir, "pan-cache.json");
+
+        try
+        {
+            var initialEntry = new PanCatalogCacheEntry
+            {
+                CachedAtUtc = DateTime.UtcNow,
+                Categories = [new WanPanCategoryDto { Key = "mods", Name = "旧模组" }],
+                Items =
+                [
+                    new WanPanResourceDto { Id = "old_item", Name = "旧模组条目", Category = "mods", DownloadUrl = "https://pan.example.com/old" }
+                ]
+            };
+            File.WriteAllText(cacheFilePath, JsonSerializer.Serialize(initialEntry));
+
+            var httpCallCount = 0;
+            var freshResponseJson = """
+            {
+                "code": 200,
+                "msg": "success",
+                "data": {
+                    "total": 1,
+                    "categories": [{ "key": "mods", "name": "精选模组" }],
+                    "items": [
+                        {
+                            "id": "fresh_item",
+                            "name": "服务器最新模组",
+                            "category": "mods",
+                            "download_url": "https://pan.example.com/fresh"
+                        }
+                    ]
+                }
+            }
+            """;
+
+            var handler = new MockHttpMessageHandler(_ =>
+            {
+                httpCallCount++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(freshResponseJson)
+                };
+            });
+            var httpClient = new HttpClient(handler);
+            var service = new PanResourceService(httpClient, cacheFilePath: cacheFilePath);
+
+            // forceReload = true 必须穿透缓存
+            var (categories, items) = await service.GetCatalogAsync(category: "all", keyword: null, forceReload: true);
+
+            Assert.AreEqual(1, httpCallCount, "forceReload 为 true 时必须调用网络接口获取最新数据");
+            Assert.AreEqual(1, items.Count);
+            Assert.AreEqual("服务器最新模组", items[0].Name);
+
+            // 验证磁盘缓存已被更新
+            Assert.IsTrue(File.Exists(cacheFilePath));
+            var updatedJson = File.ReadAllText(cacheFilePath);
+            Assert.IsTrue(updatedJson.Contains("服务器最新模组"));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task PanResourceService_GetCatalogAsync_WhenCacheExpired_ShouldFetchFromHttpAndUpdateCache()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "SVL_PanCacheTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var cacheFilePath = Path.Combine(tempDir, "pan-cache.json");
+
+        try
+        {
+            // 缓存生成时间为 48 小时前（超过默认 24 小时 TTL）
+            var expiredEntry = new PanCatalogCacheEntry
+            {
+                CachedAtUtc = DateTime.UtcNow.AddHours(-48),
+                Categories = [new WanPanCategoryDto { Key = "mods", Name = "过期模组" }],
+                Items =
+                [
+                    new WanPanResourceDto { Id = "expired_item", Name = "过期模组条目", Category = "mods", DownloadUrl = "https://pan.example.com/expired" }
+                ]
+            };
+            File.WriteAllText(cacheFilePath, JsonSerializer.Serialize(expiredEntry));
+
+            var httpCallCount = 0;
+            var freshResponseJson = """
+            {
+                "code": 200,
+                "msg": "success",
+                "data": {
+                    "total": 1,
+                    "categories": [{ "key": "mods", "name": "定时刷新模组" }],
+                    "items": [
+                        {
+                            "id": "ttl_refreshed_item",
+                            "name": "定时更新模组",
+                            "category": "mods",
+                            "download_url": "https://pan.example.com/ttl"
+                        }
+                    ]
+                }
+            }
+            """;
+
+            var handler = new MockHttpMessageHandler(_ =>
+            {
+                httpCallCount++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(freshResponseJson)
+                };
+            });
+            var httpClient = new HttpClient(handler);
+            var service = new PanResourceService(httpClient, cacheFilePath: cacheFilePath)
+            {
+                CacheDuration = TimeSpan.FromHours(24)
+            };
+
+            // forceReload = false，但由于已过期，应自动触发远程更新
+            var (categories, items) = await service.GetCatalogAsync(category: "all", keyword: null, forceReload: false);
+
+            Assert.AreEqual(1, httpCallCount, "缓存超过有效周期时，必须调用远程接口进行更新");
+            Assert.AreEqual(1, items.Count);
+            Assert.AreEqual("定时更新模组", items[0].Name);
+
+            // 磁盘缓存应被覆盖
+            var updatedJson = File.ReadAllText(cacheFilePath);
+            Assert.IsTrue(updatedJson.Contains("定时更新模组"));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task PanResourceService_GetCatalogAsync_WhenHttpFails_ShouldFallbackToExistingDiskCache()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "SVL_PanCacheTest_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var cacheFilePath = Path.Combine(tempDir, "pan-cache.json");
+
+        try
+        {
+            var fallbackEntry = new PanCatalogCacheEntry
+            {
+                CachedAtUtc = DateTime.UtcNow.AddDays(-3),
+                Categories = [new WanPanCategoryDto { Key = "mods", Name = "备用模组" }],
+                Items =
+                [
+                    new WanPanResourceDto { Id = "fallback_item", Name = "离线备用模组", Category = "mods", DownloadUrl = "https://pan.example.com/fallback" }
+                ]
+            };
+            File.WriteAllText(cacheFilePath, JsonSerializer.Serialize(fallbackEntry));
+
+            var handler = new MockHttpMessageHandler(_ =>
+            {
+                throw new HttpRequestException("Network down or timeout");
+            });
+            var httpClient = new HttpClient(handler);
+            var service = new PanResourceService(httpClient, cacheFilePath: cacheFilePath);
+
+            // 即使 forceReload = true，在网络异常时应优雅降级回退到本地已有缓存，而非抛出崩溃
+            var (categories, items) = await service.GetCatalogAsync(category: "all", keyword: null, forceReload: true);
+
+            Assert.AreEqual(1, items.Count);
+            Assert.AreEqual("离线备用模组", items[0].Name);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
 }
+
