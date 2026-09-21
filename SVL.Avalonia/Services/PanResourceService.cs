@@ -399,7 +399,7 @@ public sealed class PanResourceService
             PropertyNameCaseInsensitive = true
         });
 
-        if (catalogResponse == null || catalogResponse.Code != 200 || catalogResponse.Data == null)
+        if (catalogResponse == null || (catalogResponse.Code != 0 && catalogResponse.Code != 200) || catalogResponse.Data == null)
         {
             var msg = catalogResponse?.Msg;
             if (string.IsNullOrWhiteSpace(msg))
