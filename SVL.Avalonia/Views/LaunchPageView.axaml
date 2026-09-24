@@ -218,14 +218,15 @@
             </StackPanel>
           </Border>
 
-          <!-- 3. 快捷操作矩阵（一键进入 Mod 管理、打开 Mods 目录、游戏目录） -->
+          <!-- 3. 快捷操作矩阵（一键进入 Mod 管理、打开 Mods 目录、游戏目录、崩溃日志分析） -->
           <Border Classes="hintCard">
             <StackPanel Spacing="10">
               <TextBlock Text="快捷操作" Classes="hintTitle" FontSize="13" />
-              <Grid ColumnDefinitions="*,*,*">
-                <Button Grid.Column="0" Content="📦 Mod 管理" Command="{Binding OpenModManageCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="0,0,6,0" Padding="10,8" />
-                <Button Grid.Column="1" Content="📂 打开 Mods 目录" Command="{Binding OpenModsFolderCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="3,0,3,0" Padding="10,8" />
-                <Button Grid.Column="2" Content="🎮 打开游戏目录" Command="{Binding OpenGameFolderCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="6,0,0,0" Padding="10,8" />
+              <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto">
+                <Button Grid.Row="0" Grid.Column="0" Content="📦 Mod 管理" Command="{Binding OpenModManageCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="0,0,6,0" Padding="10,8" />
+                <Button Grid.Row="0" Grid.Column="1" Content="📂 打开 Mods 目录" Command="{Binding OpenModsFolderCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="3,0,3,0" Padding="10,8" />
+                <Button Grid.Row="0" Grid.Column="2" Content="🎮 打开游戏目录" Command="{Binding OpenGameFolderCommand}" IsEnabled="{Binding HasInstances}" HorizontalAlignment="Stretch" Margin="6,0,0,0" Padding="10,8" />
+                <Button Grid.Row="1" Grid.ColumnSpan="3" Content="崩溃日志分析" Command="{Binding OpenCrashAnalysisCommand}" HorizontalAlignment="Stretch" Margin="0,10,0,0" Padding="10,8" />
               </Grid>
             </StackPanel>
           </Border>

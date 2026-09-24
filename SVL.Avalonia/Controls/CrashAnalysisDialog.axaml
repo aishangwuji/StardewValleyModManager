@@ -1,0 +1,91 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:SVL.Avalonia.ViewModels"
+        xmlns:models="using:SVL.Avalonia.Models"
+        x:Class="SVL.Avalonia.Controls.CrashAnalysisDialog"
+        x:DataType="vm:CrashAnalysisViewModel"
+        Width="840"
+        Height="660"
+        MinWidth="640"
+        MinHeight="460"
+        WindowStartupLocation="CenterOwner"
+        Title="崩溃日志分析"
+        Background="{DynamicResource WindowBackgroundBrush}">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+      <TextBlock Text="崩溃日志分析" FontSize="18" FontWeight="SemiBold"
+                 Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
+      <Button Grid.Column="1" Content="关闭" Click="Close_Click" />
+    </Grid>
+
+    <!-- 概要信息 -->
+    <Border Grid.Row="1" Classes="hintCard" Margin="0,12,0,0" Padding="14,10">
+      <StackPanel Spacing="4">
+        <TextBlock Text="{Binding SummaryText}" FontSize="14" FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding StatusMessage}" FontSize="12" Opacity="0.85"
+                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding VersionText}" FontSize="12" Opacity="0.8"
+                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding SourceLogText}" FontSize="11" Opacity="0.6"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SourceLogText}" />
+      </StackPanel>
+    </Border>
+
+    <!-- 结论列表 -->
+    <Grid Grid.Row="2" Margin="0,12,0,0">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                    IsVisible="{Binding HasFindings}">
+        <ItemsControl ItemsSource="{Binding Findings}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="models:CrashFinding">
+              <Border Classes="hintCard" Margin="0,0,0,8" Padding="12">
+                <StackPanel Spacing="5">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Border Background="{Binding Severity, Converter={x:Static vm:CrashSeverityToBrushConverter.Instance}}"
+                            CornerRadius="4" Padding="6,1" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding SeverityText}" FontSize="11" Foreground="White" FontWeight="SemiBold" />
+                    </Border>
+                    <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                    <Border IsVisible="{Binding HasAttributedMod}"
+                            Background="{DynamicResource AccentBrush}"
+                            CornerRadius="4" Padding="6,1" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding AttributedMod}" FontSize="11"
+                                 Foreground="{DynamicResource TextOnAccentBrush}" />
+                    </Border>
+                  </StackPanel>
+                  <TextBlock Text="{Binding Explanation}" FontSize="13" TextWrapping="Wrap"
+                             Foreground="{DynamicResource TextPrimaryBrush}" />
+                  <TextBlock Text="{Binding Suggestion}" IsVisible="{Binding HasSuggestion}"
+                             FontSize="12" TextWrapping="Wrap" Opacity="0.85"
+                             Foreground="{DynamicResource TextSecondaryBrush}" />
+                  <TextBlock Text="{Binding Excerpt}" IsVisible="{Binding HasExcerpt}"
+                             FontSize="11" TextWrapping="Wrap" Opacity="0.6"
+                             FontFamily="Consolas,Menlo,Monaco,monospace"
+                             Foreground="{DynamicResource TextSecondaryBrush}" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+
+      <TextBlock IsVisible="{Binding !HasFindings}"
+                 Text="未命中已知问题规则。可尝试导入其它日志文件，或将完整日志反馈给相关 Mod 作者。"
+                 FontSize="13" Opacity="0.75" TextWrapping="Wrap"
+                 Foreground="{DynamicResource TextSecondaryBrush}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Grid>
+
+    <!-- 操作栏 -->
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8"
+                HorizontalAlignment="Right" Margin="0,12,0,0">
+      <Button Content="重新分析" Command="{Binding AnalyzeCommand}" />
+      <Button Content="导入日志" Click="ImportLog_Click" />
+      <Button Content="打开日志目录" Click="OpenLogFolder_Click" />
+      <Button Content="复制报告" Click="CopyReport_Click" />
+    </StackPanel>
+  </Grid>
+</Window>

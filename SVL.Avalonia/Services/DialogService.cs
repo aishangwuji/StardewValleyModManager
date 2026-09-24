@@ -940,6 +940,23 @@ public sealed class DialogService
         return await PickSaveFilePathAsync(owner, title, suggestedFileName, fileTypes);
     }
 
+    /// <summary>打开崩溃日志分析对话框（分析 SMAPI 日志，定位 Mod 崩溃原因）。</summary>
+    public async Task ShowCrashAnalysisDialogAsync()
+    {
+        var owner = GetMainWindow();
+        if (owner == null)
+        {
+            return;
+        }
+
+        var dialog = new CrashAnalysisDialog
+        {
+            DataContext = new CrashAnalysisViewModel()
+        };
+
+        await dialog.ShowDialog(owner);
+    }
+
     public async Task<ModProfileRecord?> ShowModProfileManageDialogAsync(
         ModProfileStore profileStore,
         string instanceKey,

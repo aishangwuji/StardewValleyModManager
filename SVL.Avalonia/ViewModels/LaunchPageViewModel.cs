@@ -845,6 +845,18 @@ public partial class LaunchPageViewModel : ObservableObject
         _externalProcessService.TryOpenPath(Directory.Exists(modsPath) ? modsPath : _currentGamePath);
     }
 
+    /// <summary>打开崩溃日志分析对话框（SMAPI 日志位于用户 AppData，与具体实例无关）。</summary>
+    [RelayCommand]
+    private async Task OpenCrashAnalysis()
+    {
+        if (_dialogService is null)
+        {
+            return;
+        }
+
+        await _dialogService.ShowCrashAnalysisDialogAsync();
+    }
+
     /// <summary>获取当前生效的 Mods 目录绝对路径。</summary>
     public string GetCurrentEffectiveModsPath()
     {
