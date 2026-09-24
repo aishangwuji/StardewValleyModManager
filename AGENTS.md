@@ -16,7 +16,7 @@
 | MVVM | CommunityToolkit.Mvvm 8.4 |
 | 解压 | SharpCompress 0.49.1 / SharpZipLib 1.4.2 |
 | 配置 | System.Text.Json |
-| 测试 | MSTest (`SVL.Migration.Tests`，320 通过 / 2 跳过) |
+| 测试 | MSTest (`SVL.Migration.Tests`，333 通过 / 2 跳过) |
 
 ## 目录结构（精简后）
 ```
@@ -36,7 +36,7 @@ SVL/
 │   ├── Abstractions/        # 9接口（ISingleInstance/IPlatformInfo/IGameInstallPathLocator 等）
 │   ├── Services/            # 单实例/路径探测/窗口标题/协议注册
 │   └── IO/ArchiveExtractor.cs + Modpack/ModpackTypeDetector.cs
-├── SVL.Migration.Tests/     # 回归测试（17文件，320通过/2跳过）
+├── SVL.Migration.Tests/     # 回归测试（17文件，333通过/2跳过）
 ├── build.ps1                # 统一打包（Windows zip / macOS dmg）
 ├── scripts/package-avalonia.* # 兼容入口，转发 build.ps1
 ├── PCL/                     # 本地参考源码（Meloong-Git/PCL，已 gitignore，勿提交）
@@ -52,7 +52,7 @@ dotnet --info
 # 开发构建（勿直接 build 整个 sln 的旧 net48 项目，已清理）
 dotnet restore SVL.Avalonia/SVL.Avalonia.csproj
 dotnet build SVL.sln -c Debug                    # 或仅 Avalonia 项目
-dotnet test SVL.Migration.Tests -c Debug         # 320通过/2跳过
+dotnet test SVL.Migration.Tests -c Debug         # 333通过/2跳过
 dotnet run --project SVL.Avalonia -c Debug
 
 # 打包发布（产物 artifacts/SVL_v1.2.0.0_*）
