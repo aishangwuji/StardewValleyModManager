@@ -311,45 +311,48 @@
             </StackPanel>
           </Border>
 
-          <!-- 第一作者卡片 -->
-          <Border Classes="hintCard" IsVisible="{Binding IsAboutTab}">
-            <StackPanel Spacing="8">
-              <StackPanel Orientation="Horizontal" Spacing="6">
-                <Image Source="{Binding AboutCardIconSource, Converter={StaticResource AssetImageConverter}}" Width="14" Height="14" VerticalAlignment="Center" />
-                <TextBlock Text="第一作者" Classes="hintTitle" VerticalAlignment="Center" />
-              </StackPanel>
-              <Grid ColumnDefinitions="Auto,*">
-                <Border Grid.Column="0" Width="56" Height="56" CornerRadius="28" ClipToBounds="True" VerticalAlignment="Center" Margin="0,0,12,0">
-                  <Image Source="avares://SVL.Avalonia/Assets/Icons/author-icon.png" Width="56" Height="56" Stretch="UniformToFill" />
-                </Border>
-                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                  <TextBlock Text="盛夏de背影" FontWeight="SemiBold" FontSize="15" />
-                  <TextBlock Text="mc_shengxia" Opacity="0.7" FontSize="12" />
+          <!-- 作者卡片（两列） -->
+          <Grid ColumnDefinitions="*,*" IsVisible="{Binding IsAboutTab}">
+            <!-- 第一作者卡片 -->
+            <Border Grid.Column="0" Classes="hintCard" Margin="0,0,6,0">
+              <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Image Source="{Binding AboutCardIconSource, Converter={StaticResource AssetImageConverter}}" Width="14" Height="14" VerticalAlignment="Center" />
+                  <TextBlock Text="第一作者" Classes="hintTitle" VerticalAlignment="Center" />
                 </StackPanel>
-              </Grid>
-              <Button Content="原项目地址" Command="{Binding OpenOriginalProjectCommand}" HorizontalAlignment="Left" MinWidth="120" Margin="0,4,0,0" />
-            </StackPanel>
-          </Border>
+                <Grid ColumnDefinitions="Auto,*">
+                  <Border Grid.Column="0" Width="56" Height="56" CornerRadius="28" ClipToBounds="True" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <Image Source="avares://SVL.Avalonia/Assets/Icons/author-icon.png" Width="56" Height="56" Stretch="UniformToFill" />
+                  </Border>
+                  <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="盛夏de背影" FontWeight="SemiBold" FontSize="15" />
+                    <TextBlock Text="mc_shengxia" Opacity="0.7" FontSize="12" />
+                  </StackPanel>
+                </Grid>
+                <Button Content="原项目地址" Command="{Binding OpenOriginalProjectCommand}" HorizontalAlignment="Left" MinWidth="120" Margin="0,4,0,0" />
+              </StackPanel>
+            </Border>
 
-          <!-- 第二作者卡片 -->
-          <Border Classes="hintCard" IsVisible="{Binding IsAboutTab}">
-            <StackPanel Spacing="8">
-              <StackPanel Orientation="Horizontal" Spacing="6">
-                <Image Source="{Binding AboutCardIconSource, Converter={StaticResource AssetImageConverter}}" Width="14" Height="14" VerticalAlignment="Center" />
-                <TextBlock Text="第二作者" Classes="hintTitle" VerticalAlignment="Center" />
-              </StackPanel>
-              <Grid ColumnDefinitions="Auto,*">
-                <Border Grid.Column="0" Width="56" Height="56" CornerRadius="28" ClipToBounds="True" VerticalAlignment="Center" Margin="0,0,12,0">
-                  <Image Source="avares://SVL.Avalonia/Assets/Icons/author-icon.png" Width="56" Height="56" Stretch="UniformToFill" />
-                </Border>
-                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                  <TextBlock Text="观雪" FontWeight="SemiBold" FontSize="15" />
-                  <TextBlock Text="aishangwuji" Opacity="0.7" FontSize="12" />
+            <!-- 第二作者卡片 -->
+            <Border Grid.Column="1" Classes="hintCard" Margin="6,0,0,0">
+              <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Image Source="{Binding AboutCardIconSource, Converter={StaticResource AssetImageConverter}}" Width="14" Height="14" VerticalAlignment="Center" />
+                  <TextBlock Text="第二作者" Classes="hintTitle" VerticalAlignment="Center" />
                 </StackPanel>
-              </Grid>
-              <Button Content="GitHub 主页" Command="{Binding ViewSourceCommand}" HorizontalAlignment="Left" MinWidth="120" Margin="0,4,0,0" />
-            </StackPanel>
-          </Border>
+                <Grid ColumnDefinitions="Auto,*">
+                  <Border Grid.Column="0" Width="56" Height="56" CornerRadius="28" ClipToBounds="True" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <Image Source="avares://SVL.Avalonia/Assets/Icons/author-icon.png" Width="56" Height="56" Stretch="UniformToFill" />
+                  </Border>
+                  <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="观雪" FontWeight="SemiBold" FontSize="15" />
+                    <TextBlock Text="aishangwuji" Opacity="0.7" FontSize="12" />
+                  </StackPanel>
+                </Grid>
+                <Button Content="GitHub 主页" Command="{Binding ViewSourceCommand}" HorizontalAlignment="Left" MinWidth="120" Margin="0,4,0,0" />
+              </StackPanel>
+            </Border>
+          </Grid>
 
           <!-- 启动器信息卡片 -->
           <Border Classes="hintCard" IsVisible="{Binding IsAboutTab}">
