@@ -268,6 +268,8 @@ public partial class MainWindowViewModel : ObservableObject
         // 注入 Mods 路径解析器：用于检测 Mod 是否已安装（扫描 Mods 目录 manifest.json）
         ModDetailsPage.CurrentModsPathResolver = () => DownloadPage.GetCurrentModsPath();
         VersionSettingsPage = new VersionSettingsPageViewModel(_settingsStore, _gameInstallPathLocator, _localizationService, _imageResourceService, dialogService, remoteCatalogService, smapiInstallService, smapiDownloadService, communityLocalizationService);
+        // 启动时后台预热游戏路径缓存：探测含注册表/VDF/文件系统遍历，预热后首次导航即可命中，避免 UI 线程卡顿。
+        VersionSettingsPage.WarmDetectedPathCache();
         // 注入路径列表提供者：SMAPI 安装对话框可从版本选择页面的 Base 路径列表中选择安装目标
         // 参考旧架构 GamePathConfirmDialog.LoadGamePaths：只提供 Base 路径，过滤掉版本隔离子目录
         // 路径列表提供者：供 SMAPI 安装对话框和 Collection 安装流程使用

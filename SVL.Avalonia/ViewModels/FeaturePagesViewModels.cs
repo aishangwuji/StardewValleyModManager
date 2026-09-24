@@ -4184,6 +4184,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private readonly Services.SmapiDownloadService _smapiDownloadService;
     private readonly Services.CommunityLocalizationService _communityLocalizationService;
 
+    // 游戏安装路径探测（注册表 + Steam VDF + 文件系统遍历）较重，
+    // 用短 TTL 缓存避免每次导航到“Mod管理/版本设置”都在 UI 线程重复探测。
+    private readonly Services.DetectedPathCache _detectedPathCache;
+
     [ObservableProperty]
     private bool _isCheckingModUpdates;
 
@@ -5159,8 +5163,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         _smapiInstallService = smapiInstallService;
         _smapiDownloadService = smapiDownloadService;
         _communityLocalizationService = communityLocalizationService;
+        _detectedPathCache = new Services.DetectedPathCache(ProbeDetectedPath);
         _localizationService.LanguageChanged += ApplyLocalizedTexts;
-        _imageResourceService.ResourcesChanged += RefreshInstanceRuntimeInfo;
+        _imageResourceService.ResourcesChanged += () => RefreshInstanceRuntimeInfo();
         ModpackAuthor = Environment.UserName;
 
         ApplyLocalizedTexts();
@@ -5244,7 +5249,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         OverrideSteamLaunchOptions = settings.OverrideSteamLaunchOptions;
         SteamLaunchOptions = settings.SteamLaunchOptions;
 
-        RefreshDetectedPathCore(updateStatus: false);
+        RefreshDetectedPathCore(updateStatus: false, settings: settings);
 
         if (string.IsNullOrWhiteSpace(SteamLaunchOptions))
         {
@@ -13351,20 +13356,21 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     }
 
     [RelayCommand]
-    private void RefreshDetectedPath()
+    private async Task RefreshDetectedPath()
     {
+        // 手动刷新：后台强制探测（缓存随即更新），避免在 UI 线程做注册表/VDF/文件系统探测。
+        Status = "正在探测游戏目录…";
+        await Task.Run(() => _detectedPathCache.Get(forceRefresh: true));
         RefreshDetectedPathCore(updateStatus: true);
     }
 
-    private void RefreshDetectedPathCore(bool updateStatus)
+    private void RefreshDetectedPathCore(bool updateStatus, bool forceRefresh = false, AppUserSettings? settings = null)
     {
-        var gamePath = _gameInstallPathLocator.TryLocateSteamStardewPath()
-            ?? _gameInstallPathLocator.TryLocateGogStardewPath()
-            ?? _gameInstallPathLocator.TryLocateXboxStardewPath();
+        var gamePath = _detectedPathCache.Get(forceRefresh);
         if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
         {
             DetectedGamePath = "未探测到";
-            RefreshInstanceRuntimeInfo();
+            RefreshInstanceRuntimeInfo(settings);
             if (updateStatus)
             {
                 Status = "未找到游戏目录，请先在实例页配置路径";
@@ -13373,11 +13379,23 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         DetectedGamePath = gamePath;
-        RefreshInstanceRuntimeInfo();
+        RefreshInstanceRuntimeInfo(settings);
         if (updateStatus)
         {
             Status = $"已探测到路径（{DateTime.Now:HH:mm:ss}）";
         }
+    }
+
+    /// <summary>执行一次真实的游戏安装路径探测（注册表 + Steam VDF + 文件系统）。</summary>
+    private string? ProbeDetectedPath() =>
+        _gameInstallPathLocator.TryLocateSteamStardewPath()
+        ?? _gameInstallPathLocator.TryLocateGogStardewPath()
+        ?? _gameInstallPathLocator.TryLocateXboxStardewPath();
+
+    /// <summary>启动时后台预热路径缓存，使首次导航即可命中，避免 UI 线程阻塞。</summary>
+    public void WarmDetectedPathCache()
+    {
+        _ = Task.Run(() => _detectedPathCache.Get(forceRefresh: true));
     }
 
     [RelayCommand]
@@ -13397,9 +13415,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         NotifyInstanceContextChanged();
     }
 
-    private void RefreshInstanceRuntimeInfo()
+    private void RefreshInstanceRuntimeInfo(AppUserSettings? settings = null)
     {
-        var settings = _settingsStore.Load();
+        settings ??= _settingsStore.Load();
         var preferredPath = settings.PreferredInstancePath;
         var path = !string.IsNullOrWhiteSpace(preferredPath) && Directory.Exists(preferredPath)
             ? preferredPath
