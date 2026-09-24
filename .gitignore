@@ -82,6 +82,7 @@ nul
 # ----- Submodules / external source (not distributed) -----
 SMAPI/
 PCL2-CE/
+PCL/
 
 # ----- Misc generated / stale files -----
 DesktopSVLsmapireleases.json
