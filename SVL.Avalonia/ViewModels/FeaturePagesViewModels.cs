@@ -4228,6 +4228,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private CancellationTokenSource? _modsLoadCts;
     private Task? _modsLoadTask;
 
+    // Mods 目录 mtime 失效：目录未变化时跳过重扫（manifest 解析 + 集合重建）。
+    // 在 UI 线程写、后台扫描线程读，标记 volatile 保证可见性；成对读取即便撕裂也只会导致多扫一次。
+    private volatile string _lastModsSignature = string.Empty;
+    private volatile string _lastModsSignaturePath = string.Empty;
+    private volatile bool _lastModsScanSucceeded;
+
     /// <summary>当前 Mod 加载任务（供测试等待，避免异步后断言竞态）。</summary>
     public Task? CurrentModsLoadTask => _modsLoadTask;
 
@@ -7448,7 +7454,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         RefreshModManageHint();
     }
 
-    private async Task ReloadModsAsync()
+    private async Task ReloadModsAsync(bool forceReload)
     {
         var generation = Interlocked.Increment(ref _modsLoadGeneration);
         _modsLoadCts?.Cancel();
@@ -7521,14 +7527,24 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
 
         ModScanSnapshot? snapshot = null;
+        var signature = string.Empty;
         var hasDispatcher = global::Avalonia.Threading.Dispatcher.UIThread != null;
         // 无 Dispatcher 的单元测试环境直接同步执行，避免测试竞态
         if (!hasDispatcher)
         {
-            snapshot = BuildModsSnapshot(modsPath, CancellationToken.None);
+            (snapshot, signature) = BuildModsSnapshotOrSkip(modsPath, forceReload, CancellationToken.None);
             if (generation == _modsLoadGeneration && !token.IsCancellationRequested)
             {
-                ApplyModsSnapshot(snapshot);
+                if (snapshot is null)
+                {
+                    Status = "Mod 列表无变化";
+                }
+                else
+                {
+                    ApplyModsSnapshot(snapshot);
+                    RememberModsScan(modsPath, signature);
+                }
+
                 IsLoadingMods = false;
             }
 
@@ -7537,7 +7553,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         try
         {
-            snapshot = await Task.Run(() => BuildModsSnapshot(modsPath, token), token);
+            (snapshot, signature) = await Task.Run(
+                () => BuildModsSnapshotOrSkip(modsPath, forceReload, token), token);
         }
         catch (OperationCanceledException)
         {
@@ -7566,8 +7583,31 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             return;
         }
 
-        if (token.IsCancellationRequested || generation != _modsLoadGeneration || snapshot == null)
+        if (token.IsCancellationRequested || generation != _modsLoadGeneration)
         {
+            return;
+        }
+
+        if (snapshot is null)
+        {
+            // Mods 目录自上次扫描后未变化：跳过重扫与集合重建，避免无谓的 UI 刷新。
+            void ApplySkipOnUi()
+            {
+                if (generation != _modsLoadGeneration || token.IsCancellationRequested) return;
+                Status = "Mod 列表无变化";
+                IsLoadingMods = false;
+            }
+
+            var skipDispatcher = global::Avalonia.Threading.Dispatcher.UIThread;
+            if (skipDispatcher != null && !skipDispatcher.CheckAccess())
+            {
+                await skipDispatcher.InvokeAsync(ApplySkipOnUi);
+            }
+            else
+            {
+                ApplySkipOnUi();
+            }
+
             return;
         }
 
@@ -7575,6 +7615,7 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         {
             if (generation != _modsLoadGeneration || token.IsCancellationRequested) return;
             ApplyModsSnapshot(snapshot);
+            RememberModsScan(modsPath, signature);
             IsLoadingMods = false;
         }
 
@@ -7589,17 +7630,53 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         }
     }
 
+    /// <summary>内部重载：Mods 目录未变化时跳过重扫（非强制）。</summary>
+    private void ReloadMods() => StartModsReload(forceReload: false);
+
+    /// <summary>工具栏“刷新列表”：用户显式刷新，强制重扫。</summary>
     [RelayCommand]
-    private void ReloadMods()
+    private void RefreshModsList() => StartModsReload(forceReload: true);
+
+    private void StartModsReload(bool forceReload)
     {
         // Fire-and-forget with session token 隔离；同步返回保证导航不阻塞
-        var task = ReloadModsAsync();
+        var task = ReloadModsAsync(forceReload);
         _modsLoadTask = task;
         // 同步上下文无 Dispatcher 时（单元测试）阻塞等待以保持原有同步语义，避免测试竞态
         if (global::Avalonia.Threading.Dispatcher.UIThread == null)
         {
             task.GetAwaiter().GetResult();
         }
+    }
+
+    /// <summary>
+    /// 计算 Mods 目录签名；若目录自上次成功扫描后未变化且非强制刷新，返回 null 快照以跳过重扫。
+    /// 目录遍历与 manifest 解析均为 IO，调用方应确保在后台线程执行。
+    /// </summary>
+    private (ModScanSnapshot? Snapshot, string Signature) BuildModsSnapshotOrSkip(
+        string modsPath,
+        bool forceReload,
+        CancellationToken token)
+    {
+        var signature = Services.ModsFolderSignature.Compute(modsPath);
+        if (!forceReload &&
+            signature.Length > 0 &&
+            _lastModsScanSucceeded &&
+            string.Equals(signature, _lastModsSignature, StringComparison.Ordinal) &&
+            string.Equals(modsPath, _lastModsSignaturePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, signature);
+        }
+
+        return (BuildModsSnapshot(modsPath, token), signature);
+    }
+
+    /// <summary>记录一次成功扫描的目录签名，供下次判断是否需要重扫。</summary>
+    private void RememberModsScan(string modsPath, string signature)
+    {
+        _lastModsSignature = signature;
+        _lastModsSignaturePath = modsPath;
+        _lastModsScanSucceeded = true;
     }
 
     private void ReloadExportModItems()

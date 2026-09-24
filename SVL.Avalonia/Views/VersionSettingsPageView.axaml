@@ -591,14 +591,14 @@
                     <Button Classes="toolbarAction" Content="{Binding CheckLocalizationText}" Command="{Binding CheckAllModsLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
                     <Button Classes="toolbarAction" Content="{Binding RefreshLocalizationText}" Command="{Binding RefreshSelectedLocalizationCommand}" IsEnabled="{Binding IsCheckingLocalization, Converter={x:Static BoolConverters.Not}}" />
                     <Button Classes="toolbarAction" Content="{Binding SelectAllText}" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="{Binding ReloadModsButtonText}" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="{Binding ReloadModsButtonText}" Command="{Binding RefreshModsListCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
                     <Button Classes="toolbarAction" Width="34" Padding="0" Content="+" ToolTip.Tip="{Binding InstallTipText, RelativeSource={RelativeSource AncestorType=UserControl}}" Command="{Binding InstallModFromLocalCommand}" />
                   </WrapPanel>
 
                   <WrapPanel IsVisible="{Binding IsBackupTab}">
                     <Button Classes="toolbarAction" Content="{Binding ToolbarOpenFolderText}" Command="{Binding OpenBackupFolderCommand}" />
                     <Button Classes="toolbarAction" Content="{Binding SelectAllText}" Command="{Binding ToggleAllSelectionCommand}" />
-                    <Button Classes="toolbarAction" Content="{Binding ReloadModsButtonText}" Command="{Binding ReloadModsCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
+                    <Button Classes="toolbarAction" Content="{Binding ReloadModsButtonText}" Command="{Binding RefreshModsListCommand}" IsEnabled="{Binding IsLoadingMods, Converter={x:Static BoolConverters.Not}}" />
                   </WrapPanel>
                 </StackPanel>
               </Border>
