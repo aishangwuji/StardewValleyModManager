@@ -246,6 +246,20 @@ public class SmapiCrashAnalyzerTests
         Assert.AreEqual(CrashSeverity.Critical, result.HighestSeverity);
     }
 
+    [TestMethod]
+    public void AnalyzeText_WithLocalizer_ShouldResolveLocalizedText()
+    {
+        var log = Header +
+                  "\n[14:32:13 ERROR SMAPI] - Some Mod because it needs the 'Foo.Bar' mod, which isn't installed.";
+
+        var result = SmapiCrashAnalyzer.AnalyzeText(log, null, null, null, key => $"<{key}>");
+
+        var finding = result.Findings.First(f => f.RuleId == "missing-dependency");
+        StringAssert.Contains(finding.Title, "<Crash.Rule.missing-dependency.Title>");
+        StringAssert.Contains(finding.Explanation, "<Crash.Rule.missing-dependency.Explain>");
+        StringAssert.Contains(finding.SeverityLabel, "<Crash.Severity.Critical>");
+    }
+
     // ================================================================
     // 定位器
     // ================================================================

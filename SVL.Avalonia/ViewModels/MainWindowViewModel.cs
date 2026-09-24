@@ -206,7 +206,7 @@ public partial class MainWindowViewModel : ObservableObject
         ApplyLocalizedTexts();
         ApplyImageResources();
 
-        var dialogService = new DialogService();
+        var dialogService = new DialogService(_localizationService);
         _dialogService = dialogService;
         var nexusAuthService = new NexusAuthService();
         var nexusOAuthService = new NexusOAuthService();

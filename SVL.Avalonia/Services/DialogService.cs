@@ -24,6 +24,13 @@ public enum ModpackFailureDialogAction
 
 public sealed class DialogService
 {
+    private readonly LocalizationService? _localizationService;
+
+    public DialogService(LocalizationService? localizationService = null)
+    {
+        _localizationService = localizationService;
+    }
+
     private static Window? GetMainWindow()
     {
         if (global::Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -951,7 +958,7 @@ public sealed class DialogService
 
         var dialog = new CrashAnalysisDialog
         {
-            DataContext = new CrashAnalysisViewModel()
+            DataContext = new CrashAnalysisViewModel(_localizationService)
         };
 
         await dialog.ShowDialog(owner);

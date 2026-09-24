@@ -52,12 +52,17 @@ public enum CrashAnalysisStatus
 }
 
 /// <summary>单条分析结论：一条规则命中，或一次堆栈归因结果。</summary>
+/// <remarks>
+/// Title/Explanation/Suggestion/SeverityLabel 均由分析器按传入的本地化函数解析后写入，
+/// 模型本身不持有语言逻辑，便于在无 UI 场景下复用。
+/// </remarks>
 public sealed record CrashFinding(
     CrashSeverity Severity,
     string RuleId,
     string Title,
     string Explanation,
     string Suggestion,
+    string SeverityLabel,
     string? AttributedMod = null,
     string? Excerpt = null)
 {
@@ -66,14 +71,6 @@ public sealed record CrashFinding(
     public bool HasAttributedMod => !string.IsNullOrWhiteSpace(AttributedMod);
 
     public bool HasExcerpt => !string.IsNullOrWhiteSpace(Excerpt);
-
-    public string SeverityText => Severity switch
-    {
-        CrashSeverity.Critical => "致命",
-        CrashSeverity.Error => "错误",
-        CrashSeverity.Warning => "警告",
-        _ => "提示"
-    };
 }
 
 /// <summary>已安装 Mod 的精简身份，用于把堆栈/日志文本归因到具体 Mod。</summary>
