@@ -1,19 +1,39 @@
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
+using SVL.Avalonia.Controls;
 using SVL.Avalonia.Services;
 using SVL.Avalonia.ViewModels;
 using SVL.Core.Platform.Modpack;
+using System;
+using System.ComponentModel;
 using System.Linq;
+using System.Threading;
 
 namespace SVL.Avalonia;
 
 public partial class MainWindow : Window
 {
+    /// <summary>页面切换淡入动画：160ms，避免硬切带来的突兀感。</summary>
+    private static readonly Animation PageFadeIn = new()
+    {
+        Duration = TimeSpan.FromMilliseconds(160),
+        Easing = new CubicEaseOut(),
+        FillMode = FillMode.Forward,
+        Children =
+        {
+            new KeyFrame { Cue = new Cue(0d), Setters = { new Setter(Visual.OpacityProperty, 0d) } },
+            new KeyFrame { Cue = new Cue(1d), Setters = { new Setter(Visual.OpacityProperty, 1d) } }
+        }
+    };
+
     /// <summary>本窗口关联的浮窗通知服务实例。静态门面 NotificationService.Show 委托到此实例。</summary>
     public NotificationService Notifications { get; }
 
@@ -57,6 +77,10 @@ public partial class MainWindow : Window
         NotificationContainer.ItemsSource = Notifications.ActiveNotifications;
         NotificationService.RegisterHost(Notifications);
 
+        // 页面视图缓存：ContentControl 默认每次切换都会重建视图，重页面切换卡顿。
+        // 用按 ViewModel 实例缓存的模板替换默认行为，仅挂载/卸载已构建的视图。
+        PageHost.ContentTemplate = new CachingPageTemplate(DataTemplates);
+
         // DataContext 由 App 的对象初始化器在构造函数后设置，故用事件订阅置顶请求。
         DataContextChanged += OnDataContextChanged;
     }
@@ -87,6 +111,16 @@ public partial class MainWindow : Window
         if (DataContext is ViewModels.MainWindowViewModel vm)
         {
             vm.BringToFrontRequested += OnBringToFrontRequested;
+            vm.PropertyChanged += OnViewModelPropertyChanged;
+        }
+    }
+
+    /// <summary>页面切换后播放淡入动画（视图本身已由 CachingPageTemplate 复用，不重建）。</summary>
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.Equals(e.PropertyName, nameof(MainWindowViewModel.CurrentPageViewModel), StringComparison.Ordinal))
+        {
+            _ = PageFadeIn.RunAsync(PageHost, CancellationToken.None);
         }
     }
 

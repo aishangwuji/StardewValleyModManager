@@ -168,7 +168,7 @@
 
     <Grid Grid.Row="1" Margin="16">
       <Border Classes="panel">
-        <ContentControl Content="{Binding CurrentPageViewModel}" />
+        <ContentControl x:Name="PageHost" Content="{Binding CurrentPageViewModel}" />
       </Border>
 
       <controls:DownloadFloatingButton
