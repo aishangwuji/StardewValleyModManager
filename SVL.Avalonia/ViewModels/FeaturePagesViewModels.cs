@@ -4234,6 +4234,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
     private volatile string _lastModsSignaturePath = string.Empty;
     private volatile bool _lastModsScanSucceeded;
 
+    // 批量填充 Mods 时抑制逐条通知，改为一次性聚合通知，避免 O(n²)。
+    private bool _suppressModsCollectionChanged;
+
+    // 导出列表后台构建的 generation，用于隔离过期回调。
+    private int _exportItemsGeneration;
+
     /// <summary>当前 Mod 加载任务（供测试等待，避免异步后断言竞态）。</summary>
     public Task? CurrentModsLoadTask => _modsLoadTask;
 
@@ -5178,20 +5184,12 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
         Mods.CollectionChanged += (_, _) =>
         {
-            OnPropertyChanged(nameof(HasMods));
-            OnPropertyChanged(nameof(HasFilteredMods));
-            OnPropertyChanged(nameof(ShowEmptyModsHint));
-            OnPropertyChanged(nameof(ModsSummary));
-            OnPropertyChanged(nameof(EnabledModsCount));
-            OnPropertyChanged(nameof(DisabledModsCount));
-            OnPropertyChanged(nameof(UpdatableModsCount));
-            OnPropertyChanged(nameof(ModsTabText));
-            OnPropertyChanged(nameof(AllFilterText));
-            OnPropertyChanged(nameof(EnabledFilterText));
-            OnPropertyChanged(nameof(DisabledFilterText));
-            OnPropertyChanged(nameof(UpdatableFilterText));
-            UpdateSelectionState();
-            OnPropertyChanged(nameof(CanDetectModConflicts));
+            if (_suppressModsCollectionChanged)
+            {
+                return;
+            }
+
+            NotifyModsAggregateChanged();
         };
 
         ModConflicts.CollectionChanged += (_, _) =>
@@ -5524,9 +5522,9 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     public void SwitchToExport()
     {
+        // 导出列表的刷新由 OnSelectedSectionChanged("Export") 统一触发，避免重复构建。
         SelectedSection = "Export";
         IsModManageSection = false;
-        ReloadExportModItems();
         Status = "当前处于整合包管理";
     }
 
@@ -5861,6 +5859,25 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             OnPropertyChanged(nameof(CanDisableSelectedMod));
             RefreshModManageHint();
         }
+    }
+
+    /// <summary>一次性发出 Mods 集合的聚合通知（批量填充后调用，替代逐条通知）。</summary>
+    private void NotifyModsAggregateChanged()
+    {
+        OnPropertyChanged(nameof(HasMods));
+        OnPropertyChanged(nameof(HasFilteredMods));
+        OnPropertyChanged(nameof(ShowEmptyModsHint));
+        OnPropertyChanged(nameof(ModsSummary));
+        OnPropertyChanged(nameof(EnabledModsCount));
+        OnPropertyChanged(nameof(DisabledModsCount));
+        OnPropertyChanged(nameof(UpdatableModsCount));
+        OnPropertyChanged(nameof(ModsTabText));
+        OnPropertyChanged(nameof(AllFilterText));
+        OnPropertyChanged(nameof(EnabledFilterText));
+        OnPropertyChanged(nameof(DisabledFilterText));
+        OnPropertyChanged(nameof(UpdatableFilterText));
+        UpdateSelectionState();
+        OnPropertyChanged(nameof(CanDetectModConflicts));
     }
 
     private bool TryGetSelectedModForAction(string actionText, out ModManageItem target)
@@ -7434,11 +7451,23 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         TotalPages = 1;
         TotalFilteredCount = 0;
 
-        foreach (var item in snapshot.Mods)
+        // 批量填充时抑制逐条通知（否则每次 Add 都触发 UpdateSelectionState，形成 O(n²)），
+        // 填充完成后统一发一次聚合通知。
+        _suppressModsCollectionChanged = true;
+        try
         {
-            AttachModItem(item);
-            Mods.Add(item);
+            foreach (var item in snapshot.Mods)
+            {
+                AttachModItem(item);
+                Mods.Add(item);
+            }
         }
+        finally
+        {
+            _suppressModsCollectionChanged = false;
+        }
+
+        NotifyModsAggregateChanged();
 
         BuildModHierarchy(snapshot.ModsPath);
         BuildDisplayDependenciesForMods(snapshot.DependencyEntriesByPath);
@@ -7446,7 +7475,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
         LoadAndApplyTags(snapshot.ModsPath);
         LoadBackups(snapshot.ModsPath);
         ApplyTagFilter();
-        SyncExportModItemsFromCurrentMods();
+        // 导出列表改为进入“整合包/导出”分栏时惰性构建（含逐 Mod 文件 IO），
+        // 不再随每次 Mod 列表加载同步重建。
 
         Status = Mods.Count == 0
             ? "当前实例 Mods 目录为空"
@@ -7681,6 +7711,15 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
 
     private void ReloadExportModItems()
     {
+        _ = ReloadExportModItemsAsync();
+    }
+
+    /// <summary>
+    /// 重建导出列表。逐个读取 svl-source.json 属文件 IO，放到后台线程执行，
+    /// 避免切到“整合包/导出”分栏时阻塞 UI。用 generation 隔离过期回调。
+    /// </summary>
+    private async Task ReloadExportModItemsAsync()
+    {
         if (Mods == null || ExportModItems == null)
         {
             return;
@@ -7691,23 +7730,72 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             ReloadMods();
         }
 
-        SyncExportModItemsFromCurrentMods();
-    }
-
-    private void SyncExportModItemsFromCurrentMods()
-    {
-        foreach (var existing in ExportModItems)
-        {
-            DetachExportModItem(existing);
-        }
-
-        ExportModItems.Clear();
-
+        var generation = Interlocked.Increment(ref _exportItemsGeneration);
         var currentModsPath = TryGetCurrentModsPath(out var resolvedModsPath)
             ? resolvedModsPath
             : string.Empty;
+        var modsSnapshot = Mods.ToList();
 
-        var sourceMods = Mods
+        List<ExportModSelectionItem> items;
+        try
+        {
+            items = global::Avalonia.Threading.Dispatcher.UIThread != null
+                ? await Task.Run(() => BuildExportItems(modsSnapshot, currentModsPath))
+                : BuildExportItems(modsSnapshot, currentModsPath);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[VersionSettings] 构建导出列表失败: {ex.Message}");
+            return;
+        }
+
+        if (generation != _exportItemsGeneration)
+        {
+            return;
+        }
+
+        void ApplyOnUi()
+        {
+            if (generation != _exportItemsGeneration) return;
+
+            foreach (var existing in ExportModItems)
+            {
+                DetachExportModItem(existing);
+            }
+
+            ExportModItems.Clear();
+            foreach (var item in items)
+            {
+                AttachExportModItem(item);
+                ExportModItems.Add(item);
+            }
+
+            ExportStatusMessage = ExportModItems.Count == 0
+                ? "当前实例没有可导出的 Mod"
+                : $"导出列表已准备，共 {ExportModItems.Count} 个 Mod";
+            OnPropertyChanged(nameof(SelectedExportModCount));
+            OnPropertyChanged(nameof(TotalExportModCount));
+            OnPropertyChanged(nameof(CanStartExport));
+            OnPropertyChanged(nameof(ExportProgressText));
+        }
+
+        var dispatcher = global::Avalonia.Threading.Dispatcher.UIThread;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            await dispatcher.InvokeAsync(ApplyOnUi);
+        }
+        else
+        {
+            ApplyOnUi();
+        }
+    }
+
+    /// <summary>
+    /// 构建导出列表（纯计算 + 文件 IO，不触碰 UI 集合），可在后台线程调用。
+    /// </summary>
+    private List<ExportModSelectionItem> BuildExportItems(IReadOnlyList<ModManageItem> mods, string currentModsPath)
+    {
+        var sourceMods = mods
             .Where(mod => !mod.IsBackupItem)
             // 复合 Mod 的父级可能只是 svl-source.json 生成的分组头，没有
             // manifest.json；真正可导入的内容是其子 Mod，不能把分组头当成独立 Mod 导出。
@@ -7716,6 +7804,8 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
             .Where(mod => !IsSmapiBundledModForExport(mod.UniqueId, mod.DirectoryName))
             .OrderBy(mod => mod.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        var items = new List<ExportModSelectionItem>(sourceMods.Count);
 
         foreach (var mod in sourceMods)
         {
@@ -7807,18 +7897,10 @@ public sealed partial class VersionSettingsPageViewModel : FeaturePageViewModelB
                     .ToList()
             };
 
-            AttachExportModItem(exportItem);
-            ExportModItems.Add(exportItem);
+            items.Add(exportItem);
         }
 
-        ExportStatusMessage = ExportModItems.Count == 0
-            ? "当前实例没有可导出的 Mod"
-            : $"导出列表已准备，共 {ExportModItems.Count} 个 Mod";
-
-        OnPropertyChanged(nameof(SelectedExportModCount));
-        OnPropertyChanged(nameof(TotalExportModCount));
-        OnPropertyChanged(nameof(CanStartExport));
-        OnPropertyChanged(nameof(ExportProgressText));
+        return items;
     }
 
     private static ExportModParentReference? BuildExportParentReference(
