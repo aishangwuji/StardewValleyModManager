@@ -93,5 +93,4 @@ dotnet run --project SVL.Avalonia -c Debug
 
 ## 参考项目
 - **PCL（Plain Craft Launcher）**：https://github.com/Meloong-Git/PCL ，VB.NET/WPF 的 Minecraft 启动器，本地源码位于 `PCL/`（已 gitignore，仅供架构借鉴，勿提交或直接照搬）。
-- **可借鉴点**：统一 Loader 任务引擎（可取消/加权进度/文件夹 mtime 失效）、分段多源可续传下载、崩溃日志分层归因、模组包格式嗅探与适配器、CurseForge+Modrinth 统一资源抽象。
 - **勿反向照搬**：PCL 无 i18n、无下载队列持久化、配置非原子写；其 Java 版本矩阵对星露谷无意义。这些方面 SVL 现状更强，保持即可。
