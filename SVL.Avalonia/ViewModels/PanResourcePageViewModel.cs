@@ -57,7 +57,6 @@ public sealed partial class PanResourcePageViewModel : ObservableObject
 
     public string Title => "网盘资源";
 
-    public string Description => "北行搜高速直通 · 收录精选模组、热门整合包、SMAPI运行库与游戏本体，免登录高速直达。";
 
     /// <summary>搜索过滤关键词。</summary>
     [ObservableProperty]
@@ -103,11 +102,11 @@ public sealed partial class PanResourcePageViewModel : ObservableObject
     private void InitDefaultCategories()
     {
         Categories.Clear();
-        Categories.Add(new PanCategoryOption("all", "全部", "🌟", 0, isSelected: true));
-        Categories.Add(new PanCategoryOption("mods", "精选模组", "🧩", 0));
-        Categories.Add(new PanCategoryOption("modpacks", "整合包", "📦", 0));
-        Categories.Add(new PanCategoryOption("smapi", "SMAPI运行库", "⚙️", 0));
-        Categories.Add(new PanCategoryOption("game", "游戏本体", "🎮", 0));
+        Categories.Add(new PanCategoryOption("all", "全部", "", 0, isSelected: true));
+        Categories.Add(new PanCategoryOption("mods", "精选模组", "", 0));
+        Categories.Add(new PanCategoryOption("modpacks", "整合包", "", 0));
+        Categories.Add(new PanCategoryOption("smapi", "SMAPI运行库", "", 0));
+        Categories.Add(new PanCategoryOption("game", "游戏本体", "", 0));
     }
 
     partial void OnSelectedCategoryChanged(string value)

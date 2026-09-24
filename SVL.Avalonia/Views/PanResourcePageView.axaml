@@ -68,15 +68,11 @@
       <!-- 1. 顶部商店横幅 (Store Hero Header) -->
       <Border Classes="heroCard" Background="{DynamicResource PanelBackgroundBrush}" Padding="20,16">
         <Grid ColumnDefinitions="*,Auto">
-          <StackPanel Grid.Column="0" Spacing="6" VerticalAlignment="Center">
-            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-              <TextBlock Text="🛒" FontSize="24" VerticalAlignment="Center" />
-              <TextBlock Text="星露谷网盘资源集市" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
-              <Border Background="{DynamicResource AccentBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center" Margin="6,0,0,0">
-                <TextBlock Text="北行高速源" FontSize="11" Foreground="{DynamicResource TextOnAccentBrush}" FontWeight="SemiBold" />
-              </Border>
-            </StackPanel>
-            <TextBlock Text="{Binding Description}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+          <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Text="星露谷网盘资源集市" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
+            <Border Background="{DynamicResource AccentBrush}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center" Margin="6,0,0,0">
+              <TextBlock Text="北行高速源" FontSize="11" Foreground="{DynamicResource TextOnAccentBrush}" FontWeight="SemiBold" />
+            </Border>
           </StackPanel>
 
           <!-- 右侧：搜索与刷新 -->
@@ -132,7 +128,7 @@
               BorderBrush="{DynamicResource BorderBrush}"
               BorderThickness="1" CornerRadius="8" Padding="14,8">
         <StackPanel Orientation="Horizontal" Spacing="8">
-          <TextBlock Text="🔄" FontSize="14" VerticalAlignment="Center" />
+          <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/RefreshCw.png" Width="14" Height="14" VerticalAlignment="Center" />
           <TextBlock Text="{Binding StatusText}" FontSize="12" Opacity="0.85" VerticalAlignment="Center" />
         </StackPanel>
       </Border>
@@ -194,7 +190,7 @@
                     <!-- 右上角：热门推荐角标 -->
                     <Border IsVisible="{Binding IsRecommended}" VerticalAlignment="Top" HorizontalAlignment="Right"
                             Margin="0,8,8,0" Background="#E0C0392B" CornerRadius="4" Padding="6,2">
-                      <TextBlock Text="🔥 热门推荐" FontSize="11" Foreground="White" FontWeight="Bold" />
+                      <TextBlock Text="热门推荐" FontSize="11" Foreground="White" FontWeight="Bold" />
                     </Border>
 
                     <!-- 左下角：分类标签 -->
@@ -266,7 +262,7 @@
       <!-- 5. 空态展示 (Empty State) -->
       <Border IsVisible="{Binding IsEmpty}" Classes="hintCard" Padding="36,28" Margin="0,20,0,0" HorizontalAlignment="Center">
         <StackPanel Spacing="10" HorizontalAlignment="Center">
-          <TextBlock Text="📦" FontSize="36" HorizontalAlignment="Center" />
+          <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/Inbox.png" Width="40" Height="40" HorizontalAlignment="Center" Opacity="0.4" />
           <TextBlock Text="未检索到符合条件的网盘资源" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" />
           <TextBlock Text="可以尝试切换顶部分类或重置搜索词" FontSize="12" Opacity="0.7" HorizontalAlignment="Center" />
           <Button Content="重置筛选" Command="{Binding ResetFilterCommand}"
