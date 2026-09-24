@@ -812,8 +812,16 @@
                            Margin="0"
                            Background="Transparent"
                            BorderThickness="0"
-                           ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                           MaxHeight="520"
+                           ScrollViewer.VerticalScrollBarVisibility="Auto"
                            ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <!-- 显式虚拟化：外层页面 ScrollViewer 会给出无限高度，必须给列表一个有限高度
+                         （MaxHeight）并让其自身滚动，VirtualizingStackPanel 才会按视口回收条目。 -->
+                    <ListBox.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                      </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
                     <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:ModManageItem">
                         <StackPanel>
@@ -1285,6 +1293,12 @@
                             </ScrollViewer>
                           </ControlTemplate>
                         </ItemsControl.Template>
+                        <!-- 高度已由 MaxHeight=260 限定，显式虚拟化避免大量 Mod 时一次性生成全部条目。 -->
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                          </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                           <DataTemplate>
                             <Grid ColumnDefinitions="30,*,110" Margin="2,2,2,4">
