@@ -116,21 +116,6 @@ public partial class LaunchPageViewModel : ObservableObject
     private string _safeLaunchState = string.Empty;
 
     [ObservableProperty]
-    private string _instanceInfoLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _launchModeLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _safeLaunchLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _statusLabel = string.Empty;
-
-    [ObservableProperty]
-    private string _refreshButtonText = string.Empty;
-
-    [ObservableProperty]
     private string _versionSelectButtonText = string.Empty;
 
     [ObservableProperty]
@@ -144,12 +129,6 @@ public partial class LaunchPageViewModel : ObservableObject
 
     [ObservableProperty]
     private string _getStartedTitle = string.Empty;
-
-    [ObservableProperty]
-    private string _statusHeadline = string.Empty;
-
-    [ObservableProperty]
-    private string _statusSubline = string.Empty;
 
     [ObservableProperty]
     private string _brandText = string.Empty;
@@ -194,16 +173,6 @@ public partial class LaunchPageViewModel : ObservableObject
 
     public bool CanOpenVersionSettings => HasInstances;
 
-    partial void OnActionStatusChanged(string value)
-    {
-        RefreshStatusBanner();
-    }
-
-    partial void OnIsLaunchingChanged(bool value)
-    {
-        RefreshStatusBanner();
-    }
-
     partial void OnEnableSafeLaunchChanged(bool value)
     {
         SafeLaunchState = GetSafeLaunchStateText(value);
@@ -212,7 +181,6 @@ public partial class LaunchPageViewModel : ObservableObject
     partial void OnShowModManageButtonChanged(bool value)
     {
         NotifyInstanceFlavorIconVisibilityChanged();
-        RefreshStatusBanner();
     }
 
     partial void OnHasInstancesChanged(bool value)
@@ -221,7 +189,6 @@ public partial class LaunchPageViewModel : ObservableObject
         OnPropertyChanged(nameof(CanOpenVersionSettings));
         NotifyInstanceFlavorIconVisibilityChanged();
         NotifyModProfileSectionStateChanged();
-        RefreshStatusBanner();
     }
 
     public LaunchPageViewModel(
@@ -246,7 +213,6 @@ public partial class LaunchPageViewModel : ObservableObject
         RefreshLaunchPreferencesFromSettings();
         RefreshInstanceFromLocalEnvironment();
         NotifyInstanceFlavorIconVisibilityChanged();
-        RefreshStatusBanner();
     }
 
     private void NotifyInstanceFlavorIconVisibilityChanged()
@@ -256,28 +222,6 @@ public partial class LaunchPageViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowVanillaInstanceIcon));
     }
 
-    private void RefreshStatusBanner()
-    {
-        if (IsLaunching)
-        {
-            StatusHeadline = _localizationService.Get("Launch.Status.StartingTitle");
-            StatusSubline = _localizationService.Get("Launch.Status.StartingSubtitle");
-            return;
-        }
-
-        if (!HasInstances)
-        {
-            StatusHeadline = _localizationService.Get("Launch.Status.NoInstanceTitle");
-            StatusSubline = _localizationService.Get("Launch.Status.NoInstanceSubtitle");
-            return;
-        }
-
-        StatusHeadline = _localizationService.Get("Launch.Status.EnvironmentTitle");
-        StatusSubline = _selectedIsSmapi
-            ? _localizationService.Get("Launch.Status.ReadySmapiSubtitle")
-            : _localizationService.Get("Launch.Status.ReadyVanillaSubtitle");
-    }
-
     private void NotifyModProfileSectionStateChanged()
     {
         OnPropertyChanged(nameof(ShowModProfileSection));
@@ -285,7 +229,6 @@ public partial class LaunchPageViewModel : ObservableObject
         OnPropertyChanged(nameof(IsVanillaLaunchNoticeVisible));
         OnPropertyChanged(nameof(CanSwitchToSmapi));
         UpdateVanillaNoticeTexts();
-        RefreshStatusBanner();
     }
 
     private void UpdateVanillaNoticeTexts()
@@ -309,16 +252,11 @@ public partial class LaunchPageViewModel : ObservableObject
         var settings = _settingsStore.Load();
         settings.PreferredLaunchMode = "SMAPI";
         _settingsStore.Save(settings);
-        RefreshFromSettingsAndEnvironment(updateStatus: false);
+        RefreshFromSettingsAndEnvironment();
     }
 
     private void ApplyLocalizedTexts()
     {
-        InstanceInfoLabel = Text("Launch.InstanceInfo");
-        LaunchModeLabel = Text("Launch.Mode");
-        SafeLaunchLabel = Text("Launch.SafeLaunch");
-        StatusLabel = Text("Launch.Status");
-        RefreshButtonText = Text("Launch.Refresh");
         VersionSelectButtonText = Text("Launch.VersionSelect");
         ModManageButtonText = Text("Launch.ModManage");
         VersionSettingsButtonText = Text("Launch.VersionSettings");
@@ -338,23 +276,12 @@ public partial class LaunchPageViewModel : ObservableObject
         PreferredLaunchMode = GetLaunchModeDisplayText(_preferredLaunchModeToken);
         SafeLaunchState = GetSafeLaunchStateText(EnableSafeLaunch);
         UpdateVanillaNoticeTexts();
-        RefreshStatusBanner();
     }
 
-    [RelayCommand]
-    private void RefreshLocalGamePath()
-    {
-        RefreshFromSettingsAndEnvironment(true);
-    }
-
-    public void RefreshFromSettingsAndEnvironment(bool updateStatus = false)
+    public void RefreshFromSettingsAndEnvironment()
     {
         RefreshLaunchPreferencesFromSettings();
         RefreshInstanceFromLocalEnvironment();
-        if (updateStatus)
-        {
-            ActionStatus = Format("Launch.Action.Refreshed", DateTime.Now.ToString("HH:mm:ss"));
-        }
     }
 
     public void RefreshLaunchPreferencesFromSettings()

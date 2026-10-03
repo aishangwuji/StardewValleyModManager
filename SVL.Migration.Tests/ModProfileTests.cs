@@ -201,8 +201,6 @@ public class ModProfileTests
         Assert.IsFalse(launchVm.IsModProfileSelectorVisible, "原版模式下不应显示 Mod 预设下拉选择器");
         Assert.IsTrue(launchVm.IsVanillaLaunchNoticeVisible, "原版模式下应显示原版纯净说明卡片");
         Assert.IsTrue(launchVm.CanSwitchToSmapi, "已安装 SMAPI 的原版模式下应允许切换到 SMAPI 模式");
-        Assert.IsTrue(launchVm.StatusHeadline.Contains("运行环境"), "状态栏标题应为功能性运行环境标题");
-        Assert.IsTrue(launchVm.StatusSubline.Contains("原版"), "副标题应提示原版启动");
 
         // 执行一键切换至 SMAPI 启动
         launchVm.SwitchToSmapiLaunchCommand.Execute(null);
@@ -211,7 +209,6 @@ public class ModProfileTests
         Assert.IsTrue(launchVm.IsModProfileSelectorVisible, "切为 SMAPI 后应恢复显示 Mod 预设下拉选择器");
         Assert.IsFalse(launchVm.IsVanillaLaunchNoticeVisible, "切为 SMAPI 后不应展示原版提示");
         Assert.IsFalse(launchVm.CanSwitchToSmapi, "切为 SMAPI 后无需再显示切换 SMAPI 按钮");
-        Assert.IsTrue(launchVm.StatusSubline.Contains("SMAPI"), "副标题应提示 SMAPI 模式");
     }
 
     [TestMethod]
