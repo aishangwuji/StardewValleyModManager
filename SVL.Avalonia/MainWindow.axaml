@@ -6,7 +6,7 @@
     xmlns:views="using:SVL.Avalonia.Views"
       xmlns:controls="using:SVL.Avalonia.Controls"
       xmlns:models="using:SVL.Avalonia.Models"
-        mc:Ignorable="d" d:DesignWidth="1050" d:DesignHeight="680"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="560"
         x:Class="SVL.Avalonia.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="{Binding WindowTitle}"
@@ -15,10 +15,10 @@
         ExtendClientAreaToDecorationsHint="True"
         ExtendClientAreaChromeHints="NoChrome"
         ExtendClientAreaTitleBarHeightHint="48"
-        Width="1050"
-        Height="680"
-        MinWidth="900"
-        MinHeight="600"
+        Width="900"
+        Height="560"
+        MinWidth="820"
+        MinHeight="520"
         UseLayoutRounding="True"
         Background="{DynamicResource WindowBackgroundBrush}"
         DragDrop.AllowDrop="True"
@@ -166,7 +166,7 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" Margin="16">
+    <Grid Grid.Row="1" Margin="10">
       <Border Classes="panel">
         <ContentControl x:Name="PageHost" Content="{Binding CurrentPageViewModel}" />
       </Border>
