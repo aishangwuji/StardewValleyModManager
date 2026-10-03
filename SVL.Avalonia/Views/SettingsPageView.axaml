@@ -322,7 +322,7 @@
                 </StackPanel>
                 <Grid ColumnDefinitions="Auto,*">
                   <Border Grid.Column="0" Width="56" Height="56" CornerRadius="28" ClipToBounds="True" VerticalAlignment="Center" Margin="0,0,12,0">
-                    <Image Source="avares://SVL.Avalonia/Assets/Icons/author-icon.png" Width="56" Height="56" Stretch="UniformToFill" />
+                    <Image Source="avares://SVL.Avalonia/Assets/Icons/author-icon.png" RenderOptions.BitmapInterpolationMode="HighQuality" Width="56" Height="56" Stretch="UniformToFill" />
                   </Border>
                   <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Text="盛夏de背影" FontWeight="SemiBold" FontSize="15" />
@@ -342,7 +342,7 @@
                 </StackPanel>
                 <Grid ColumnDefinitions="Auto,*">
                   <Border Grid.Column="0" Width="56" Height="56" CornerRadius="28" ClipToBounds="True" VerticalAlignment="Center" Margin="0,0,12,0">
-                    <Image Source="avares://SVL.Avalonia/Assets/Icons/author-guanxue.jpg" Width="56" Height="56" Stretch="UniformToFill" />
+                    <Image Source="avares://SVL.Avalonia/Assets/Icons/author-guanxue.jpg" RenderOptions.BitmapInterpolationMode="HighQuality" Width="56" Height="56" Stretch="UniformToFill" />
                   </Border>
                   <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                     <TextBlock Text="观雪" FontWeight="SemiBold" FontSize="15" />
