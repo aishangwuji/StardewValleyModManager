@@ -99,7 +99,7 @@ public sealed class AppUserSettings
     /// <summary>是否永久屏蔽 NexusMods 登录失效提醒（可在设置页重新开启）。</summary>
     public bool SuppressNexusAuthNotification { get; set; }
 
-    /// <summary>窗口尺寸模式：默认/最大化/自定义。</summary>
+    /// <summary>窗口尺寸模式：默认/自定义（最大化/全屏已下线，PCL 式固定尺寸；历史存量值不再被迁移写入）。</summary>
     public string WindowSizeMode { get; set; } = "默认";
 
     /// <summary>自定义窗口宽度（仅 WindowSizeMode=自定义 时生效）。</summary>

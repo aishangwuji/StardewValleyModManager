@@ -900,20 +900,21 @@ public sealed class LegacyConfigurationMigrationService
         {
             return numeric switch
             {
-                0 => "全屏",
+                // 全屏/最大化已下线（PCL 式无最大化）：0/4 不再映射，回落 _ => string.Empty（保持默认）。
+                // 0 => "全屏",
                 1 or 2 => "默认",
                 3 => "自定义",
-                4 => "最大化",
+                // 4 => "最大化",
                 _ => string.Empty
             };
         }
 
         return value.Trim().ToLowerInvariant() switch
         {
-            "fullscreen" or "全屏" => "全屏",
+            // "fullscreen" or "全屏" => "全屏",
             "default" or "sameaslauncher" or "默认" or "与启动器尺寸一致" => "默认",
             "custom" or "自定义" => "自定义",
-            "maximized" or "最大化" => "最大化",
+            // "maximized" or "最大化" => "最大化",
             _ => string.Empty
         };
     }

@@ -19,6 +19,7 @@
         Height="560"
         MinWidth="820"
         MinHeight="520"
+        CanResize="False"
         UseLayoutRounding="True"
         Background="{DynamicResource WindowBackgroundBrush}"
         DragDrop.AllowDrop="True"
@@ -124,7 +125,9 @@
           </StackPanel>
         </Border>
 
-        <Grid Grid.Column="2" Width="120" Height="48" RowDefinitions="48" ColumnDefinitions="40,40,40"
+        <!-- 窗口控制区（PCL 式：仅最小化/关闭，全屏/最大化已下线，CanResize=False 禁止最大化）。
+             下线原因：固定尺寸 + 不可最大化，与 PCL FormMain ResizeMode=CanMinimize 一致。 -->
+        <Grid Grid.Column="2" Width="80" Height="48" RowDefinitions="48" ColumnDefinitions="40,40"
               HorizontalAlignment="Right" VerticalAlignment="Center" IsVisible="{Binding ShowWindowControlButtons}">
           <Button Grid.Row="0" Grid.Column="0" Classes="winCtrl min" Click="MinimizeButton_Click" ToolTip.Tip="最小化"
                   Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -135,26 +138,24 @@
                     StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
             </Grid>
           </Button>
+          <!-- 全屏/最大化按钮已下线（PCL 式无最大化）：
           <Button x:Name="MaximizeButton" Grid.Row="0" Grid.Column="1" Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化"
                   Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
             <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-              <!-- 未最大化时显示的单框图标 -->
               <Path x:Name="MaximizeIcon" Data="M 5,19 L 5,5 L 19,5 L 19,19 Z" Stroke="White" StrokeThickness="2"
                     Fill="Transparent"
                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-              <!-- 最大化时显示的还原双框图标 (两个重叠矩形) -->
               <Canvas x:Name="RestoreIcon" IsVisible="False">
-                <!-- 后置小方块 -->
                 <Path Data="M 8,4 L 19,4 L 19,15 L 16,15 M 8,7 L 8,4" Stroke="White" StrokeThickness="2"
                       Fill="Transparent" />
-                <!-- 前置小方块 -->
                 <Path Data="M 5,8 L 16,8 L 16,19 L 5,19 Z" Stroke="White" StrokeThickness="2"
                       Fill="Transparent" />
               </Canvas>
             </Grid>
           </Button>
-          <Button Grid.Row="0" Grid.Column="2" Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭"
+          -->
+          <Button Grid.Row="0" Grid.Column="1" Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭"
                   Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
             <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">

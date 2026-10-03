@@ -85,26 +85,28 @@ public partial class MainWindow : Window
         DataContextChanged += OnDataContextChanged;
     }
 
-    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
-    {
-        base.OnPropertyChanged(change);
-
-        if (change.Property == WindowStateProperty && change.NewValue is WindowState state)
-        {
-            UpdateMaximizeRestoreButton(state);
-        }
-    }
-
-    private void UpdateMaximizeRestoreButton(WindowState state)
-    {
-        if (MaximizeIcon == null || RestoreIcon == null || MaximizeButton == null)
-            return;
-
-        bool isMaximized = state == WindowState.Maximized;
-        MaximizeIcon.IsVisible = !isMaximized;
-        RestoreIcon.IsVisible = isMaximized;
-        ToolTip.SetTip(MaximizeButton, isMaximized ? "还原" : "最大化");
-    }
+    // 全屏/最大化已下线（PCL 式无最大化）：窗口状态切换逻辑整体注释，
+    // 恢复时删除本注释块并同步恢复 AXAML 中的 MaximizeButton 即可。
+    // protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    // {
+    //     base.OnPropertyChanged(change);
+    //
+    //     if (change.Property == WindowStateProperty && change.NewValue is WindowState state)
+    //     {
+    //         UpdateMaximizeRestoreButton(state);
+    //     }
+    // }
+    //
+    // private void UpdateMaximizeRestoreButton(WindowState state)
+    // {
+    //     if (MaximizeIcon == null || RestoreIcon == null || MaximizeButton == null)
+    //         return;
+    //
+    //     bool isMaximized = state == WindowState.Maximized;
+    //     MaximizeIcon.IsVisible = !isMaximized;
+    //     RestoreIcon.IsVisible = isMaximized;
+    //     ToolTip.SetTip(MaximizeButton, isMaximized ? "还原" : "最大化");
+    // }
 
     private void OnDataContextChanged(object? sender, System.EventArgs e)
     {
@@ -188,12 +190,13 @@ public partial class MainWindow : Window
         WindowState = WindowState.Minimized;
     }
 
-    private void MaximizeButton_Click(object? sender, RoutedEventArgs e)
-    {
-        WindowState = WindowState == WindowState.Maximized
-            ? WindowState.Normal
-            : WindowState.Maximized;
-    }
+    // 全屏/最大化按钮已下线（见 AXAML 注释）：点击切换逻辑注释保留。
+    // private void MaximizeButton_Click(object? sender, RoutedEventArgs e)
+    // {
+    //     WindowState = WindowState == WindowState.Maximized
+    //         ? WindowState.Normal
+    //         : WindowState.Maximized;
+    // }
 
     private void CloseButton_Click(object? sender, RoutedEventArgs e)
     {
@@ -210,16 +213,18 @@ public partial class MainWindow : Window
 
         if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
-            if (e.ClickCount == 2)
-            {
-                WindowState = WindowState == WindowState.Maximized
-                    ? WindowState.Normal
-                    : WindowState.Maximized;
-            }
-            else
-            {
-                BeginMoveDrag(e);
-            }
+            // 全屏/最大化已下线：标题栏双击不再切换最大化，仅保留拖拽移动。
+            // if (e.ClickCount == 2)
+            // {
+            //     WindowState = WindowState == WindowState.Maximized
+            //         ? WindowState.Normal
+            //         : WindowState.Maximized;
+            // }
+            // else
+            // {
+            //     BeginMoveDrag(e);
+            // }
+            BeginMoveDrag(e);
         }
     }
 }

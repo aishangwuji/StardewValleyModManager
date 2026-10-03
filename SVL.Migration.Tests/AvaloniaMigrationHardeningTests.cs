@@ -3,6 +3,7 @@ using SharpCompress.Common;
 using SharpCompress.Writers.SevenZip;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SVL.Avalonia.Models;
 using SVL.Avalonia.Services;
 using SVL.Avalonia.ViewModels;
@@ -585,7 +586,8 @@ public sealed class AvaloniaMigrationHardeningTests
 
             Assert.IsTrue(result.Completed);
             Assert.AreEqual("自定义游戏标题", settings.GameWindowTitle);
-            Assert.AreEqual("最大化", settings.WindowSizeMode);
+            // 全屏/最大化已下线：遗留 Maximized 不再映射，回落默认值“默认”。
+            Assert.AreEqual("默认", settings.WindowSizeMode);
             Assert.AreEqual("深色", settings.ThemeMode);
             Assert.AreEqual("预览版", settings.UpdateChannel);
             Assert.AreEqual("Gitee (国内加速)", settings.PreferredUpdateSource);
@@ -3329,12 +3331,17 @@ public sealed class AvaloniaMigrationHardeningTests
         var instancesCodeText = File.ReadAllText(Path.Combine(root, "SVL.Avalonia", "Views", "InstancesPageView.axaml.cs"));
 
         StringAssert.Contains(mainWindowText, "UseLayoutRounding=\"True\"");
-        StringAssert.Contains(mainWindowText, "Width=\"120\" Height=\"48\" RowDefinitions=\"48\" ColumnDefinitions=\"40,40,40\"");
-        Assert.AreEqual(3, CountOccurrences(mainWindowText, "Classes=\"winCtrl"));
+        // 全屏/最大化已下线（PCL 式）：控制区仅最小化/关闭两列 + 禁止调整尺寸；
+        // 离线的 MaximizeButton markup 保留在 XML 注释内，计数时先剔除注释。
+        StringAssert.Contains(mainWindowText, "CanResize=\"False\"");
+        StringAssert.Contains(mainWindowText, "Width=\"80\" Height=\"48\" RowDefinitions=\"48\" ColumnDefinitions=\"40,40\"");
+        StringAssert.Contains(mainWindowText, "MaximizeButton");
+        var activeWindowText = StripXmlComments(mainWindowText);
+        Assert.AreEqual(2, CountOccurrences(activeWindowText, "Classes=\"winCtrl"));
         // 窗口控制区使用统一尺寸的矢量画布，避免不同图形的透明边界
-        // 导致最小化/最大化/关闭图形视觉中心不在同一条线上。
-        Assert.AreEqual(3, CountOccurrences(mainWindowText, "Width=\"24\" Height=\"24\""));
-        Assert.AreEqual(3, CountOccurrences(mainWindowText, "Grid.Row=\"0\" Grid.Column="));
+        // 导致最小化/关闭图形视觉中心不在同一条线上。
+        Assert.AreEqual(2, CountOccurrences(activeWindowText, "Width=\"24\" Height=\"24\""));
+        Assert.AreEqual(2, CountOccurrences(activeWindowText, "Grid.Row=\"0\" Grid.Column="));
         StringAssert.Contains(mainWindowText, "Data=\"M 4,12 L 20,12\"");
         StringAssert.Contains(mainWindowText, "Data=\"M 5,5 L 19,19 M 19,5 L 5,19\"");
         StringAssert.Contains(themeText, "<Style Selector=\"ContextMenu\">");
@@ -3383,6 +3390,17 @@ public sealed class AvaloniaMigrationHardeningTests
         }
 
         return count;
+    }
+
+    /// <summary>剔除 AXAML/XML 注释，供离线 markup 计数断言使用（注释内保留的下线代码不计入）。</summary>
+    private static string StripXmlComments(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        return Regex.Replace(text, "<!--.*?-->", string.Empty, RegexOptions.Singleline);
     }
 
     [TestMethod]
