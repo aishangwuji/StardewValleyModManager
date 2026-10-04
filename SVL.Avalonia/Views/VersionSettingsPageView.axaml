@@ -27,7 +27,7 @@
     <Style Selector="Button.navButton.selected">
       <Setter Property="Background" Value="{DynamicResource CategorySelectedBg}" />
       <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderThickness" Value="1" />
     </Style>
 
     <Style Selector="Button.segmentMain">
@@ -62,7 +62,6 @@
 
     <Style Selector="Button.segmentSub.selected">
       <Setter Property="Background" Value="{DynamicResource CategorySelectedBg}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <Style Selector="Button.toolbarAction">

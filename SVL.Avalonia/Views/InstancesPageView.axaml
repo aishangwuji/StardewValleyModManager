@@ -209,8 +209,8 @@
 
     <Style Selector="Button.instanceCard.selected">
       <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
-      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
     </Style>
 
     <Style Selector="Border.instanceCardFrame">
@@ -227,8 +227,8 @@
 
     <Style Selector="Border.instanceCardFrame.selected">
       <Setter Property="Background" Value="{DynamicResource CardHighlightBg}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
-      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
     </Style>
 
     <Style Selector="Button.instanceCardBody">

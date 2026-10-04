@@ -218,7 +218,6 @@
 
   <Style Selector="Button.settingsNav.selected TextBlock">
     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-    <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
   <Style Selector="Button.navButton">
@@ -246,10 +245,6 @@
     <Setter Property="Background" Value="{DynamicResource CategorySelectedBg}" />
   </Style>
 
-  <Style Selector="Button.navButton.selected TextBlock">
-    <Setter Property="FontWeight" Value="SemiBold" />
-  </Style>
-
   <Style Selector="Button.settingsNav">
     <Setter Property="Background" Value="{DynamicResource ColorBrushTransparent}" />
     <Setter Property="BorderBrush" Value="{DynamicResource ColorBrushGray5}" />
@@ -272,7 +267,6 @@
   <Style Selector="Button.settingsNav.selected">
     <Setter Property="Background" Value="{DynamicResource CategorySelectedBg}" />
     <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
-    <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
   <Style Selector="Button.winCtrl">

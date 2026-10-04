@@ -41,7 +41,6 @@
 
     <Style Selector="Button.categoryChip.selected TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource TextOnAccentBrush}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <!-- 胶囊内计数徽标：未选中使用主题弱强调底色，选中态使用半透白色胶囊 -->
