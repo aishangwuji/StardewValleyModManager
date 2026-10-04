@@ -180,7 +180,7 @@
   </Style>
 
   <Style Selector="Button.nav.selected">
-    <!-- 液态玻璃透镜选中态：上沿纯白折射高光 + 中部半透流动体 + 柔和内发光感 -->
+    <!-- 液态玻璃透镜选中态：上沿纯白折射高光 + 中部半透流动体 + 柔和内发光感。保持 Normal 字重，避免选中态文字膨胀导致胶囊宽度左右抖动 -->
     <Setter Property="Background">
       <Setter.Value>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
@@ -191,7 +191,6 @@
       </Setter.Value>
     </Setter>
     <Setter Property="BorderBrush" Value="#80FFFFFF" />
-    <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
 
   <Style Selector="Button.nav.back">

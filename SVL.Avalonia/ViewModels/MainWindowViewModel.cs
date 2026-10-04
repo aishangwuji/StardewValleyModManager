@@ -15,7 +15,7 @@ namespace SVL.Avalonia.ViewModels;
 /// <para>Business Rule: 一级页面切换需清空返回栈（clearBackStack），二级页面需压栈（pushCurrentToBackStack），确保左上角 Logo/返回按钮与面包屑一致。</para>
 /// <para>Reason: Avalonia 无内置导航框架，手动维护 CurrentPage + CurrentPageViewModel + _backStack 避免页面状态丢失。</para>
 /// </summary>
-public partial class MainWindowViewModel : ObservableObject
+public partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly IPlatformInfoService _platformInfoService;
     private readonly IGameInstallPathLocator _gameInstallPathLocator;
@@ -24,6 +24,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly ImageResourceService _imageResourceService;
     private readonly DialogService _dialogService;
     private readonly LauncherUpdateService _launcherUpdateService;
+    private readonly CancellationTokenSource _lifecycleCts = new();
     private readonly Stack<(string Page, ObservableObject ViewModel)> _backStack = new();
     private readonly HashSet<Models.DownloadTaskItem> _failureDialogsShown = [];
     private Models.DownloadTaskItem? _currentDownloadTask;
@@ -409,7 +410,11 @@ public partial class MainWindowViewModel : ObservableObject
     {
         try
         {
-            await Task.Delay(2000);
+            await Task.Delay(2000, _lifecycleCts.Token);
+            if (_lifecycleCts.IsCancellationRequested)
+            {
+                return;
+            }
 
             var settings = _settingsStore.Load();
             if (!settings.EnableAutoUpdateCheck)
@@ -421,7 +426,7 @@ public partial class MainWindowViewModel : ObservableObject
             var preferGitee = string.Equals(settings.PreferredUpdateSource, "Gitee", StringComparison.OrdinalIgnoreCase);
 
             var result = await _launcherUpdateService.CheckForUpdateAsync(includePrerelease, preferGitee);
-            if (!result.Success || !result.HasUpdate || result.ReleaseInfo == null)
+            if (_lifecycleCts.IsCancellationRequested || !result.Success || !result.HasUpdate || result.ReleaseInfo == null)
             {
                 return;
             }
@@ -433,8 +438,17 @@ public partial class MainWindowViewModel : ObservableObject
                 return;
             }
 
+            if (_lifecycleCts.IsCancellationRequested)
+            {
+                return;
+            }
+
             // 复用 SettingsPage 的弹窗逻辑：通过事件请求 SettingsPage 弹出更新对话框
             await SettingsPage.ShowUpdateDialogFromAutoCheckAsync(result);
+        }
+        catch (OperationCanceledException)
+        {
+            // 窗口正常关闭引发的取消，静默退出
         }
         catch
         {
@@ -1224,5 +1238,12 @@ public partial class MainWindowViewModel : ObservableObject
     private void HandleSettingsNexusLoggedOut()
     {
         DownloadPage.ResetNexusAuthNotificationSuppression();
+    }
+
+    public void Dispose()
+    {
+        _lifecycleCts.Cancel();
+        _lifecycleCts.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

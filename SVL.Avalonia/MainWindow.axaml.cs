@@ -198,6 +198,15 @@ public partial class MainWindow : Window
     //         : WindowState.Maximized;
     // }
 
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (DataContext is ViewModels.MainWindowViewModel vm)
+        {
+            vm.Dispose();
+        }
+    }
+
     private void CloseButton_Click(object? sender, RoutedEventArgs e)
     {
         Close();

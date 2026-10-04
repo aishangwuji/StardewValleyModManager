@@ -63,19 +63,9 @@
 
   <Grid RowDefinitions="48,*">
     <Border Grid.Row="0" Background="{DynamicResource HeaderBackgroundBrush}" BorderBrush="#26000000" BorderThickness="0,0,0,1" BoxShadow="0 2 12 0 #18000000" PointerPressed="TitleBar_PointerPressed">
-      <Grid ColumnDefinitions="Auto,*,Auto" Margin="16,0">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="{Binding TitleBarLeadingInset}">
-          <Button Classes="nav back" IsVisible="{Binding ShowBackButton}" Command="{Binding NavigateBackCommand}">
-            <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/ArrowLeft.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center" />
-          </Button>
-          <Image Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="22" Height="22" VerticalAlignment="Center" IsVisible="{Binding ShowBrandIdentity}" />
-          <TextBlock Text="{Binding LauncherAppNameText}" Classes="brand" Foreground="White" IsVisible="{Binding ShowBrandIdentity}" />
-          <TextBlock Text="{Binding ResourceDetailsHeaderTitle}" Classes="brand" Foreground="White" VerticalAlignment="Center" IsVisible="{Binding ShowResourceDetailHeaderTitle}" />
-        </StackPanel>
-
-        <!-- 胶囊导航槽：微光磨砂玻璃凹槽 (Frosted Glass Trough) -->
-        <Border Grid.Column="1"
-                Background="#22000000"
+      <Grid Margin="16,0">
+        <!-- 胶囊导航槽：微光磨砂玻璃凹槽 (Frosted Glass Trough) - 独立绝对居中，杜绝因左侧Logo/Back切换导致的横向左右跳动 -->
+        <Border Background="#22000000"
                 BorderBrush="#33FFFFFF"
                 BorderThickness="1"
                 BoxShadow="0 2 8 0 #18000000"
@@ -125,44 +115,56 @@
           </StackPanel>
         </Border>
 
-        <!-- 窗口控制区（PCL 式：仅最小化/关闭，全屏/最大化已下线，CanResize=False 禁止最大化）。
-             下线原因：固定尺寸 + 不可最大化，与 PCL FormMain ResizeMode=CanMinimize 一致。 -->
-        <Grid Grid.Column="2" Width="80" Height="48" RowDefinitions="48" ColumnDefinitions="40,40"
-              HorizontalAlignment="Right" VerticalAlignment="Center" IsVisible="{Binding ShowWindowControlButtons}">
-          <Button Grid.Row="0" Grid.Column="0" Classes="winCtrl min" Click="MinimizeButton_Click" ToolTip.Tip="最小化"
-                  Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
-                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-            <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-              <!-- 三个图形都以 24×24 的同一坐标系绘制，避免资源图片透明边界造成视觉偏移。 -->
-              <Path Data="M 4,12 L 20,12" Stroke="White" StrokeThickness="2"
-                    StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-            </Grid>
-          </Button>
-          <!-- 全屏/最大化按钮已下线（PCL 式无最大化）：
-          <Button x:Name="MaximizeButton" Grid.Row="0" Grid.Column="1" Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化"
-                  Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
-                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-            <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-              <Path x:Name="MaximizeIcon" Data="M 5,19 L 5,5 L 19,5 L 19,19 Z" Stroke="White" StrokeThickness="2"
-                    Fill="Transparent"
-                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-              <Canvas x:Name="RestoreIcon" IsVisible="False">
-                <Path Data="M 8,4 L 19,4 L 19,15 L 16,15 M 8,7 L 8,4" Stroke="White" StrokeThickness="2"
-                      Fill="Transparent" />
-                <Path Data="M 5,8 L 16,8 L 16,19 L 5,19 Z" Stroke="White" StrokeThickness="2"
-                      Fill="Transparent" />
-              </Canvas>
-            </Grid>
-          </Button>
-          -->
-          <Button Grid.Row="0" Grid.Column="1" Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭"
-                  Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
-                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-            <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-              <Path Data="M 5,5 L 19,19 M 19,5 L 5,19" Stroke="White" StrokeThickness="2"
-                    StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-            </Grid>
-          </Button>
+        <!-- 两翼元素：左侧 Logo/返回与标题，右侧窗口最小化/关闭按钮 -->
+        <Grid ColumnDefinitions="Auto,*,Auto">
+          <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="{Binding TitleBarLeadingInset}">
+            <Button Classes="nav back" IsVisible="{Binding ShowBackButton}" Command="{Binding NavigateBackCommand}">
+              <Image Source="avares://SVL.Avalonia/Assets/Icons/Generated/Cropped/ArrowLeft.png" Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center" />
+            </Button>
+            <Image Source="avares://SVL.Avalonia/Assets/Icons/Junimo.png" Width="22" Height="22" VerticalAlignment="Center" IsVisible="{Binding ShowBrandIdentity}" />
+            <TextBlock Text="{Binding LauncherAppNameText}" Classes="brand" Foreground="White" IsVisible="{Binding ShowBrandIdentity}" />
+            <TextBlock Text="{Binding ResourceDetailsHeaderTitle}" Classes="brand" Foreground="White" VerticalAlignment="Center" IsVisible="{Binding ShowResourceDetailHeaderTitle}" />
+          </StackPanel>
+
+          <!-- 窗口控制区（PCL 式：仅最小化/关闭，全屏/最大化已下线，CanResize=False 禁止最大化）。
+               下线原因：固定尺寸 + 不可最大化，与 PCL FormMain ResizeMode=CanMinimize 一致。 -->
+          <Grid Grid.Column="2" Width="80" Height="48" RowDefinitions="48" ColumnDefinitions="40,40"
+                HorizontalAlignment="Right" VerticalAlignment="Center" IsVisible="{Binding ShowWindowControlButtons}">
+            <Button Grid.Row="0" Grid.Column="0" Classes="winCtrl min" Click="MinimizeButton_Click" ToolTip.Tip="最小化"
+                    Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+              <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <!-- 三个图形都以 24×24 的同一坐标系绘制，避免资源图片透明边界造成视觉偏移。 -->
+                <Path Data="M 4,12 L 20,12" Stroke="White" StrokeThickness="2"
+                      StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+              </Grid>
+            </Button>
+            <!-- 全屏/最大化按钮已下线（PCL 式无最大化）：
+            <Button x:Name="MaximizeButton" Grid.Row="0" Grid.Column="1" Classes="winCtrl max" Click="MaximizeButton_Click" ToolTip.Tip="最大化"
+                    Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+              <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Path x:Name="MaximizeIcon" Data="M 5,19 L 5,5 L 19,5 L 19,19 Z" Stroke="White" StrokeThickness="2"
+                      Fill="Transparent"
+                      HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                <Canvas x:Name="RestoreIcon" IsVisible="False">
+                  <Path Data="M 8,4 L 19,4 L 19,15 L 16,15 M 8,7 L 8,4" Stroke="White" StrokeThickness="2"
+                        Fill="Transparent" />
+                  <Path Data="M 5,8 L 16,8 L 16,19 L 5,19 Z" Stroke="White" StrokeThickness="2"
+                        Fill="Transparent" />
+                </Canvas>
+              </Grid>
+            </Button>
+            -->
+            <Button Grid.Row="0" Grid.Column="1" Classes="winCtrl close" Click="CloseButton_Click" ToolTip.Tip="关闭"
+                    Width="40" Height="48" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+              <Grid Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Path Data="M 5,5 L 19,19 M 19,5 L 5,19" Stroke="White" StrokeThickness="2"
+                      StrokeLineCap="Round" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+              </Grid>
+            </Button>
+          </Grid>
         </Grid>
       </Grid>
     </Border>
